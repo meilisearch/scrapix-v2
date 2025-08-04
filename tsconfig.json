@@ -1,13 +1,15 @@
 {
-  "extends": "@apify/tsconfig",
   "compilerOptions": {
-    "module": "CommonJS",
     "target": "ES2022",
-    "outDir": "./dist/src",
-    "allowJs": true,
+    "module": "commonjs",
+    "moduleResolution": "node",
     "strict": true,
-    "esModuleInterop": true
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true
   },
-  "include": ["src/**/*"],
   "exclude": ["node_modules"]
-}
+} 

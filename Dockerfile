@@ -1,43 +1,56 @@
-# Specify the base Docker image. You can read more about
-# the available images at https://crawlee.dev/docs/guides/docker-images
-# You can also use any other image from Docker Hub.
-FROM apify/actor-node-puppeteer-chrome:20-21.4.0 AS builder
+# Build from root to access all files
+FROM ghcr.io/puppeteer/puppeteer:23.9.0 AS builder
 
-# Copy just package.json and package-lock.json
-# to speed up the build using Docker layer cache.
-COPY --chown=myuser package*.json ./
+USER root
+WORKDIR /app
 
-# Install all dependencies. Don't audit to speed up the installation.
-RUN yarn install --production=false
+# Copy all necessary config files from root
+COPY tsconfig.base.json tsconfig.json ./
+COPY package.json ./
 
-# Next, copy the source files using the user set
-# in the base image.
-COPY --chown=myuser . ./
+# Copy scraper workspace files
+COPY apps/scraper/package.json ./apps/scraper/
+COPY apps/scraper/core/package.json ./apps/scraper/core/
+COPY apps/scraper/server/package.json ./apps/scraper/server/
+COPY apps/scraper/cli/package.json ./apps/scraper/cli/
 
-# Install all dependencies and build the project.
-# Don't audit to speed up the installation.
-RUN yarn run build
+# Install dependencies in the scraper workspace
+WORKDIR /app/apps/scraper
+RUN npm install --workspaces --include-workspace-root --legacy-peer-deps
 
-# Create final image
-FROM apify/actor-node-puppeteer-chrome:20-21.4.0
+# Copy all source code
+WORKDIR /app
+COPY apps/scraper/ ./apps/scraper/
 
-# Copy only built JS files from builder image
-COPY --from=builder --chown=myuser /home/myuser/dist ./dist
+# Build core and server
+WORKDIR /app/apps/scraper/core
+RUN npm run build
 
-# Copy just package.json and package-lock.json
-# to speed up the build using Docker layer cache.
-COPY --chown=myuser package*.json ./
+WORKDIR /app/apps/scraper/server
+RUN npm run build
 
-# Install NPM packages, skip optional and development dependencies to
-# keep the image small. Avoid logging too much and print the dependency
-# tree for debugging
-RUN yarn install --production=false
+# Production stage - simpler approach: copy everything from builder
+FROM ghcr.io/puppeteer/puppeteer:23.9.0
 
-# Next, copy the remaining files and directories with the source code.
-# Since we do this after NPM install, quick build will be really fast
-# for most source file changes.
-COPY --chown=myuser . ./
+USER root
+WORKDIR /app
 
-# Run the image. If you know you won't need headful browsers,
-# you can remove the XVFB start script for a micro perf gain.
-CMD ./start_xvfb_and_run_cmd.sh && yarn start:prod -- -c $CRAWLER_CONFIG -b /usr/bin/google-chrome --silent 
+# Copy everything from builder (includes node_modules and built files)
+COPY --from=builder /app /app
+
+# Create app user and set permissions
+RUN groupadd -r appuser && useradd -r -g appuser appuser && \
+    chown -R appuser:appuser /app
+
+USER appuser
+
+# Environment variables
+ENV NODE_ENV=production
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
+
+EXPOSE 8080
+
+# Start the server
+WORKDIR /app/apps/scraper/server
+CMD ["node", "dist/index.js"]

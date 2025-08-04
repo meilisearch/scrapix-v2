@@ -1,61 +1,427 @@
 # Scrapix
 
-This project is an API that will allow you to scrape any website and send the data to Meilisearch.
+🚀 **Advanced Web Crawler & AI-Powered Content Extraction Platform**
 
-This server has only one endpoint.
+Scrapix is an enterprise-grade web crawling and content extraction platform optimized for information retrieval. It combines multiple crawler engines, AI-powered content processing, intelligent batching, and robust proxy support to deliver high-quality, structured data to Meilisearch.
 
-## Bin usage
+## ✨ Key Features
 
-Scrapix provides a CLI to start the crawling process.
+- **🤖 AI-Powered Extraction**: OpenAI GPT integration for intelligent content extraction and summarization
+- **🔧 Multiple Crawler Engines**: Cheerio (fast), Puppeteer (JS-enabled), Playwright (cross-browser)
+- **🌐 Enterprise Proxy Support**: Built-in proxy rotation and dedicated proxy server with authentication
+- **📊 Advanced Content Processing**: Schema.org, PDF extraction, custom selectors, markdown conversion
+- **🎯 Smart Content Splitting**: Hierarchical block splitting for optimal search relevance
+- **📡 Real-time Monitoring**: Webhooks, progress tracking, and health monitoring
+- **⚡ High Performance**: Concurrent crawling, intelligent batching, connection pooling, and distributed architecture
+- **🗺️ Sitemap Integration**: Automatic sitemap discovery and parsing
+- **🔒 Security**: Input validation, rate limiting, and authentication support
+- **🏗️ Modern Architecture**: Dependency injection, comprehensive error handling, and TypeScript throughout
 
+## 🎯 Quick Start
+
+### Development Setup
+
+```bash
+# Install dependencies
+yarn install
+
+# Build all packages
+yarn build
+
+# Run in development mode
+yarn dev
 ```
-Usage: yarn start [options]
 
-Options:
-  -c, --config         JSON string with the scrapix configuration
-  -p, --config-path    Path to the scrapix configuration JSON file
-  -b, --browser-path   Path to the browser binary
+### CLI Usage
+
+```bash
+# Quick scraper usage (works from anywhere in the project)
+yarn scrape -p misc/tests/meilisearch/simple.json
+
+# With inline JSON config
+yarn scrape -c '{"start_urls":["https://example.com"],"meilisearch_url":"http://localhost:7700","meilisearch_api_key":"masterKey","meilisearch_index_uid":"test"}'
+
+# Use custom browser for Playwright/Puppeteer
+yarn scrape -p config.json -b /path/to/chrome
 ```
 
-## Endpoint
+### Server Usage
 
-### POST /crawl
+```bash
+# Start the API server (default port 8080)
+yarn server
 
-This endpoint will crawl the website and send the data to Meilisearch.
-data:
+# Custom port
+yarn server -p 3000
+
+# With Redis for job queue
+yarn server -r redis://localhost:6379
+
+# With custom .env file
+yarn server -e .env.production
+
+# Development mode with hot-reload
+yarn server:dev
+
+# Get help
+yarn server --help
+```
+
+### API Usage
+
+```bash
+# Start the API server (requires Redis)
+cd apps/scraper/server && yarn dev
+
+# Or use Docker Compose for the full stack
+docker-compose up
+```
+
+The API server provides endpoints for asynchronous and synchronous crawling:
+- `POST /crawl` - Start an asynchronous crawl job
+- `POST /crawl/sync` - Start a synchronous crawl (waits for completion)
+- `GET /job/:id/status` - Check job status
+- `GET /job/:id/events` - Stream job events (SSE)
+
+## 🔧 Crawler Engines
+
+Scrapix supports multiple crawler engines optimized for different use cases:
+
+### Cheerio (Default)
+- **Best for**: Static websites, fast crawling
+- **Performance**: Lowest resource usage, highest speed
+- **Limitations**: No JavaScript execution
+- **Use case**: Documentation sites, blogs, static content
+
+### Puppeteer 
+- **Best for**: JavaScript-heavy sites, SPAs
+- **Performance**: Higher resource usage, full Chrome browser
+- **Capabilities**: JavaScript execution, dynamic content rendering
+- **Use case**: React/Vue/Angular apps, complex web applications
+
+### Playwright
+- **Best for**: Cross-browser testing, modern web apps
+- **Performance**: Similar to Puppeteer with modern APIs
+- **Capabilities**: Chrome, Firefox, Safari support
+- **Use case**: Cross-browser compatibility requirements
 
 ```json
 {
-  "start_urls": ["https://www.google.com"],
-  "urls_to_exclude": ["https://www.google.com"],
-  "urls_to_index": ["https://www.google.com"],
-  "urls_to_not_index": ["https://www.google.com"],
+  "crawler_type": "cheerio", // "cheerio" | "puppeteer" | "playwright"
+  "launch_options": {
+    "headless": true,
+    "args": ["--no-sandbox"]
+  }
+}
+```
+
+## 🤖 AI-Powered Features
+
+### AI Extraction
+Extract structured data using OpenAI GPT models:
+
+```json
+{
+  "features": {
+    "ai_extraction": {
+      "activated": true,
+      "include_pages": ["*"],
+      "prompt": "Extract product information including name, price, description, and availability"
+    }
+  }
+}
+```
+
+### AI Summary
+Generate concise summaries optimized for search:
+
+```json
+{
+  "features": {
+    "ai_summary": {
+      "activated": true,
+      "include_pages": ["*/blog/*", "*/docs/*"]
+    }
+  }
+}
+```
+
+**Environment Variables:**
+```bash
+OPENAI_API_KEY=your_openai_key
+OPENAI_MODEL=gpt-4o-mini  # Default model
+```
+
+## 🌐 Proxy Support
+
+### Simple Proxy Rotation
+```json
+{
+  "proxy_configuration": {
+    "proxyUrls": [
+      "http://proxy1.example.com:8080",
+      "http://proxy2.example.com:8080"
+    ]
+  }
+}
+```
+
+### Tiered Proxy System
+```json
+{
+  "proxy_configuration": {
+    "tieredProxyUrls": [
+      ["http://premium-proxy.com:8080"],
+      ["http://backup1.com:8080", "http://backup2.com:8080"]
+    ]
+  }
+}
+```
+
+## 📋 Advanced Content Processing
+
+### Schema.org Extraction
+```json
+{
+  "features": {
+    "schema": {
+      "activated": true,
+      "only_type": "Product",  // Extract only Product schemas
+      "convert_dates": true    // Convert dates to timestamps
+    }
+  }
+}
+```
+
+### PDF Processing
+```json
+{
+  "features": {
+    "pdf": {
+      "activated": true,
+      "extract_content": true,
+      "extract_metadata": true
+    }
+  }
+}
+```
+
+### Custom Data Extraction
+```json
+{
+  "features": {
+    "custom_selectors": {
+      "activated": true,
+      "selectors": {
+        "product_name": "h1.product-title",
+        "price": ".price-current",
+        "reviews": ".review-item"
+      }
+    }
+  }
+}
+```
+
+### Markdown Conversion
+```json
+{
+  "features": {
+    "markdown": {
+      "activated": true,
+      "include_pages": ["*/docs/*"]
+    }
+  }
+}
+```
+
+## 🗺️ URL Discovery & Control
+
+### Sitemap Integration
+```json
+{
+  "use_sitemap": true,
+  "sitemap_urls": [
+    "https://example.com/sitemap.xml",
+    "https://example.com/blog-sitemap.xml"
+  ]
+}
+```
+
+### Advanced URL Filtering
+```json
+{
+  "urls_to_exclude": ["*/admin/*", "**/private/**"],
+  "urls_to_index": ["*/products/*", "*/blog/*"],
+  "urls_to_not_index": ["*/search*", "*/filter*"]
+}
+```
+
+## ⚡ Performance & Scalability
+
+### Concurrency Control
+```json
+{
+  "max_concurrency": 10,
+  "max_requests_per_minute": 60,
+  "batch_size": 1000
+}
+```
+
+### Error Detection
+```json
+{
+  "not_found_selectors": [
+    ".error-404",
+    "#not-found-message"
+  ]
+}
+```
+
+## 📡 Real-time Monitoring
+
+### Webhooks
+```json
+{
+  "webhook_url": "https://your-app.com/webhook",
+  "webhook_payload": {
+    "project_id": "my-project",
+    "environment": "production"
+  }
+}
+```
+
+**Environment Variables:**
+```bash
+WEBHOOK_URL=https://your-app.com/webhook
+WEBHOOK_TOKEN=your_webhook_token
+WEBHOOK_INTERVAL=5000  # Milliseconds
+```
+
+## 🔌 API Reference
+
+### POST /crawl (Asynchronous)
+
+Start an asynchronous crawling job that returns immediately with a job ID:
+
+```bash
+curl -X POST http://localhost:8080/crawl \
+  -H "Content-Type: application/json" \
+  -d @config.json
+```
+
+Response:
+```json
+{
+  "status": "ok",
+  "jobId": "123",
+  "indexUid": "my_index",
+  "statusUrl": "/job/123/status",
+  "eventsUrl": "/job/123/events"
+}
+```
+
+### POST /crawl/sync (Synchronous)
+
+Start a synchronous crawling job that waits for completion:
+
+```bash
+curl -X POST http://localhost:8080/crawl/sync \
+  -H "Content-Type: application/json" \
+  -d @config.json
+```
+
+### Configuration Schema
+
+```json
+{
+  // Core Configuration
+  "crawler": "cheerio",
+  "start_urls": ["https://example.com"],
   "meilisearch_url": "http://localhost:7700",
   "meilisearch_api_key": "masterKey",
-  "meilisearch_index_uid": "google",
-  "strategy": "default", // docssearch, schema*, custom or default
-  "headless": true, // Use headless browser for rendering javascript websites
-  "batch_size": 1000, // pass null to send documents 1 at a time or specify a batch size
+  "meilisearch_index_uid": "my_index",
+  
+  // URL Control
+  "urls_to_exclude": ["*/admin/*", "*/private/*"],
+  "urls_to_index": ["*/products/*", "*/blog/*"],
+  "urls_to_not_index": ["*/search*"],
+  "use_sitemap": true,
+  "sitemap_urls": ["https://example.com/sitemap.xml"],
+  
+  // Performance
+  "max_concurrency": 10,
+  "max_requests_per_minute": 60,
+  "batch_size": 1000,
+  
+  // Proxy Configuration
+  "proxy_configuration": {
+    "proxyUrls": ["http://proxy.example.com:8080"]
+  },
+  
+  // Features
+  "features": {
+    "block_split": {
+      "activated": true,
+      "include_pages": ["*"],
+      "exclude_pages": []
+    },
+    "metadata": {
+      "activated": true,
+      "include_pages": ["*"],
+      "exclude_pages": []
+    },
+    "ai_extraction": {
+      "activated": false,
+      "include_pages": ["*/products/*"],
+      "prompt": "Extract product name, price, description, and availability"
+    },
+    "ai_summary": {
+      "activated": false,
+      "include_pages": ["*/blog/*", "*/docs/*"]
+    },
+    "custom_selectors": {
+      "activated": false,
+      "selectors": {
+        "product_name": "h1.product-title",
+        "price": ".price",
+        "description": ".product-description"
+      }
+    },
+    "markdown": {
+      "activated": false,
+      "include_pages": ["*/docs/*"]
+    },
+    "pdf": {
+      "activated": false,
+      "extract_content": true,
+      "extract_metadata": true
+    },
+    "schema": {
+      "activated": false,
+      "convert_dates": true,
+      "only_type": "Product"
+    }
+  },
+  
+  // Meilisearch Settings
   "primary_key": null,
   "meilisearch_settings": {
-    "searchableAttributes": [
-      "h1",
-      "h2",
-      "h3",
-      "h4",
-      "h5",
-      "h6",
-      "p",
-      "title",
-      "meta.description"
-    ],
-    "filterableAttributes": ["urls_tags"],
+    "searchableAttributes": ["h1", "h2", "h3", "h4", "h5", "h6", "p", "title", "meta.description"],
+    "filterableAttributes": ["urls_tags", "type"],
     "distinctAttribute": "url"
   },
-  "schema_settings": {
-    "only_type": "Product", // Product, Article, etc...
-    "convert_dates": true // default false
-  }
+  
+  // Monitoring
+  "webhook_url": "https://your-app.com/webhook",
+  "webhook_payload": {
+    "project_id": "my-project"
+  },
+  
+  // Authentication & Headers
+  "additional_request_headers": {
+    "Authorization": "Bearer your-token"
+  },
+  "user_agents": ["MyBot/1.0"]
 }
 ```
 
@@ -69,7 +435,7 @@ The queue will dispatch the job to the worker.
 
 ### 2. Scrape the website
 
-#### 2.1. Default strategy
+#### 2.1. Default features
 
 The worker will crawl only pages with the same domain names as those specified in the `start_urls` config option. It will not try to scrape the external links or files. It will also not try to scrape paginated pages (like `/page/1`).
 For each scrappable page it will scrape the data by trying to create blocks of titles and text. Each block will contain:
@@ -86,7 +452,7 @@ For each scrappable page it will scrape the data by trying to create blocks of t
 - meta: The meta of the page present in the head tag (json object containing the desciption, keywords, author, twitter, og, etc...)
 - url_tags: the url pathname split by / (array of string). The last element has been removed because it's the page name.
 
-#### 2.2. Docsearch strategy
+#### 2.2. Docsearch feature
 
 The worker will crawl only pages with the same domain names as those specified in the `start_urls` config option. It will not try to scrape the external links or files. It will also not try to scrape when pages are paginated pages (like `/page/1`).
 For each scrappable page it will scrape the data by trying to create blocks of titles and text. Each block will contain:
@@ -155,24 +521,27 @@ The API key to your Meilisearch instance. This key must have read and write perm
 `meilisearch_index_uid` _mandatory_
 Name of the index on which the content is indexed.
 
-`stategy`
-default: `default`
-Scraping strategy: - `default` Scrapes the content of webpages, it is suitable for most use cases. It indexes the content in this format (show example) - `docssearch` Scrapes the content of webpages, it suits most use cases. The difference with the default strategy is that it indexes the content in a format compatible with docs-search bar - `schema` Scraps the [`schema`](https://schema.org/) information of your web app.
+`features`
+Configuration for various content extraction and processing features. Each feature can be enabled/disabled and configured with specific settings:
 
-`headless`
-default: `true`
-Wether or not the javascript should be loaded before scraping starts.
+- `block_split`: Splits the page into logical content blocks
+- `metadata`: Extracts meta information from the page
+- `custom_selectors`: Allows defining custom CSS selectors for content extraction
+- `markdown`: Converts HTML content to Markdown format
+- `pdf`: Extracts content and metadata from PDF files
+- `schema`: Extracts structured data from Schema.org markup
+
+Each feature can be configured with:
+- `activated`: Whether the feature is enabled
+- `include_pages`: List of page patterns to include
+- `exclude_pages`: List of page patterns to exclude
+- Feature-specific settings (e.g., `extract_content` for PDF, `selectors` for custom_selectors)
 
 `primary_key`
 The key name in your documents containing their unique identifier.
 
 `meilisearch_settings`
 Your custom Meilisearch settings
-
-`schema_settings`
-If your strategy is `schema`:
-`only_type`: Which types of schema should be parsed
-`convert_dates`: If dates should be converted to timestamp. This is usefull to be able to order by date.
 
 `user_agents`
 An array of user agents that are append at the end of the current user agents.
@@ -232,17 +601,116 @@ Here is the Webhook payload:
 
 It is possible to add additional information in the webhook payload through the `webhook_payload` configuration
 
-## Docker
+## 🌍 Environment Variables
 
-### Usage
+```bash
+# AI Features
+OPENAI_API_KEY=your_openai_api_key
+OPENAI_MODEL=gpt-4o-mini
+SCRAPIX_AI_MAX_CONTENT_LENGTH=4000
+SCRAPIX_AI_EXTRACTION_TEMP=0.1
+SCRAPIX_AI_SUMMARY_TEMP=0.3
+SCRAPIX_AI_SUMMARY_MAX_TOKENS=150
 
+# Webhooks
+WEBHOOK_URL=https://your-app.com/webhook
+WEBHOOK_TOKEN=your_webhook_secret
+WEBHOOK_INTERVAL=5000
+
+# Server Configuration
+PORT=8080
+REDIS_URL=redis://localhost:6379
+SCRAPIX_MAX_BODY_SIZE=10mb
+
+# Rate Limiting
+SCRAPIX_RATE_LIMIT_WINDOW=900000  # 15 minutes
+SCRAPIX_RATE_LIMIT_CRAWL=100
+SCRAPIX_RATE_LIMIT_STATUS=60
+SCRAPIX_RATE_LIMIT_GLOBAL=1000
+
+# Proxy Server
+PROXY_PORT=8080
+PROXY_AUTH_ENABLED=true
+PROXY_AUTH_TYPE=basic  # or "bearer"
+PROXY_AUTH_USERS=user1:pass1,user2:pass2
+PROXY_AUTH_TOKENS=token1,token2
+
+# HTTP Client Configuration
+SCRAPIX_HTTP_KEEP_ALIVE_MS=1000
+SCRAPIX_HTTP_MAX_SOCKETS=256
+SCRAPIX_HTTP_TIMEOUT=30000
+
+# Retry Configuration
+SCRAPIX_RETRY_MAX_ATTEMPTS=3
+SCRAPIX_RETRY_BASE_DELAY=1000
+SCRAPIX_RETRY_MAX_DELAY=10000
+
+# Regional Deployment
+FLY_REGION=ord
 ```
-docker run --rm --env-file .env  getmeili/scrapix
-docker run -rm --env CRAWLER_CONFIG=$CRAWLER_CONFIG getmeili/scrapix
+
+## 🚀 Deployment
+
+### Deploy to Fly.io (Recommended)
+```bash
+# Install Fly CLI
+curl -L https://fly.io/install.sh | sh
+
+# Deploy with one command
+fly launch
+
+# Set secrets
+fly secrets set MEILISEARCH_URL="https://your-instance.meilisearch.io" \
+  MEILISEARCH_API_KEY="your-key" \
+  REDIS_URL="redis://your-redis.upstash.io"
+
+# Deploy updates
+fly deploy
 ```
 
-⚠️ Avoid any whitespace inside your CRAWLER_CONFIG.
+### Docker Deployment
+```bash
+# Using Docker Compose (includes Meilisearch + Redis)
+docker-compose up -d
 
-## Publish
+# Or use standalone Docker
+docker build -t scrapix .
+docker run -p 8080:8080 --env-file .env scrapix
+```
 
-The CI handles the publishing.
+### Quick Cloud Deploy
+```bash
+# Deploy to Fly.io with our script
+./scripts/deploy-fly.sh production
+
+# Or use GitHub Actions (on push to main)
+git push origin main
+```
+
+## 🏗️ Architecture
+
+Scrapix features a distributed architecture optimized for scalability:
+
+- **🎯 CLI Tool**: Simple command-line interface for local development
+- **🚀 Server Application**: REST API with task queue management  
+- **⚡ Worker Processes**: Distributed crawling and processing
+- **🌐 Proxy Server**: Dedicated proxy management and rotation
+- **📊 Real-time Monitoring**: Webhooks and progress tracking
+
+## 📚 Configuration Examples
+
+Check the `/misc/config_examples/` directory for real-world configuration examples:
+
+- **AI-powered extraction**: `openai-docsearch-strat.json`
+- **Documentation sites**: `docusaurus-default.json`
+- **E-commerce crawling**: `schema-config.json`
+- **PDF processing**: `pdf-crawler.json`
+- **Custom selectors**: `schema-config-cheerio.json`
+
+## 🤝 Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

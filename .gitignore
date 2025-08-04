@@ -71,6 +71,7 @@ typings/
 # dotenv environment variables file
 .env
 .env.test
+.env.local
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache
@@ -81,6 +82,16 @@ typings/
 # Nuxt.js build / generate output
 .nuxt
 dist
+*/dist
+apps/*/dist
+
+# TypeScript compiled files in source directories (but allow dist folders)
+apps/scraper/core/*.js
+apps/scraper/core/*.d.ts
+apps/scraper/core/**/*.js
+apps/scraper/core/**/*.d.ts
+!apps/scraper/core/dist/
+!apps/scraper/cli/dist/
 
 # Gatsby files
 .cache/
@@ -130,3 +141,4 @@ package
 dist_default_export_in_index
 no_default_export_in_index
 storage
+.turbo
