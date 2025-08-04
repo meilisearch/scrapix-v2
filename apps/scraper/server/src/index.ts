@@ -5,7 +5,7 @@ import express, { Request, Response, NextFunction } from 'express'
 import rateLimit from 'express-rate-limit'
 import { TaskQueue } from './taskQueue'
 import { Sender, Crawler, ConfigSchema, ScrapixError, ErrorCode, logError, getConfig, Container, closeConnectionPools } from '@scrapix/core'
-import { Log } from '@crawlee/core'
+import { Log } from 'crawlee'
 import { z } from 'zod'
 
 const port = getConfig('SERVER', 'DEFAULT_PORT')

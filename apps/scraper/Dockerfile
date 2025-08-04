@@ -10,18 +10,22 @@ COPY core/package.json ./core/
 COPY server/package.json ./server/
 COPY cli/package.json ./cli/
 
-# Install dependencies
-RUN npm install --workspaces --include-workspace-root --legacy-peer-deps
-
-# Copy source code
+# Copy all source code first
 COPY . .
 
-# Build core and server
+# Install dependencies for each package individually
 WORKDIR /app/core
-RUN npm run build
+RUN npm install --legacy-peer-deps
+
+WORKDIR /app/server
+RUN npm install --legacy-peer-deps
+
+# Build core and server using standalone configs
+WORKDIR /app/core
+RUN npx tsc --project tsconfig.standalone.json
 
 WORKDIR /app/server  
-RUN npm run build
+RUN npx tsc --project tsconfig.standalone.json
 
 # Production stage - use same base for consistency
 FROM ghcr.io/puppeteer/puppeteer:23.9.0
@@ -29,17 +33,15 @@ FROM ghcr.io/puppeteer/puppeteer:23.9.0
 USER root
 WORKDIR /app
 
-# Copy package files
-COPY package.json ./
-COPY core/package.json ./core/
-COPY server/package.json ./server/
+# Copy everything from builder
+COPY --from=builder /app /app
 
-# Install production dependencies only
-RUN npm install --workspaces --include-workspace-root --omit=dev --legacy-peer-deps
+# Prune dev dependencies for production
+WORKDIR /app/core
+RUN npm prune --production
 
-# Copy built files from builder
-COPY --from=builder /app/core/dist ./core/dist
-COPY --from=builder /app/server/dist ./server/dist
+WORKDIR /app/server
+RUN npm prune --production
 
 # Create app user and set permissions
 RUN groupadd -r appuser && useradd -r -g appuser appuser && \

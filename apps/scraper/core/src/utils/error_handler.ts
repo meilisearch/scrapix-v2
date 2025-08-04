@@ -1,4 +1,4 @@
-import { Log } from '@crawlee/core'
+import { Log } from 'crawlee'
 
 const log = new Log({ prefix: 'ErrorHandler' })
 

@@ -10,7 +10,7 @@ import { Sender } from './sender'
 import { Config } from './types'
 import { initMeilisearchClient } from './utils/meilisearch_client'
 import { Webhook } from './webhook'
-import { Log } from '@crawlee/core'
+import { Log } from 'crawlee'
 
 /**
  * Service identifiers for dependency injection

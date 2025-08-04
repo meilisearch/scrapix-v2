@@ -6,7 +6,6 @@ WORKDIR /app
 
 # Copy all necessary config files from root
 COPY tsconfig.base.json tsconfig.json ./
-COPY package.json ./
 
 # Copy scraper workspace files
 COPY apps/scraper/package.json ./apps/scraper/
@@ -14,13 +13,15 @@ COPY apps/scraper/core/package.json ./apps/scraper/core/
 COPY apps/scraper/server/package.json ./apps/scraper/server/
 COPY apps/scraper/cli/package.json ./apps/scraper/cli/
 
-# Install dependencies in the scraper workspace
-WORKDIR /app/apps/scraper
-RUN npm install --workspaces --include-workspace-root --legacy-peer-deps
-
 # Copy all source code
-WORKDIR /app
 COPY apps/scraper/ ./apps/scraper/
+
+# Install dependencies for each package individually
+WORKDIR /app/apps/scraper/core
+RUN npm install --legacy-peer-deps
+
+WORKDIR /app/apps/scraper/server
+RUN npm install --legacy-peer-deps
 
 # Build core and server
 WORKDIR /app/apps/scraper/core
@@ -37,6 +38,13 @@ WORKDIR /app
 
 # Copy everything from builder (includes node_modules and built files)
 COPY --from=builder /app /app
+
+# Prune dev dependencies for production
+WORKDIR /app/apps/scraper/core
+RUN npm prune --production
+
+WORKDIR /app/apps/scraper/server
+RUN npm prune --production
 
 # Create app user and set permissions
 RUN groupadd -r appuser && useradd -r -g appuser appuser && \

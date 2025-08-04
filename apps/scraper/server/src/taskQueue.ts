@@ -2,7 +2,7 @@ import Queue, { Job, DoneCallback } from 'bull'
 import { fork } from 'child_process'
 import { join } from 'path'
 import { Config, initMeilisearchClient } from '@scrapix/core'
-import { Log } from '@crawlee/core'
+import { Log } from 'crawlee'
 
 const log = new Log({ prefix: 'CrawlTaskQueue' })
 

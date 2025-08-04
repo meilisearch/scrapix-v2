@@ -2,7 +2,7 @@ import { MeiliSearch, Settings } from 'meilisearch'
 import { Config, DocumentType } from './types'
 import { initMeilisearchClient } from './utils/meilisearch_client'
 import { Webhook } from './webhook'
-import { Log } from '@crawlee/core'
+import { Log } from 'crawlee'
 import { ScrapixError, ErrorCode } from './utils/error_handler'
 import { getConfig } from './constants'
 

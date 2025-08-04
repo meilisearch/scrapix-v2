@@ -5,7 +5,7 @@ import { MeiliSearch } from 'meilisearch'
 // Mock dependencies
 jest.mock('meilisearch')
 jest.mock('../webhook')
-jest.mock('@crawlee/core')
+jest.mock('crawlee')
 
 describe('Sender', () => {
   let sender: Sender

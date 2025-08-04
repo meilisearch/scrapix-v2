@@ -9,7 +9,7 @@ import { CheerioCrawler } from './cheerio'
 import { PlaywrightCrawler } from './playwright'
 import { Sender } from '../sender'
 import { Container, SERVICES } from '../container'
-import { Log } from '@crawlee/core'
+import { Log } from 'crawlee'
 
 export interface CrawlerFactoryDependencies {
   sender?: Sender

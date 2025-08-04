@@ -1,105 +1,54 @@
-# Optimized Dockerfile for Fly.io deployment
-# Build stage
-FROM node:20-slim AS builder
+# Optimized Dockerfile for Fly.io deployment using Puppeteer base
+FROM ghcr.io/puppeteer/puppeteer:23.9.0 AS builder
 
+USER root
 WORKDIR /app
 
-# Install build dependencies
-RUN apt-get update && apt-get install -y \
-    python3 \
-    make \
-    g++ \
-    && rm -rf /var/lib/apt/lists/*
+# Copy all necessary config files from root
+COPY tsconfig.base.json tsconfig.json ./
 
-# Copy package files
-COPY tsconfig.base.json tsconfig.json package.json ./
+# Copy package files for the workspace
 COPY apps/scraper/package.json ./apps/scraper/
 COPY apps/scraper/core/package.json ./apps/scraper/core/
 COPY apps/scraper/server/package.json ./apps/scraper/server/
 COPY apps/scraper/cli/package.json ./apps/scraper/cli/
 
-# Install dependencies
-WORKDIR /app/apps/scraper
-RUN npm install --workspaces --include-workspace-root --legacy-peer-deps
-
-# Copy source code
-WORKDIR /app
+# Copy all source code first (before installing deps)
 COPY apps/scraper/ ./apps/scraper/
 
-# Build the application
+# Install dependencies for each package individually
 WORKDIR /app/apps/scraper/core
-RUN npm run build
+RUN npm install --legacy-peer-deps
+
+WORKDIR /app/apps/scraper/server  
+RUN npm install --legacy-peer-deps
+
+# Build core and server
+WORKDIR /app/apps/scraper/core
+RUN npx tsc
 
 WORKDIR /app/apps/scraper/server
-RUN npm run build
+RUN npx tsc
 
-# Production stage
-FROM node:20-slim
+# Production stage - simpler approach: copy everything from builder
+FROM ghcr.io/puppeteer/puppeteer:23.9.0
 
+USER root
 WORKDIR /app
 
-# Install Chrome dependencies for Puppeteer
-RUN apt-get update && apt-get install -y \
-    wget \
-    gnupg \
-    ca-certificates \
-    fonts-liberation \
-    libasound2 \
-    libatk-bridge2.0-0 \
-    libatk1.0-0 \
-    libc6 \
-    libcairo2 \
-    libcups2 \
-    libdbus-1-3 \
-    libexpat1 \
-    libfontconfig1 \
-    libgbm1 \
-    libgcc1 \
-    libglib2.0-0 \
-    libgtk-3-0 \
-    libnspr4 \
-    libnss3 \
-    libpango-1.0-0 \
-    libpangocairo-1.0-0 \
-    libstdc++6 \
-    libx11-6 \
-    libx11-xcb1 \
-    libxcb1 \
-    libxcomposite1 \
-    libxcursor1 \
-    libxdamage1 \
-    libxext6 \
-    libxfixes3 \
-    libxi6 \
-    libxrandr2 \
-    libxrender1 \
-    libxss1 \
-    libxtst6 \
-    lsb-release \
-    xdg-utils \
-    && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
-    && sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list' \
-    && apt-get update \
-    && apt-get install -y google-chrome-stable \
-    && rm -rf /var/lib/apt/lists/*
+# Copy everything from builder (includes node_modules and built files)
+COPY --from=builder /app /app
 
-# Copy built application from builder
-COPY --from=builder /app/apps/scraper/core/dist ./apps/scraper/core/dist
-COPY --from=builder /app/apps/scraper/server/dist ./apps/scraper/server/dist
-COPY --from=builder /app/apps/scraper/core/node_modules ./apps/scraper/core/node_modules
-COPY --from=builder /app/apps/scraper/server/node_modules ./apps/scraper/server/node_modules
-COPY --from=builder /app/apps/scraper/node_modules ./apps/scraper/node_modules
+# Install production dependencies only
+WORKDIR /app/apps/scraper/core
+RUN npm prune --production
 
-# Copy package.json files for proper module resolution
-COPY --from=builder /app/package.json ./
-COPY --from=builder /app/apps/scraper/package.json ./apps/scraper/
-COPY --from=builder /app/apps/scraper/core/package.json ./apps/scraper/core/
-COPY --from=builder /app/apps/scraper/server/package.json ./apps/scraper/server/
+WORKDIR /app/apps/scraper/server
+RUN npm prune --production
 
-# Create non-root user
-RUN groupadd -r appuser && useradd -r -g appuser appuser \
-    && mkdir -p /home/appuser/.cache \
-    && chown -R appuser:appuser /app /home/appuser
+# Create app user and set permissions
+RUN groupadd -r appuser && useradd -r -g appuser appuser && \
+    chown -R appuser:appuser /app
 
 USER appuser
 
@@ -109,10 +58,6 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
 
 EXPOSE 8080
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:8080/health', (r) => {r.statusCode === 200 ? process.exit(0) : process.exit(1)})"
 
 # Start the server
 WORKDIR /app/apps/scraper/server
