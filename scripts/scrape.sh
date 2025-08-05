@@ -11,6 +11,13 @@ ORIGINAL_CWD="$(pwd)"
 # Export it so the CLI can access it
 export INIT_CWD="$ORIGINAL_CWD"
 
+# Pass through CRAWLEE_STORAGE_DIR if set, otherwise use current directory
+if [ -z "$CRAWLEE_STORAGE_DIR" ]; then
+    export CRAWLEE_STORAGE_DIR="$PROJECT_ROOT/apps/scraper/cli/storage"
+    mkdir -p "$CRAWLEE_STORAGE_DIR/request_queues/default"
+    mkdir -p "$CRAWLEE_STORAGE_DIR/key_value_stores/default"
+fi
+
 # Build core package
 (cd "$PROJECT_ROOT/apps/scraper/core" && yarn build)
 

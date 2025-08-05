@@ -1,4 +1,4 @@
-import { Log, RequestQueue } from 'crawlee'
+import { Log, RequestQueue, Configuration } from 'crawlee'
 // import { PuppeteerCrawler } from './puppeteer'
 // import { CheerioCrawler } from './cheerio'
 // import { PlaywrightCrawler } from './playwright'
@@ -12,6 +12,9 @@ import { CrawlerFactory } from './factory'
 import { Container } from '../container'
 
 const log = new Log({ prefix: 'Crawler' })
+
+// Configure Crawlee to use memory storage to avoid file system issues
+Configuration.getGlobalConfig().set('persistStateIntervalMillis', Number.MAX_SAFE_INTEGER)
 
 /**
  * Factory class for creating and managing web crawlers

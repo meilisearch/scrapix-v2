@@ -41,9 +41,9 @@ export class CheerioCrawler extends BaseCrawler {
       requestQueue,
       requestHandler: router as any,
       preNavigationHooks: preNavigationHooks,
-      ...(this.config.max_concurrency && {
-        maxConcurrency: this.config.max_concurrency,
-      }),
+      // Set a fixed concurrency to avoid autoscaling issues
+      maxConcurrency: this.config.max_concurrency || 1,
+      minConcurrency: this.config.max_concurrency || 1,
       ...(this.config.max_requests_per_minute && {
         maxRequestsPerMinute: this.config.max_requests_per_minute,
       }),

@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express'
-import { trace, SpanKind, SpanStatusCode, context } from '@opentelemetry/api'
+import { trace, SpanKind, SpanStatusCode, context, Span } from '@opentelemetry/api'
 
 // Import telemetry from core - use dynamic import to avoid circular dependency
 let telemetry: any
@@ -21,26 +21,24 @@ export function tracingMiddleware() {
     
     const tracer = telemetry.tracer
     
-    const requestSpan = (() => {
-      return tracer.startSpan(
-        `${req.method} ${req.path}`,
-        {
-          kind: SpanKind.SERVER,
-          attributes: {
-            'http.method': req.method,
-            'http.url': req.url,
-            'http.target': req.path,
-            'http.host': req.hostname,
-            'http.scheme': req.protocol,
-            'http.user_agent': req.get('user-agent'),
-            'http.remote_addr': req.ip,
-          },
-        }
-      )
-    })()
+    const requestSpan = tracer.startSpan(
+      `${req.method} ${req.path}`,
+      {
+        kind: SpanKind.SERVER,
+        attributes: {
+          'http.method': req.method,
+          'http.url': req.url,
+          'http.target': req.path,
+          'http.host': req.hostname,
+          'http.scheme': req.protocol,
+          'http.user_agent': req.get('user-agent'),
+          'http.remote_addr': req.ip,
+        },
+      }
+    ) as Span
 
     // Store span in request for later use
-    (req as any).span = requestSpan
+    ;(req as any).span = requestSpan
 
     // Capture response details
     const originalSend = res.send

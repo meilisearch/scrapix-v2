@@ -15,6 +15,15 @@ import yargs from 'yargs'
 import { hideBin } from 'yargs/helpers'
 import { Sender, Crawler, Config, ConfigSchema } from '@scrapix/core';
 
+// Ensure storage directories exist
+try {
+  const storageDir = process.env.CRAWLEE_STORAGE_DIR || path.join(__dirname, '..', 'storage')
+  fs.mkdirSync(path.join(storageDir, 'request_queues', 'default'), { recursive: true })
+  fs.mkdirSync(path.join(storageDir, 'key_value_stores', 'default'), { recursive: true })
+} catch (e) {
+  // Ignore errors
+}
+
 function getConfig({
   configPath,
   config,
