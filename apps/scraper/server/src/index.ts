@@ -4,7 +4,20 @@ dotenv.config()
 import express, { Request, Response, NextFunction } from 'express'
 import rateLimit from 'express-rate-limit'
 import { TaskQueue } from './taskQueue'
-import { Sender, Crawler, ConfigSchema, ScrapixError, ErrorCode, logError, getConfig, Container, closeConnectionPools, businessMetrics, extractCustomerId, extractCustomerAttributes } from '@scrapix/core'
+import {
+  Sender,
+  Crawler,
+  ConfigSchema,
+  ScrapixError,
+  ErrorCode,
+  logError,
+  getConfig,
+  Container,
+  closeConnectionPools,
+  businessMetrics,
+  extractCustomerId,
+  extractCustomerAttributes,
+} from '@scrapix/core'
 import { Log } from 'crawlee'
 import { z } from 'zod'
 import { initializeTelemetry, tracingMiddleware, metricsMiddleware } from './telemetry'
@@ -38,20 +51,6 @@ const createCrawlLimiter = rateLimit({
   },
 })
 
-const jobStatusLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: getConfig('RATE_LIMIT', 'STATUS_MAX_REQUESTS'),
-  message: 'Too many status requests from this IP, please try again later.',
-  validate: false,
-  skip: (req) => {
-    if (!req.ip && !req.ips?.length) {
-      log.warning('Unable to determine client IP for rate limiting')
-      return true
-    }
-    return false
-  },
-})
-
 const globalLimiter = rateLimit({
   windowMs: getConfig('RATE_LIMIT', 'WINDOW_MS'),
   max: getConfig('RATE_LIMIT', 'GLOBAL_MAX_REQUESTS'),
@@ -68,16 +67,21 @@ const globalLimiter = rateLimit({
 
 // Error handler middleware
 const errorHandler = (err: Error, req: Request, res: Response, _next: NextFunction) => {
-  const formatted = logError('UnhandledError', err, { path: req.path, method: req.method })
-  
+  const formatted = logError('UnhandledError', err, {
+    path: req.path,
+    method: req.method,
+  })
+
   const statusCode = err instanceof ScrapixError ? err.statusCode : 500
-  
+
   res.status(statusCode).json({
     status: 'error',
     error: {
       code: formatted.code,
       message: formatted.message,
-      ...(process.env.NODE_ENV !== 'production' && { details: formatted.details }),
+      ...(process.env.NODE_ENV !== 'production' && {
+        details: formatted.details,
+      }),
     },
   })
 }
@@ -110,22 +114,22 @@ class Server {
 
   constructor() {
     this.__check_env()
-    this.__initTelemetry()
+    void this.__initTelemetry()
 
     this.taskQueue = new TaskQueue()
     this.app = express()
-    
+
     // Configure Express to trust proxy headers (needed for rate limiting behind load balancers)
     // Set to specific number of proxies or specific IP addresses for production
     // For Koyeb, we typically have 1-2 proxies in the chain
     this.app.set('trust proxy', 2)
     log.info('Express configured to trust 2 proxy hops')
-    
+
     // Middleware
     this.app.use(express.json({ limit: getConfig('SERVER', 'MAX_BODY_SIZE') }))
     this.app.use(tracingMiddleware()) // Add tracing before other middleware
     this.app.use(metricsMiddleware()) // Add metrics tracking
-    this.app.use(globalLimiter) // Apply global rate limit to all routes
+    this.app.use(globalLimiter as any) // Apply global rate limit to all routes
     this.app.use((req, _res, next) => {
       log.debug('Request received', { method: req.method, path: req.path })
       next()
@@ -133,19 +137,28 @@ class Server {
 
     // Routes
     this.app.get('/health', (req, res) => this.__health(req, res))
-    this.app.post('/crawl', createCrawlLimiter, validateBody(ConfigSchema), (req, res) => this.__asyncCrawl(req, res))
-    this.app.post('/crawl/async', createCrawlLimiter, validateBody(ConfigSchema), (req, res) => this.__asyncCrawl(req, res))
-    this.app.post('/crawl/sync', createCrawlLimiter, validateBody(ConfigSchema), (req, res) => this.__syncCrawl(req, res))
-    this.app.get('/job/:id/status', jobStatusLimiter, (req: Request<{ id: string }>, res) => this.__jobStatus(req, res))
-    this.app.get('/job/:id/events', jobStatusLimiter, (req: Request<{ id: string }>, res) => this.__jobEvents(req, res))
+    this.app.post('/crawl', createCrawlLimiter as any, validateBody(ConfigSchema), (req, res) =>
+      this.__asyncCrawl(req, res)
+    )
+    this.app.post(
+      '/crawl/async',
+      createCrawlLimiter as any,
+      validateBody(ConfigSchema),
+      (req, res) => this.__asyncCrawl(req, res)
+    )
+    this.app.post(
+      '/crawl/sync',
+      createCrawlLimiter as any,
+      validateBody(ConfigSchema),
+      (req, res) => this.__syncCrawl(req, res)
+    )
+
     this.app.post('/webhook', (req, res) => this.__log_webhook(req, res))
 
     // Error handler (must be last)
     this.app.use(errorHandler)
 
-    this.app.listen(port, () =>
-      log.info(`Crawler app listening on port ${port}!`)
-    )
+    this.app.listen(port, () => log.info(`Crawler app listening on port ${port}!`))
   }
 
   __check_env() {
@@ -175,28 +188,28 @@ class Server {
     const span = trace.getActiveSpan()
     try {
       const config = req.body // Already validated by middleware
-      
+
       // Add customer attributes to span
       if (span) {
         const customerAttrs = extractCustomerAttributes(config)
         span.setAttributes(customerAttrs)
         span.setAttribute('operation.type', 'async_crawl')
       }
-      
+
       // Track business metrics
       businessMetrics.recordCrawlStart(config)
-      
+
       const job = await this.taskQueue.add(config)
-      log.info('Asynchronous crawl task added to queue', { 
-        config, 
+      log.info('Asynchronous crawl task added to queue', {
+        config,
         jobId: job.id,
-        customerId: extractCustomerId(config)
+        customerId: extractCustomerId(config),
       })
-      
+
       if (span) {
         span.setAttribute('job.id', job.id)
       }
-      
+
       res.status(200).send({
         status: 'ok',
         jobId: job.id,
@@ -227,46 +240,46 @@ class Server {
   async __syncCrawl(req: Request, res: Response) {
     const span = trace.getActiveSpan()
     const startTime = Date.now()
-    
+
     try {
       const config = req.body // Already validated by middleware
-      
+
       // Add customer attributes to span
       if (span) {
         const customerAttrs = extractCustomerAttributes(config)
         span.setAttributes(customerAttrs)
         span.setAttribute('operation.type', 'sync_crawl')
       }
-      
-      log.info('Starting synchronous crawl', { 
+
+      log.info('Starting synchronous crawl', {
         config,
-        customerId: extractCustomerId(config)
+        customerId: extractCustomerId(config),
       })
-      
+
       // Track business metrics
       businessMetrics.recordCrawlStart(config)
-      
+
       // Create container for dependency injection
       // const container = Container.createDefault(config)
       Container.createDefault(config)
-      
+
       const sender = new Sender(config)
       await sender.init()
 
-      const crawler = await Crawler.create(config.crawler_type, sender, config)
+      const crawler = Crawler.create(config.crawler_type, sender, config)
 
       await Crawler.run(crawler)
       await sender.finish()
 
       const duration = (Date.now() - startTime) / 1000
       businessMetrics.recordCrawlDuration(config, duration)
-      
-      log.info('Synchronous crawl completed', { 
+
+      log.info('Synchronous crawl completed', {
         config,
         customerId: extractCustomerId(config),
-        durationSeconds: duration
+        durationSeconds: duration,
       })
-      
+
       res.status(200).send({
         status: 'ok',
         indexUid: config.meilisearch_index_uid,
@@ -299,14 +312,14 @@ class Server {
   async __jobStatus(req: Request<{ id: string }>, res: Response): Promise<void> {
     try {
       const jobId = req.params.id
-      
+
       // Validate job ID format
       if (!jobId || !/^\d+$/.test(jobId)) {
         res.status(400).send({ error: 'Invalid job ID format' })
         return
       }
       const job = await this.taskQueue.getJob(jobId)
-      
+
       if (!job) {
         throw new ScrapixError(
           ErrorCode.JOB_NOT_FOUND,
@@ -318,7 +331,7 @@ class Server {
 
       const status = await job.getState()
       const progress = job.progress()
-      
+
       res.status(200).send({
         jobId: job.id,
         status,
@@ -333,7 +346,9 @@ class Server {
       if (error instanceof ScrapixError) {
         res.status(error.statusCode).json(error.toJSON())
       } else {
-        const formatted = logError('JobStatus', error, { jobId: req.params.id })
+        const formatted = logError('JobStatus', error, {
+          jobId: req.params.id,
+        })
         res.status(500).json({
           status: 'error',
           error: formatted,
@@ -344,17 +359,17 @@ class Server {
 
   __jobEvents(req: Request<{ id: string }>, res: Response) {
     const jobId = req.params.id
-    
+
     // Validate job ID format
     if (!jobId || !/^\d+$/.test(jobId)) {
       res.status(400).send({ error: 'Invalid job ID format' })
       return
     }
-    
+
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
+      Connection: 'keep-alive',
       'Access-Control-Allow-Origin': '*',
     })
 
@@ -363,16 +378,29 @@ class Server {
     }
 
     // Send initial status
-    this.taskQueue.getJob(jobId).then(job => {
-      if (job) {
-        job.getState().then(status => {
-          sendEvent({ type: 'status', status, progress: job.progress() })
-        })
-      } else {
-        sendEvent({ type: 'error', message: 'Job not found' })
+    this.taskQueue
+      .getJob(jobId)
+      .then((job) => {
+        if (job) {
+          job
+            .getState()
+            .then((status) => {
+              sendEvent({ type: 'status', status, progress: job.progress() })
+            })
+            .catch((error) => {
+              log.error('Error getting job state', { error })
+              sendEvent({ type: 'error', message: 'Failed to get job state' })
+            })
+        } else {
+          sendEvent({ type: 'error', message: 'Job not found' })
+          res.end()
+        }
+      })
+      .catch((error) => {
+        log.error('Error getting job', { error })
+        sendEvent({ type: 'error', message: 'Failed to get job' })
         res.end()
-      }
-    })
+      })
 
     // Listen for job updates
     const onJobProgress = (job: any, progress: number) => {
@@ -419,15 +447,15 @@ new Server()
 // Graceful shutdown handling
 const gracefulShutdown = async (signal: string) => {
   log.info(`Received ${signal}, shutting down gracefully...`)
-  
+
   try {
     // Close connection pools
     closeConnectionPools()
     log.info('Connection pools closed')
-    
+
     // Give ongoing requests a chance to complete
-    await new Promise(resolve => setTimeout(resolve, 5000))
-    
+    await new Promise((resolve) => setTimeout(resolve, 5000))
+
     process.exit(0)
   } catch (error) {
     log.error('Error during shutdown', { error })

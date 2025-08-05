@@ -18,31 +18,28 @@ export function tracingMiddleware() {
       // Telemetry not initialized yet, skip tracing
       return next()
     }
-    
+
     const tracer = telemetry.tracer
-    
-    const requestSpan = tracer.startSpan(
-      `${req.method} ${req.path}`,
-      {
-        kind: SpanKind.SERVER,
-        attributes: {
-          'http.method': req.method,
-          'http.url': req.url,
-          'http.target': req.path,
-          'http.host': req.hostname,
-          'http.scheme': req.protocol,
-          'http.user_agent': req.get('user-agent'),
-          'http.remote_addr': req.ip,
-        },
-      }
-    ) as Span
+
+    const requestSpan = tracer.startSpan(`${req.method} ${req.path}`, {
+      kind: SpanKind.SERVER,
+      attributes: {
+        'http.method': req.method,
+        'http.url': req.url,
+        'http.target': req.path,
+        'http.host': req.hostname,
+        'http.scheme': req.protocol,
+        'http.user_agent': req.get('user-agent'),
+        'http.remote_addr': req.ip,
+      },
+    }) as Span
 
     // Store span in request for later use
     ;(req as any).span = requestSpan
 
     // Capture response details
     const originalSend = res.send
-    res.send = function(data: any) {
+    res.send = function (data: any) {
       requestSpan.setAttributes({
         'http.status_code': res.statusCode,
         'http.response.size': Buffer.byteLength(JSON.stringify(data)),

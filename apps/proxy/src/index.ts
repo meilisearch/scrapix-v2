@@ -156,8 +156,7 @@ class CrawlerProxy {
       return true
     }
 
-    const authHeader =
-      req.headers['proxy-authorization'] || req.headers['authorization']
+    const authHeader = req.headers['proxy-authorization'] || req.headers['authorization']
 
     if (!authHeader) {
       return false
@@ -177,10 +176,7 @@ class CrawlerProxy {
       if (basicMatch) {
         const decoded = Buffer.from(basicMatch[1], 'base64').toString()
         const [username, password] = decoded.split(':')
-        if (
-          username === this.authConfig.username &&
-          password === this.authConfig.password
-        ) {
+        if (username === this.authConfig.username && password === this.authConfig.password) {
           return true
         }
       }
@@ -197,10 +193,7 @@ class CrawlerProxy {
     res.end('Proxy authentication required')
   }
 
-  public handleHttpRequest(
-    req: http.IncomingMessage,
-    res: http.ServerResponse
-  ): void {
+  public handleHttpRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
     // Check authentication
     if (!this.authenticateRequest(req)) {
       this.sendAuthRequired(res)
@@ -224,11 +217,7 @@ class CrawlerProxy {
     })
   }
 
-  public handleHttpsConnect(
-    req: http.IncomingMessage,
-    socket: any,
-    _head: Buffer
-  ): void {
+  public handleHttpsConnect(req: http.IncomingMessage, socket: any, _head: Buffer): void {
     // Check authentication
     if (!this.authenticateRequest(req)) {
       socket.write('HTTP/1.1 407 Proxy Authentication Required\r\n')
@@ -361,9 +350,7 @@ app.get('/proxy-info', (req, res) => {
       note: 'Configure your crawler to use this server as HTTP/HTTPS proxy',
       authExample: authConfig.enabled
         ? {
-            basic: authConfig.username
-              ? `http://username:password@${req.headers.host}`
-              : undefined,
+            basic: authConfig.username ? `http://username:password@${req.headers.host}` : undefined,
             bearer: authConfig.token
               ? 'Use Proxy-Authorization: Bearer YOUR_TOKEN header'
               : undefined,

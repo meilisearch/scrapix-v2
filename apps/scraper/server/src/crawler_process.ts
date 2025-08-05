@@ -23,11 +23,7 @@ async function startCrawling(config: Config) {
   const sender = new Sender(config)
   await sender.init()
 
-  const crawler = await Crawler.create(
-    config.crawler_type || 'cheerio',
-    sender,
-    config
-  )
+  const crawler = Crawler.create(config.crawler_type || 'cheerio', sender, config)
 
   await Crawler.run(crawler)
   await sender.finish()

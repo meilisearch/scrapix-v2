@@ -1,7 +1,13 @@
 import Queue, { Job, DoneCallback } from 'bull'
 import { fork } from 'child_process'
 import { join } from 'path'
-import { Config, initMeilisearchClient, queueMetrics, JobTelemetry, extractCustomerId } from '@scrapix/core'
+import {
+  Config,
+  initMeilisearchClient,
+  queueMetrics,
+  JobTelemetry,
+  extractCustomerId,
+} from '@scrapix/core'
 import { Log } from 'crawlee'
 
 const log = new Log({ prefix: 'CrawlTaskQueue' })
@@ -21,31 +27,32 @@ export class TaskQueue {
       this.queue = process.env.REDIS_URL
         ? new Queue(queueName, process.env.REDIS_URL, {
             redis: {
-              maxRetriesPerRequest: 3,
-              enableReadyCheck: true,
               connectTimeout: 10000,
               retryStrategy: (times: number) => {
-                const delay = Math.min(times * 50, 2000);
-                log.warning(`Redis connection attempt ${times}, retrying in ${delay}ms`);
-                return delay;
+                const delay = Math.min(times * 50, 2000)
+                log.warning(`Redis connection attempt ${times}, retrying in ${delay}ms`)
+                return delay
               },
+              // These options are safe for Bull
+              lazyConnect: false,
+              // Don't set maxRetriesPerRequest or enableReadyCheck here
             },
           })
         : new Queue(queueName)
 
       if (process.env.REDIS_URL) {
         // Set up Redis error handlers
-        const client = this.queue.client;
+        const client = this.queue.client
         client.on('error', (error) => {
-          log.error('Redis client error', { error: error.message });
-        });
+          log.error('Redis client error', { error: error.message })
+        })
         client.on('connect', () => {
-          log.info('Redis client connected');
-        });
+          log.info('Redis client connected')
+        })
         client.on('ready', () => {
-          log.info('Redis client ready');
-        });
-        
+          log.info('Redis client ready')
+        })
+
         // Set up queue event handlers
         void this.queue.process(this.__process.bind(this))
 
@@ -62,13 +69,13 @@ export class TaskQueue {
         Object.entries(eventHandlers).forEach(([event, handler]) => {
           this.queue.on(event, handler.bind(this))
         })
-        
+
         // Set up queue metrics callbacks
         queueMetrics.setQueueDepthCallback(async () => {
           const count = await this.queue.getWaitingCount()
           return count
         })
-        
+
         queueMetrics.setActiveJobsCallback(async () => {
           const count = await this.queue.getActiveCount()
           return count
@@ -96,25 +103,25 @@ export class TaskQueue {
 
   async __process(job: Job<Config>, done: DoneCallback) {
     log.debug('Processing job', { jobId: job.id, customerId: extractCustomerId(job.data) })
-    
+
     // Wrap job processing with telemetry
     JobTelemetry.processWithTelemetry(job, async () => {
       return new Promise((resolve, reject) => {
         const crawlerPath = join(__dirname, 'crawler_process.js')
         const childProcess = fork(crawlerPath)
-        
+
         childProcess.send(job.data)
-        
+
         childProcess.on('message', (message) => {
           log.info('Crawler process message', { message, jobId: job.id })
           resolve(message)
         })
-        
+
         childProcess.on('error', (error: Error) => {
           log.error('Crawler process error', { error, jobId: job.id })
           reject(error)
         })
-        
+
         childProcess.on('exit', (code) => {
           if (code !== 0) {
             log.error('Crawler process exited with non-zero code', { code, jobId: job.id })
@@ -123,8 +130,8 @@ export class TaskQueue {
         })
       })
     })
-    .then(() => done())
-    .catch((error) => done(error))
+      .then(() => done())
+      .catch((error) => done(error))
   }
 
   __jobAdded(job: Job) {
