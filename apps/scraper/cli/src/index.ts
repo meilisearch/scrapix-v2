@@ -1,3 +1,9 @@
+// Mark as CLI usage
+process.env.SCRAPIX_CLI = 'true'
+
+// Setup storage before any other imports
+import './setup-storage'
+
 import * as dotenv from 'dotenv'
 import { Log } from 'crawlee'
 
@@ -14,15 +20,6 @@ import path from 'path'
 import yargs from 'yargs'
 import { hideBin } from 'yargs/helpers'
 import { Sender, Crawler, Config, ConfigSchema } from '@scrapix/core';
-
-// Ensure storage directories exist
-try {
-  const storageDir = process.env.CRAWLEE_STORAGE_DIR || path.join(__dirname, '..', 'storage')
-  fs.mkdirSync(path.join(storageDir, 'request_queues', 'default'), { recursive: true })
-  fs.mkdirSync(path.join(storageDir, 'key_value_stores', 'default'), { recursive: true })
-} catch (e) {
-  // Ignore errors
-}
 
 function getConfig({
   configPath,
@@ -83,11 +80,7 @@ function getConfig({
     }).argv
 
   log.info('Starting scraper', {
-    config: argv.config,
     configPath: argv.configPath,
-    browserPath: argv.browserPath,
-    openaiApiKey: process.env.OPENAI_API_KEY,
-    openaiModel: process.env.OPENAI_MODEL,
   })
 
   const config = getConfig(argv)
@@ -98,13 +91,23 @@ function getConfig({
   const sender = new Sender(config)
   await sender.init()
 
+  console.log('DEBUG: Creating crawler...')
   const crawler = await Crawler.create(
     config.crawler_type || 'cheerio',
     sender,
     config,
     config.launch_options || launchOptions
   )
+  console.log('DEBUG: Crawler created, about to run...')
 
-  await Crawler.run(crawler)
+  try {
+    await Crawler.run(crawler)
+  } catch (error) {
+    console.error('DEBUG: Crawler.run failed:', error)
+    throw error
+  }
+  
+  console.log('DEBUG: Crawler.run completed, finishing sender...')
   await sender.finish()
+  console.log('DEBUG: All done!')
 })()

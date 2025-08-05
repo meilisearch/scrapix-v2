@@ -37,13 +37,18 @@ export class CheerioCrawler extends BaseCrawler {
         ]
       : []
 
-    return {
+    const options: CheerioCrawlerOptions = {
       requestQueue,
       requestHandler: router as any,
       preNavigationHooks: preNavigationHooks,
       // Set a fixed concurrency to avoid autoscaling issues
       maxConcurrency: this.config.max_concurrency || 1,
-      minConcurrency: this.config.max_concurrency || 1,
+      minConcurrency: 1,
+      // Disable autoscaling to avoid storage issues
+      autoscaledPoolOptions: {
+        desiredConcurrency: 1,
+        maxConcurrency: this.config.max_concurrency || 1,
+      },
       ...(this.config.max_requests_per_minute && {
         maxRequestsPerMinute: this.config.max_requests_per_minute,
       }),
@@ -51,6 +56,9 @@ export class CheerioCrawler extends BaseCrawler {
         proxyConfiguration: this.proxyConfiguration,
       }),
     }
+
+    console.log('CheerioCrawler options:', options)
+    return options
   }
 
   createCrawlerInstance(options: CheerioCrawlerOptions): CrawleeCheerioCrawler {
@@ -58,7 +66,20 @@ export class CheerioCrawler extends BaseCrawler {
       options.additionalMimeTypes = ['application/pdf']
     }
 
-    return new CrawleeCheerioCrawler(options)
+    // Disable session pool and autoscaling to avoid storage issues
+    const crawlerOptions = {
+      ...options,
+      useSessionPool: false,
+      persistCookiesPerSession: false,
+      // Disable autoscaling completely
+      autoscaledPoolOptions: {
+        ...options.autoscaledPoolOptions,
+        isTaskReadyFunction: async () => true,
+        isFinishedFunction: async () => false,
+      },
+    }
+
+    return new CrawleeCheerioCrawler(crawlerOptions)
   }
 
   override async defaultHandler(context: CheerioCrawlingContext) {

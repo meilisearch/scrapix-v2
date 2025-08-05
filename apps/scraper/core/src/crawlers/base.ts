@@ -45,6 +45,7 @@ export abstract class BaseCrawler {
 
   // Add this new method
   async defaultHandler(context: any): Promise<void> {
+    log.info('Default handler called', { url: context.request.url })
     await this.handlePage(context)
   }
 
@@ -61,7 +62,11 @@ export abstract class BaseCrawler {
     })
     
     this.nb_page_crawled++
-    log.debug('Processing page', { url })
+    log.info('Processing page', { 
+      url,
+      crawledCount: this.nb_page_crawled,
+      indexedCount: this.nb_page_indexed
+    })
 
     const crawled_globs = this.__generate_globs(this.config.start_urls)
     const excluded_crawled_globs = this.__generate_globs(

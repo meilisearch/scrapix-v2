@@ -43,6 +43,11 @@ RUN npm prune --production
 WORKDIR /app/server
 RUN npm prune --production
 
+# Create storage directories for Crawlee
+RUN mkdir -p /app/server/storage/request_queues/default && \
+    mkdir -p /app/server/storage/key_value_stores/default && \
+    mkdir -p /app/server/storage/datasets/default
+
 # Create app user and set permissions
 RUN groupadd -r appuser && useradd -r -g appuser appuser && \
     chown -R appuser:appuser /app
@@ -53,6 +58,7 @@ USER appuser
 ENV NODE_ENV=production
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
+ENV CRAWLEE_STORAGE_DIR=/app/server/storage
 
 EXPOSE 8080
 

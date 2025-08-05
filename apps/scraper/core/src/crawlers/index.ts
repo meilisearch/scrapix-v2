@@ -13,8 +13,12 @@ import { Container } from '../container'
 
 const log = new Log({ prefix: 'Crawler' })
 
-// Configure Crawlee to use memory storage to avoid file system issues
-Configuration.getGlobalConfig().set('persistStateIntervalMillis', Number.MAX_SAFE_INTEGER)
+// Configure Crawlee storage
+Configuration.getGlobalConfig().set('persistStateIntervalMillis', 60000) // 1 minute
+// Disable storage persistence for CLI usage
+if (process.env.SCRAPIX_CLI) {
+  Configuration.getGlobalConfig().set('persistStorage', false)
+}
 
 /**
  * Factory class for creating and managing web crawlers
@@ -82,7 +86,18 @@ export class Crawler {
    */
   static async run(crawler: BaseCrawler): Promise<void> {
     log.info(`Starting ${crawler.constructor.name} run`)
-    const requestQueue = await Crawler.setupRequestQueue(crawler.urls)
+    console.log('DEBUG: Crawler.run called with urls:', crawler.urls)
+    
+    let requestQueue: RequestQueue
+    try {
+      console.log('DEBUG: About to setup request queue')
+      requestQueue = await Crawler.setupRequestQueue(crawler.urls)
+      console.log('DEBUG: Request queue setup complete')
+    } catch (error) {
+      console.error('DEBUG: Failed to setup request queue:', error)
+      log.error('Failed to setup request queue', { error: (error as Error).message })
+      throw error
+    }
 
     const router = crawler.createRouter()
     router.addDefaultHandler(crawler.defaultHandler.bind(crawler))
@@ -95,7 +110,16 @@ export class Crawler {
     const intervalId = Crawler.handleWebhook(crawler, interval)
 
     try {
-      await crawlerInstance.run()
+      log.info('Running crawler instance')
+      
+      // Add a timeout wrapper to debug hanging issues
+      const crawlerPromise = crawlerInstance.run()
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Crawler timeout after 30 seconds')), 30000)
+      })
+      
+      await Promise.race([crawlerPromise, timeoutPromise])
+      log.info('Crawler instance run completed')
 
       await Webhook.get(crawler.config).active(crawler.config, {
         nb_page_crawled: crawler.nb_page_crawled,
@@ -103,7 +127,9 @@ export class Crawler {
         nb_documents_sent: crawler.sender.nb_documents_sent,
       })
     } catch (err) {
+      log.error('Crawler run failed', { error: (err as Error).message, stack: (err as Error).stack })
       await Webhook.get(crawler.config).failed(crawler.config, err as Error)
+      throw err
     } finally {
       clearInterval(intervalId)
     }
@@ -122,7 +148,8 @@ export class Crawler {
       throw new Error('start_urls must be an array of strings')
     }
 
-    const requestQueue = await RequestQueue.open('default')
+    log.info('Setting up request queue', { urls })
+    const requestQueue = await RequestQueue.open()
 
     if (this.config?.use_sitemap == true) {
       try {
@@ -148,8 +175,17 @@ export class Crawler {
         await requestQueue.addRequests(urls.map((url) => ({ url })))
       }
     } else {
+      log.info('Adding URLs to queue', { urls })
       await requestQueue.addRequests(urls.map((url) => ({ url })))
+      log.info('URLs added successfully')
     }
+
+    const queueInfo = await requestQueue.getInfo()
+    log.info('Request queue setup complete', {
+      totalRequests: queueInfo?.totalRequestCount,
+      handledRequests: queueInfo?.handledRequestCount,
+      pendingRequests: queueInfo?.pendingRequestCount
+    })
 
     return requestQueue
   }
