@@ -26,6 +26,8 @@ const createCrawlLimiter = rateLimit({
   message: 'Too many crawl requests from this IP, please try again later.',
   standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
   legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+  // Disable trust proxy validation since we handle it at the app level
+  validate: false,
   skip: (req) => {
     // Skip rate limiting if we can't determine the IP (failopen)
     if (!req.ip && !req.ips?.length) {
@@ -40,6 +42,7 @@ const jobStatusLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: getConfig('RATE_LIMIT', 'STATUS_MAX_REQUESTS'),
   message: 'Too many status requests from this IP, please try again later.',
+  validate: false,
   skip: (req) => {
     if (!req.ip && !req.ips?.length) {
       log.warning('Unable to determine client IP for rate limiting')
@@ -53,6 +56,7 @@ const globalLimiter = rateLimit({
   windowMs: getConfig('RATE_LIMIT', 'WINDOW_MS'),
   max: getConfig('RATE_LIMIT', 'GLOBAL_MAX_REQUESTS'),
   message: 'Too many requests from this IP, please try again later.',
+  validate: false,
   skip: (req) => {
     if (!req.ip && !req.ips?.length) {
       log.warning('Unable to determine client IP for rate limiting')
@@ -112,8 +116,10 @@ class Server {
     this.app = express()
     
     // Configure Express to trust proxy headers (needed for rate limiting behind load balancers)
-    this.app.set('trust proxy', true)
-    log.info('Express configured to trust proxy headers')
+    // Set to specific number of proxies or specific IP addresses for production
+    // For Koyeb, we typically have 1-2 proxies in the chain
+    this.app.set('trust proxy', 2)
+    log.info('Express configured to trust 2 proxy hops')
     
     // Middleware
     this.app.use(express.json({ limit: getConfig('SERVER', 'MAX_BODY_SIZE') }))
@@ -138,7 +144,7 @@ class Server {
     this.app.use(errorHandler)
 
     this.app.listen(port, () =>
-      log.debug(`Crawler app listening on port ${port}!`)
+      log.info(`Crawler app listening on port ${port}!`)
     )
   }
 

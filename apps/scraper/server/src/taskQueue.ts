@@ -19,10 +19,33 @@ export class TaskQueue {
     try {
       // Initialize queue with Redis URL if available
       this.queue = process.env.REDIS_URL
-        ? new Queue(queueName, process.env.REDIS_URL)
+        ? new Queue(queueName, process.env.REDIS_URL, {
+            redis: {
+              maxRetriesPerRequest: 3,
+              enableReadyCheck: true,
+              connectTimeout: 10000,
+              retryStrategy: (times: number) => {
+                const delay = Math.min(times * 50, 2000);
+                log.warning(`Redis connection attempt ${times}, retrying in ${delay}ms`);
+                return delay;
+              },
+            },
+          })
         : new Queue(queueName)
 
       if (process.env.REDIS_URL) {
+        // Set up Redis error handlers
+        const client = this.queue.client;
+        client.on('error', (error) => {
+          log.error('Redis client error', { error: error.message });
+        });
+        client.on('connect', () => {
+          log.info('Redis client connected');
+        });
+        client.on('ready', () => {
+          log.info('Redis client ready');
+        });
+        
         // Set up queue event handlers
         void this.queue.process(this.__process.bind(this))
 
