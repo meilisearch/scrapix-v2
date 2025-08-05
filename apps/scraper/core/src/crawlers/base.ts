@@ -5,6 +5,8 @@ import { Sender } from '../sender'
 import { Config, Scraper, CrawlerType } from '../types'
 import { Log } from 'crawlee'
 import * as cheerio from 'cheerio'
+import { telemetry, businessMetrics } from '../telemetry'
+import { SpanStatusCode } from '@opentelemetry/api'
 
 const log = new Log({ prefix: 'BaseCrawler' })
 
@@ -49,8 +51,17 @@ export abstract class BaseCrawler {
   // New method to handle the common logic
   protected async handlePage(context: any): Promise<void> {
     const { request, enqueueLinks } = context
+    const url = request.loadedUrl
+    
+    // Start telemetry span for page processing
+    const span = telemetry.startSpan('crawler.page.process', this.config, {
+      'page.url': url,
+      'crawler.type': this.crawlerType,
+      'page.depth': request.userData?.depth || 0,
+    })
+    
     this.nb_page_crawled++
-    log.debug('Processing page', { url: request.loadedUrl })
+    log.debug('Processing page', { url })
 
     const crawled_globs = this.__generate_globs(this.config.start_urls)
     const excluded_crawled_globs = this.__generate_globs(
@@ -63,42 +74,66 @@ export abstract class BaseCrawler {
       this.config.urls_to_not_index || []
     )
 
-    if (request.loadedUrl) {
-      if (
-        this.__match_globs(request.loadedUrl, indexed_globs) &&
-        !this.__match_globs(request.loadedUrl, excluded_indexed_globs)
-      ) {
-        let $: cheerio.CheerioAPI
+    try {
+      if (request.loadedUrl) {
+        if (
+          this.__match_globs(request.loadedUrl, indexed_globs) &&
+          !this.__match_globs(request.loadedUrl, excluded_indexed_globs)
+        ) {
+          let $: cheerio.CheerioAPI
 
-        try {
-          let pageContent: string | undefined
-          
-          if (this.crawlerType === 'puppeteer') {
-            pageContent = await context.page.content()
-            $ = cheerio.load(pageContent || '')
-          } else {
-            $ = context.$
-          }
+          try {
+            let pageContent: string | undefined
+            
+            if (this.crawlerType === 'puppeteer') {
+              pageContent = await context.page.content()
+              $ = cheerio.load(pageContent || '')
+            } else {
+              $ = context.$
+            }
 
-          if (!$) {
-            log.error('Cheerio instance is undefined', {
-              url: request.loadedUrl,
+            if (!$) {
+              log.error('Cheerio instance is undefined', {
+                url: request.loadedUrl,
+              })
+              span.setAttributes({
+                'page.error': 'cheerio_undefined',
+                'page.indexed': false,
+              })
+              span.setStatus({
+                code: SpanStatusCode.ERROR,
+                message: 'Cheerio instance undefined',
+              })
+              return
+            }
+
+            // Check for 404 before incrementing counter and scraping
+            if (this.__is404Page($)) {
+              log.debug('404 page detected, skipping', {
+                url: request.loadedUrl,
+              })
+              span.setAttributes({
+                'page.status': 404,
+                'page.indexed': false,
+                'page.skip_reason': 'not_found',
+              })
+              span.setStatus({ code: SpanStatusCode.OK })
+              return
+            }
+
+            this.nb_page_indexed++
+            
+            // Track page as successfully crawled
+            businessMetrics.recordPageCrawled(this.config, true)
+            
+            log.debug('Starting scraper.get', { url: request.loadedUrl })
+            await this.scraper.get(request.loadedUrl, $)
+            log.debug('Completed scraper.get', { url: request.loadedUrl })
+            
+            span.setAttributes({
+              'page.indexed': true,
+              'page.success': true,
             })
-            return
-          }
-
-          // Check for 404 before incrementing counter and scraping
-          if (this.__is404Page($)) {
-            log.debug('404 page detected, skipping', {
-              url: request.loadedUrl,
-            })
-            return
-          }
-
-          this.nb_page_indexed++
-          log.debug('Starting scraper.get', { url: request.loadedUrl })
-          await this.scraper.get(request.loadedUrl, $)
-          log.debug('Completed scraper.get', { url: request.loadedUrl })
           
           // Clean up to help garbage collection
           if (pageContent) {
@@ -109,39 +144,78 @@ export abstract class BaseCrawler {
           if (this.crawlerType === 'puppeteer') {
             $ = null as any
           }
-        } catch (error) {
-          log.error('Error processing page', {
-            url: request.loadedUrl,
-            error: error instanceof Error ? error.message : String(error),
-          })
-        } finally {
-          // Additional cleanup for Puppeteer pages
-          if (this.crawlerType === 'puppeteer' && context.page) {
-            try {
-              // Clear any event listeners that might have been added
-              await context.page.removeAllListeners()
-            } catch (e) {
-              // Ignore cleanup errors
+          } catch (error) {
+            log.error('Error processing page', {
+              url: request.loadedUrl,
+              error: error instanceof Error ? error.message : String(error),
+            })
+            
+            // Track failed page crawl
+            businessMetrics.recordPageCrawled(this.config, false)
+            
+            span.recordException(error as Error)
+            span.setAttributes({
+              'page.indexed': false,
+              'page.error': (error as Error).message,
+            })
+            span.setStatus({
+              code: SpanStatusCode.ERROR,
+              message: (error as Error).message,
+            })
+          } finally {
+            // Additional cleanup for Puppeteer pages
+            if (this.crawlerType === 'puppeteer' && context.page) {
+              try {
+                // Clear any event listeners that might have been added
+                await context.page.removeAllListeners()
+              } catch (e) {
+                // Ignore cleanup errors
+              }
             }
           }
+        } else {
+          // URL not indexed due to filters
+          span.setAttributes({
+            'page.indexed': false,
+            'page.skip_reason': 'url_filter',
+          })
         }
       }
-    }
 
-    await enqueueLinks({
-      globs: crawled_globs,
-      exclude: excluded_crawled_globs,
-      transformRequestFunction: (req: any) => {
-        if (this.__is_file_url(req.url)) {
-          return false
-        }
-        const urlObject = new URL(req.url)
-        urlObject.search = ''
-        urlObject.hash = ''
-        req.url = urlObject.toString()
-        return req
-      },
-    })
+      await enqueueLinks({
+        globs: crawled_globs,
+        exclude: excluded_crawled_globs,
+        transformRequestFunction: (req: any) => {
+          if (this.__is_file_url(req.url)) {
+            return false
+          }
+          const urlObject = new URL(req.url)
+          urlObject.search = ''
+          urlObject.hash = ''
+          req.url = urlObject.toString()
+          return req
+        },
+      })
+      
+      // Set final span attributes
+      span.setAttributes({
+        'page.crawled_count': this.nb_page_crawled,
+        'page.indexed_count': this.nb_page_indexed,
+      })
+      
+      // Set success status
+      span.setStatus({ code: SpanStatusCode.OK })
+    } catch (error) {
+      // Catch any unexpected errors
+      span.recordException(error as Error)
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: (error as Error).message,
+      })
+      throw error
+    } finally {
+      span.end()
+    }
   }
 
   protected __generate_globs(urls: string[]): string[] {

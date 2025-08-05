@@ -4,9 +4,11 @@ dotenv.config()
 import express, { Request, Response, NextFunction } from 'express'
 import rateLimit from 'express-rate-limit'
 import { TaskQueue } from './taskQueue'
-import { Sender, Crawler, ConfigSchema, ScrapixError, ErrorCode, logError, getConfig, Container, closeConnectionPools } from '@scrapix/core'
+import { Sender, Crawler, ConfigSchema, ScrapixError, ErrorCode, logError, getConfig, Container, closeConnectionPools, businessMetrics, extractCustomerId, extractCustomerAttributes } from '@scrapix/core'
 import { Log } from 'crawlee'
 import { z } from 'zod'
+import { initializeTelemetry, tracingMiddleware, metricsMiddleware } from './telemetry'
+import { trace } from '@opentelemetry/api'
 
 const port = getConfig('SERVER', 'DEFAULT_PORT')
 
@@ -82,12 +84,15 @@ class Server {
 
   constructor() {
     this.__check_env()
+    this.__initTelemetry()
 
     this.taskQueue = new TaskQueue()
     this.app = express()
     
     // Middleware
     this.app.use(express.json({ limit: getConfig('SERVER', 'MAX_BODY_SIZE') }))
+    this.app.use(tracingMiddleware()) // Add tracing before other middleware
+    this.app.use(metricsMiddleware()) // Add metrics tracking
     this.app.use(globalLimiter) // Apply global rate limit to all routes
     this.app.use((req, _res, next) => {
       log.debug('Request received', { method: req.method, path: req.path })
@@ -121,15 +126,45 @@ class Server {
     }
   }
 
+  async __initTelemetry() {
+    try {
+      await initializeTelemetry()
+      log.info('OpenTelemetry initialized successfully')
+    } catch (error) {
+      log.error('Failed to initialize OpenTelemetry', { error })
+    }
+  }
+
   __health(_req: Request, res: Response) {
     res.status(200).send({ status: 'ok', uptime: process.uptime() })
   }
 
   async __asyncCrawl(req: Request, res: Response) {
+    const span = trace.getActiveSpan()
     try {
       const config = req.body // Already validated by middleware
+      
+      // Add customer attributes to span
+      if (span) {
+        const customerAttrs = extractCustomerAttributes(config)
+        span.setAttributes(customerAttrs)
+        span.setAttribute('operation.type', 'async_crawl')
+      }
+      
+      // Track business metrics
+      businessMetrics.recordCrawlStart(config)
+      
       const job = await this.taskQueue.add(config)
-      log.info('Asynchronous crawl task added to queue', { config, jobId: job.id })
+      log.info('Asynchronous crawl task added to queue', { 
+        config, 
+        jobId: job.id,
+        customerId: extractCustomerId(config)
+      })
+      
+      if (span) {
+        span.setAttribute('job.id', job.id)
+      }
+      
       res.status(200).send({
         status: 'ok',
         jobId: job.id,
@@ -158,9 +193,26 @@ class Server {
   }
 
   async __syncCrawl(req: Request, res: Response) {
+    const span = trace.getActiveSpan()
+    const startTime = Date.now()
+    
     try {
       const config = req.body // Already validated by middleware
-      log.info('Starting synchronous crawl', { config })
+      
+      // Add customer attributes to span
+      if (span) {
+        const customerAttrs = extractCustomerAttributes(config)
+        span.setAttributes(customerAttrs)
+        span.setAttribute('operation.type', 'sync_crawl')
+      }
+      
+      log.info('Starting synchronous crawl', { 
+        config,
+        customerId: extractCustomerId(config)
+      })
+      
+      // Track business metrics
+      businessMetrics.recordCrawlStart(config)
       
       // Create container for dependency injection
       // const container = Container.createDefault(config)
@@ -174,7 +226,15 @@ class Server {
       await Crawler.run(crawler)
       await sender.finish()
 
-      log.info('Synchronous crawl completed', { config })
+      const duration = (Date.now() - startTime) / 1000
+      businessMetrics.recordCrawlDuration(config, duration)
+      
+      log.info('Synchronous crawl completed', { 
+        config,
+        customerId: extractCustomerId(config),
+        durationSeconds: duration
+      })
+      
       res.status(200).send({
         status: 'ok',
         indexUid: config.meilisearch_index_uid,

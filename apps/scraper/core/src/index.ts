@@ -19,3 +19,14 @@ export * from './constants'
 // Export dependency injection
 export * from './container'
 export * from './crawlers/factory'
+
+// Export telemetry
+export {
+  telemetry,
+  businessMetrics,
+  extractCustomerId,
+  extractCustomerAttributes,
+} from './telemetry'
+export { queueMetrics, JobTelemetry } from './telemetry/queue'
+export { OpenAITelemetryWrapper } from './telemetry/openai'
+export { trace, context } from '@opentelemetry/api'

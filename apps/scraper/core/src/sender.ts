@@ -5,6 +5,8 @@ import { Webhook } from './webhook'
 import { Log } from 'crawlee'
 import { ScrapixError, ErrorCode } from './utils/error_handler'
 import { getConfig } from './constants'
+import { telemetry, businessMetrics } from './telemetry'
+import { SpanStatusCode } from '@opentelemetry/api'
 
 const log = new Log({ prefix: 'MeilisearchSender' })
 
@@ -206,7 +208,20 @@ export class Sender {
         this.retryCount = 0
       }
     } else {
-      await this.client.index(this.index_uid).addDocuments([data])
+      // Single document send with telemetry
+      await telemetry.withSpan(
+        'meilisearch.document.add',
+        this.config,
+        async (span) => {
+          span.setAttributes({
+            'meilisearch.index': this.index_uid,
+            'meilisearch.operation': 'add_document',
+            'document.uid': data.uid,
+          })
+          await this.client.index(this.index_uid).addDocuments([data])
+          return true
+        }
+      )
     }
     log.debug('Adding document to queue', { uid: data.uid })
   }
@@ -323,7 +338,15 @@ export class Sender {
   }
 
   async __batchSend(): Promise<void> {
-    log.debug('Batch sending documents', { queueSize: this.queue.length })
+    const queueSize = this.queue.length
+    log.debug('Batch sending documents', { queueSize })
+    
+    const span = telemetry.startSpan('meilisearch.batch.send', this.config, {
+      'meilisearch.index': this.index_uid,
+      'meilisearch.operation': 'batch_add',
+      'batch.size': queueSize,
+    })
+    
     try {
       const task = await this.client
         .index(this.index_uid)
@@ -335,6 +358,15 @@ export class Sender {
       }
       this.pendingTasks.push(task.taskUid)
       
+      // Track documents indexed
+      businessMetrics.recordDocumentsIndexed(this.config, queueSize)
+      
+      span.setAttributes({
+        'meilisearch.task_id': task.taskUid,
+        'batch.success': true,
+      })
+      span.setStatus({ code: SpanStatusCode.OK })
+      
       // Clear the queue after successful submission
       this.queue = []
     } catch (error) {
@@ -344,23 +376,44 @@ export class Sender {
         indexUid: this.index_uid 
       })
       
+      span.recordException(error as Error)
+      span.setAttributes({
+        'batch.success': false,
+        'batch.error': (error as Error).message,
+      })
+      
       // Implement retry logic
       if (!this.retryCount) {
         this.retryCount = 0
       }
       
       this.retryCount++
+      span.setAttribute('batch.retry_count', this.retryCount)
+      
       if (this.retryCount <= getConfig('RETRY', 'MAX_ATTEMPTS')) {
         log.info(`Retrying batch send (attempt ${this.retryCount}/${getConfig('RETRY', 'MAX_ATTEMPTS')})`)
+        span.addEvent('retry_attempt', {
+          attempt: this.retryCount,
+          max_attempts: getConfig('RETRY', 'MAX_ATTEMPTS'),
+        })
+        
         // Wait before retrying (exponential backoff)
         const delay = Math.min(
           getConfig('RETRY', 'BASE_DELAY') * Math.pow(2, this.retryCount - 1),
           getConfig('RETRY', 'MAX_DELAY')
         )
         await new Promise(resolve => setTimeout(resolve, delay))
+        
+        span.end() // End current span before retry
         return this.__batchSend()
       } else {
         // After max retries, throw a specific error
+        span.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: `Failed after ${getConfig('RETRY', 'MAX_ATTEMPTS')} retries`,
+        })
+        span.end()
+        
         throw new ScrapixError(
           ErrorCode.SENDER_BATCH_FAILED,
           `Failed to send ${this.queue.length} documents to Meilisearch after ${getConfig('RETRY', 'MAX_ATTEMPTS')} retry attempts`,
@@ -371,6 +424,11 @@ export class Sender {
             suggestion: 'Check Meilisearch server status and network connectivity'
           }
         )
+      }
+    } finally {
+      // Ensure span is always ended if not already ended
+      if (span.isRecording?.()) {
+        span.end()
       }
     }
   }

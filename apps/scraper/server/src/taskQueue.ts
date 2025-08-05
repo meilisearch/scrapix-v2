@@ -1,7 +1,7 @@
 import Queue, { Job, DoneCallback } from 'bull'
 import { fork } from 'child_process'
 import { join } from 'path'
-import { Config, initMeilisearchClient } from '@scrapix/core'
+import { Config, initMeilisearchClient, queueMetrics, JobTelemetry, extractCustomerId } from '@scrapix/core'
 import { Log } from 'crawlee'
 
 const log = new Log({ prefix: 'CrawlTaskQueue' })
@@ -39,6 +39,17 @@ export class TaskQueue {
         Object.entries(eventHandlers).forEach(([event, handler]) => {
           this.queue.on(event, handler.bind(this))
         })
+        
+        // Set up queue metrics callbacks
+        queueMetrics.setQueueDepthCallback(async () => {
+          const count = await this.queue.getWaitingCount()
+          return count
+        })
+        
+        queueMetrics.setActiveJobsCallback(async () => {
+          const count = await this.queue.getActiveCount()
+          return count
+        })
       }
     } catch (error) {
       // Fallback to local queue if Redis connection fails
@@ -51,7 +62,8 @@ export class TaskQueue {
   }
 
   async add(data: Config) {
-    log.debug('Adding task to queue', { config: data })
+    log.debug('Adding task to queue', { config: data, customerId: extractCustomerId(data) })
+    queueMetrics.recordJobAdded(data)
     return await this.queue.add(data)
   }
 
@@ -59,25 +71,37 @@ export class TaskQueue {
     return await this.queue.getJob(jobId)
   }
 
-  __process(job: Job, done: DoneCallback) {
-    log.debug('Processing job', { jobId: job.id })
-    const crawlerPath = join(__dirname, 'crawler_process.js')
-    const childProcess = fork(crawlerPath)
-    childProcess.send(job.data)
-    childProcess.on('message', (message) => {
-      log.info('Crawler process message', { message })
-      done()
+  async __process(job: Job<Config>, done: DoneCallback) {
+    log.debug('Processing job', { jobId: job.id, customerId: extractCustomerId(job.data) })
+    
+    // Wrap job processing with telemetry
+    JobTelemetry.processWithTelemetry(job, async () => {
+      return new Promise((resolve, reject) => {
+        const crawlerPath = join(__dirname, 'crawler_process.js')
+        const childProcess = fork(crawlerPath)
+        
+        childProcess.send(job.data)
+        
+        childProcess.on('message', (message) => {
+          log.info('Crawler process message', { message, jobId: job.id })
+          resolve(message)
+        })
+        
+        childProcess.on('error', (error: Error) => {
+          log.error('Crawler process error', { error, jobId: job.id })
+          reject(error)
+        })
+        
+        childProcess.on('exit', (code) => {
+          if (code !== 0) {
+            log.error('Crawler process exited with non-zero code', { code, jobId: job.id })
+            reject(new Error(`Crawler process exited with code ${code}`))
+          }
+        })
+      })
     })
-    childProcess.on('error', (error) => {
-      log.error('Crawler process error', { error })
-      done(error)
-    })
-    childProcess.on('exit', (code) => {
-      if (code !== 0) {
-        log.error('Crawler process exited with non-zero code', { code })
-        done(new Error(`Crawler process exited with code ${code}`))
-      }
-    })
+    .then(() => done())
+    .catch((error) => done(error))
   }
 
   __jobAdded(job: Job) {
