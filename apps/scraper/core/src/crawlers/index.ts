@@ -14,7 +14,7 @@ import { Container } from '../container'
 const log = new Log({ prefix: 'Crawler' })
 
 // Configure Crawlee storage
-Configuration.getGlobalConfig().set('persistStateIntervalMillis', 60000) // 1 minute
+Configuration.getGlobalConfig().set('persistStateIntervalMillis', 600000) // 10 minutes
 // Disable storage persistence for CLI usage
 if (process.env.SCRAPIX_CLI) {
   Configuration.getGlobalConfig().set('persistStorage', false)
@@ -22,12 +22,12 @@ if (process.env.SCRAPIX_CLI) {
 
 /**
  * Factory class for creating and managing web crawlers
- * 
+ *
  * @description
  * The Crawler class provides a factory pattern for creating different types
  * of crawlers (Puppeteer, Cheerio, Playwright) and manages their execution
  * lifecycle including request queue setup and webhook handling.
- * 
+ *
  * @example
  * ```typescript
  * const sender = new Sender(config);
@@ -41,7 +41,7 @@ export class Crawler {
 
   /**
    * Create a crawler instance based on the specified type
-   * 
+   *
    * @param {CrawlerType} crawlerType - Type of crawler to create ('puppeteer', 'cheerio', or 'playwright')
    * @param {Sender} sender - Sender instance for document delivery to Meilisearch
    * @param {Config} config - Crawler configuration
@@ -77,9 +77,9 @@ export class Crawler {
 
   /**
    * Run a crawler instance
-   * 
+   *
    * @param {BaseCrawler} crawler - The crawler instance to run
-   * 
+   *
    * @description
    * Sets up the request queue, creates router handlers, initializes webhooks,
    * and runs the crawler. Handles cleanup and error reporting automatically.
@@ -87,7 +87,7 @@ export class Crawler {
   static async run(crawler: BaseCrawler): Promise<void> {
     log.info(`Starting ${crawler.constructor.name} run`)
     console.log('DEBUG: Crawler.run called with urls:', crawler.urls)
-    
+
     let requestQueue: RequestQueue
     try {
       console.log('DEBUG: About to setup request queue')
@@ -95,7 +95,9 @@ export class Crawler {
       console.log('DEBUG: Request queue setup complete')
     } catch (error) {
       console.error('DEBUG: Failed to setup request queue:', error)
-      log.error('Failed to setup request queue', { error: (error as Error).message })
+      log.error('Failed to setup request queue', {
+        error: (error as Error).message,
+      })
       throw error
     }
 
@@ -111,14 +113,8 @@ export class Crawler {
 
     try {
       log.info('Running crawler instance')
-      
-      // Add a timeout wrapper to debug hanging issues
-      const crawlerPromise = crawlerInstance.run()
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Crawler timeout after 30 seconds')), 30000)
-      })
-      
-      await Promise.race([crawlerPromise, timeoutPromise])
+
+      await crawlerInstance.run()
       log.info('Crawler instance run completed')
 
       await Webhook.get(crawler.config).active(crawler.config, {
@@ -127,7 +123,10 @@ export class Crawler {
         nb_documents_sent: crawler.sender.nb_documents_sent,
       })
     } catch (err) {
-      log.error('Crawler run failed', { error: (err as Error).message, stack: (err as Error).stack })
+      log.error('Crawler run failed', {
+        error: (err as Error).message,
+        stack: (err as Error).stack,
+      })
       await Webhook.get(crawler.config).failed(crawler.config, err as Error)
       throw err
     } finally {
@@ -184,7 +183,7 @@ export class Crawler {
     log.info('Request queue setup complete', {
       totalRequests: queueInfo?.totalRequestCount,
       handledRequests: queueInfo?.handledRequestCount,
-      pendingRequests: queueInfo?.pendingRequestCount
+      pendingRequests: queueInfo?.pendingRequestCount,
     })
 
     return requestQueue

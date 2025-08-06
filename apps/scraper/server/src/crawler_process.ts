@@ -1,24 +1,26 @@
 import { Sender, Crawler, Config } from '@scrapix/core'
-import * as path from 'path'
 import * as fs from 'fs'
 
 async function startCrawling(config: Config) {
-  // Set up Crawlee storage directory
-  const storageDir = process.env.CRAWLEE_STORAGE_DIR || path.join(__dirname, '..', 'storage')
+  // Import Configuration from crawlee
+  const { Configuration } = await import('crawlee')
 
-  // Ensure storage directories exist
-  const dirs = [
-    path.join(storageDir, 'request_queues', 'default'),
-    path.join(storageDir, 'key_value_stores', 'default'),
-    path.join(storageDir, 'datasets', 'default'),
-  ]
+  // Disable storage persistence for Docker environment
+  Configuration.getGlobalConfig().set('persistStorage', false)
+  Configuration.getGlobalConfig().set('persistStateIntervalMillis', 0)
 
-  for (const dir of dirs) {
-    fs.mkdirSync(dir, { recursive: true })
+  // Use memory storage instead of disk
+  const storageDir = process.env.CRAWLEE_STORAGE_DIR || '/tmp/crawlee-storage'
+
+  // Still create directories as fallback
+  try {
+    fs.mkdirSync(storageDir, { recursive: true, mode: 0o777 })
+  } catch (error) {
+    console.error('Error creating storage directory:', error)
   }
 
-  // Set the environment variable for Crawlee to use
   process.env.CRAWLEE_STORAGE_DIR = storageDir
+  console.log('Storage directory set to:', storageDir, '(persistence disabled)')
 
   const sender = new Sender(config)
   await sender.init()
