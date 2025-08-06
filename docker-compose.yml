@@ -26,7 +26,9 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=8080
-      - REDIS_URL=redis://redis:6379
+      # For local Redis use: redis://redis:6379
+      # For Upstash use: rediss://default:YOUR_PASSWORD@YOUR_HOST.upstash.io:6379
+      - REDIS_URL=rediss://default:ASaKAAIjcDFjZWM5ZDNmOTNhNDM0NWY2YmYxMjc0ZjFkN2RiZmUwZnAxMA@closing-titmouse-9866.upstash.io:6379
       - MEILISEARCH_HOST=http://meilisearch:7700
       - MEILISEARCH_API_KEY=masterKey
     ports:
@@ -36,6 +38,9 @@ services:
       - meilisearch
     networks:
       - crawler-network
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
 
 volumes:
   meili_data:

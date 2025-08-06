@@ -24,21 +24,31 @@ export class TaskQueue {
 
     try {
       // Initialize queue with Redis URL if available
-      this.queue = process.env.REDIS_URL
-        ? new Queue(queueName, process.env.REDIS_URL, {
-            redis: {
-              connectTimeout: 10000,
-              retryStrategy: (times: number) => {
-                const delay = Math.min(times * 50, 2000)
-                log.warning(`Redis connection attempt ${times}, retrying in ${delay}ms`)
-                return delay
-              },
-              // These options are safe for Bull
-              lazyConnect: false,
-              // Don't set maxRetriesPerRequest or enableReadyCheck here
-            },
-          })
-        : new Queue(queueName)
+      if (process.env.REDIS_URL) {
+        const redisUrl = process.env.REDIS_URL
+        const isTLS = redisUrl.startsWith('rediss://')
+
+        const redisOptions: any = {
+          connectTimeout: 10000,
+          retryStrategy: (times: number) => {
+            const delay = Math.min(times * 50, 2000)
+            log.warning(`Redis connection attempt ${times}, retrying in ${delay}ms`)
+            return delay
+          },
+          lazyConnect: false,
+        }
+
+        // Add TLS configuration for rediss:// URLs
+        if (isTLS) {
+          redisOptions.tls = {
+            rejectUnauthorized: false,
+          }
+        }
+
+        this.queue = new Queue(queueName, redisUrl, { redis: redisOptions })
+      } else {
+        this.queue = new Queue(queueName)
+      }
 
       if (process.env.REDIS_URL) {
         // Set up Redis error handlers

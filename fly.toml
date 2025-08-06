@@ -3,7 +3,7 @@
 app = "scrapix"
 primary_region = "iad"
 kill_signal = "SIGINT"
-kill_timeout = "5s"
+kill_timeout = "30s"
 
 [build]
   dockerfile = "Dockerfile"
@@ -13,45 +13,32 @@ kill_timeout = "5s"
   PORT = "8080"
   PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = "true"
   PUPPETEER_EXECUTABLE_PATH = "/usr/bin/google-chrome-stable"
+  # Add trust proxy for proper IP handling behind Fly's proxy
+  TRUST_PROXY = "true"
 
-[[services]]
-  protocol = "tcp"
+[http_service]
   internal_port = 8080
+  force_https = true
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 0
   processes = ["app"]
 
-  [[services.ports]]
-    port = 80
-    handlers = ["http"]
-    force_https = true
+  [http_service.concurrency]
+    type = "requests"
+    hard_limit = 200
+    soft_limit = 150
 
-  [[services.ports]]
-    port = 443
-    handlers = ["tls", "http"]
-  
-  [services.concurrency]
-    type = "connections"
-    hard_limit = 25
-    soft_limit = 20
-
-  [[services.tcp_checks]]
-    interval = "15s"
-    timeout = "2s"
-    grace_period = "5s"
-    restart_limit = 6
-
-  [[services.http_checks]]
-    interval = "10s"
-    timeout = "2s"
-    grace_period = "5s"
-    restart_limit = 6
-    method = "get"
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
     path = "/health"
-    protocol = "http"
 
 [[vm]]
-  cpu_kind = "shared"
-  cpus = 1
-  memory_mb = 1024
+  size = "shared-cpu-1x"
+  memory = "1gb"
 
 [processes]
   app = "node /app/apps/scraper/server/dist/index.js"
