@@ -7,20 +7,20 @@ RUN apk add --no-cache \
 WORKDIR /app
 
 # Copy package files
-COPY package*.json ./
-COPY yarn.lock* ./
+COPY package.json ./
+COPY yarn.lock ./
 
 # Install dependencies
-RUN npm install
+RUN yarn install --frozen-lockfile
 
 # Copy source code
 COPY . .
 
 # Build the application
-RUN npm run build
+RUN yarn build
 
 # Expose ports
 EXPOSE 3000 8080
 
 # Start the application
-CMD ["npm", "start"]
+CMD ["yarn", "start"]

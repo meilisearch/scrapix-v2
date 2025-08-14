@@ -14,7 +14,10 @@
     "lint:fix": "turbo run lint:fix",
     "scrape": "./scripts/scrape.sh",
     "server": "./scripts/server.sh",
-    "server:dev": "cd apps/scraper/server && yarn dev"
+    "server:dev": "cd apps/scraper/server && yarn dev",
+    "deploy:proxy:regions": "./scripts/deploy-proxy-regional-apps.sh deploy",
+    "deploy:proxy:status": "./scripts/deploy-proxy-regional-apps.sh status",
+    "deploy:proxy:destroy": "./scripts/deploy-proxy-regional-apps.sh destroy"
   },
   "devDependencies": {
     "eslint-plugin-jest": "^28.0.0",
