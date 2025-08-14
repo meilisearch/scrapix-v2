@@ -652,20 +652,67 @@ FLY_REGION=ord
 ## 🚀 Deployment
 
 ### Deploy to Fly.io (Recommended)
+
+#### Main Scraper Application
 ```bash
 # Install Fly CLI
 curl -L https://fly.io/install.sh | sh
 
 # Deploy with one command
-fly launch
+fly launch --name scrapix
 
 # Set secrets
-fly secrets set MEILISEARCH_URL="https://your-instance.meilisearch.io" \
-  MEILISEARCH_API_KEY="your-key" \
+fly secrets set OPENAI_API_KEY="sk-..." \
+  WEBHOOK_URL="https://your-webhook.com" \
+  WEBHOOK_TOKEN="your-token" \
   REDIS_URL="redis://your-redis.upstash.io"
 
 # Deploy updates
 fly deploy
+
+# Scale horizontally
+fly scale count 3  # Run 3 instances
+```
+
+#### Proxy Server Multi-Region Deployment
+Deploy proxy servers across multiple regions for global coverage and reduced latency:
+
+```bash
+# Deploy proxy to all major regions (10 regions)
+yarn deploy:proxy:all
+
+# Deploy with 2 machines per region for high availability
+yarn deploy:proxy:scale
+
+# Deploy to specific regions only
+yarn deploy:proxy -- -r iad,lhr,sin
+
+# Custom deployment with 3 machines in specific regions
+yarn deploy:proxy -- -r iad,lhr,nrt -s 3
+
+# Deploy proxy to single region
+fly deploy --app scrapix-proxy --region iad
+```
+
+**Available regions for proxy deployment:**
+- **Americas**: `iad` (Washington DC), `lax` (Los Angeles), `ord` (Chicago), `gru` (São Paulo)
+- **Europe**: `lhr` (London), `fra` (Frankfurt), `ams` (Amsterdam)
+- **Asia-Pacific**: `sin` (Singapore), `nrt` (Tokyo), `syd` (Sydney)
+
+**Proxy endpoints after deployment:**
+- Regional: `scrapix-proxy.<region>.fly.dev:8080` (e.g., `scrapix-proxy.lhr.fly.dev:8080`)
+- Global (auto-routing): `scrapix-proxy.fly.dev:8080`
+
+#### Production Deployment Script
+```bash
+# Deploy main app with configuration
+./scripts/deploy-fly.sh production
+
+# Deploy with custom app name
+./scripts/deploy-fly.sh staging --name scrapix-staging
+
+# Deploy with specific Fly.io organization
+./scripts/deploy-fly.sh production --org my-org
 ```
 
 ### Docker Deployment
@@ -678,13 +725,56 @@ docker build -t scrapix .
 docker run -p 8080:8080 --env-file .env scrapix
 ```
 
-### Quick Cloud Deploy
-```bash
-# Deploy to Fly.io with our script
-./scripts/deploy-fly.sh production
+### GitHub Actions Deployment
+Automatic deployment on push to main branch:
+```yaml
+# .github/workflows/deploy.yml
+on:
+  push:
+    branches: [main]
+```
 
-# Or use GitHub Actions (on push to main)
-git push origin main
+### Deployment Configuration
+
+#### Environment Variables for Production
+```bash
+# Create production secrets on Fly.io
+fly secrets set \
+  OPENAI_API_KEY="sk-..." \
+  REDIS_URL="redis://default:password@fly-redis.upstash.io" \
+  WEBHOOK_URL="https://your-app.com/webhook" \
+  WEBHOOK_TOKEN="secure-token-here" \
+  NODE_ENV="production"
+```
+
+#### Scaling Configuration
+```bash
+# Auto-scaling configuration
+fly autoscale set min=1 max=10 --app scrapix
+
+# Manual scaling
+fly scale count 5 --app scrapix
+fly scale vm shared-cpu-2x --app scrapix
+fly scale memory 2048 --app scrapix
+
+# Regional scaling
+fly regions add lhr sin --app scrapix
+fly scale count 2 --region lhr --app scrapix
+```
+
+#### Monitoring & Logs
+```bash
+# View deployment status
+fly status --app scrapix
+
+# Stream logs
+fly logs --app scrapix
+
+# View metrics
+fly dashboard --app scrapix
+
+# SSH into running instance
+fly ssh console --app scrapix
 ```
 
 ## 🏗️ Architecture
