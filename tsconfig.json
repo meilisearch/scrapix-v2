@@ -1,15 +1,11 @@
 {
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "commonjs",
-    "moduleResolution": "node",
-    "strict": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true
-  },
-  "exclude": ["node_modules"]
-} 
+  "extends": "./tsconfig.base.json",
+  "references": [
+    { "path": "./apps/cli" },
+    { "path": "./apps/core" },
+    { "path": "./apps/proxy" },
+    { "path": "./apps/server" }
+  ],
+  "files": [],
+  "include": []
+}

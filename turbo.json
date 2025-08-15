@@ -9,13 +9,20 @@
     "PROXY_AUTH_ENABLED",
     "PROXY_AUTH_USERNAME",
     "PROXY_AUTH_PASSWORD",
-    "PROXY_AUTH_TOKEN"
+    "PROXY_AUTH_TOKEN",
+    "CRAWLEE_STORAGE_DIR",
+    "PORT"
+  ],
+  "globalDependencies": [
+    "tsconfig.base.json",
+    "eslint.config.mjs"
   ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", ".next/**"],
-      "env": ["NODE_ENV"]
+      "outputs": ["dist/**"],
+      "env": ["NODE_ENV"],
+      "cache": true
     },
     "dev": {
       "cache": false,
@@ -29,26 +36,34 @@
     },
     "start": {
       "dependsOn": ["build"],
+      "cache": false,
+      "persistent": true
+    },
+    "clean": {
       "cache": false
     },
-    "scrape": {
-      "dependsOn": ["@scrapix/core#build", "@scrapix/cli#build"],
-      "cache": false
+    "typecheck": {
+      "dependsOn": ["^build"],
+      "outputs": [],
+      "inputs": ["**/*.ts", "**/*.tsx", "tsconfig.json", "../../tsconfig.base.json"],
+      "cache": true
     },
     "lint": {
       "outputs": [],
-      "inputs": ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "eslint.config.mjs"]
+      "inputs": ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "../../eslint.config.mjs"],
+      "cache": true
     },
     "lint:fix": {
       "outputs": [],
       "cache": false,
-      "inputs": ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "eslint.config.mjs"]
+      "inputs": ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "../../eslint.config.mjs"]
     },
     "test": {
       "dependsOn": ["^build"],
       "outputs": ["coverage/**"],
       "inputs": ["src/**", "jest.config.js", "jest.setup.js"],
-      "env": ["NODE_ENV"]
+      "env": ["NODE_ENV"],
+      "cache": true
     },
     "test:watch": {
       "cache": false,
@@ -60,10 +75,27 @@
       "outputs": ["coverage/**"],
       "cache": false
     },
-    "typecheck": {
-      "dependsOn": ["^build"],
-      "outputs": [],
-      "inputs": ["**/*.ts", "**/*.tsx", "tsconfig.json"]
+    "@scrapix/core#build": {
+      "outputs": ["dist/**"],
+      "inputs": ["src/**/*.ts", "tsconfig.json"],
+      "cache": true
+    },
+    "@scrapix/cli#build": {
+      "dependsOn": ["@scrapix/core#build"],
+      "outputs": ["dist/**"],
+      "inputs": ["src/**/*.ts", "tsconfig.json"],
+      "cache": true
+    },
+    "@scrapix/server#build": {
+      "dependsOn": ["@scrapix/core#build"],
+      "outputs": ["dist/**"],
+      "inputs": ["src/**/*.ts", "tsconfig.json"],
+      "cache": true
+    },
+    "@scrapix/proxy#build": {
+      "outputs": ["dist/**"],
+      "inputs": ["src/**/*.ts", "tsconfig.json"],
+      "cache": true
     }
   }
 }

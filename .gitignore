@@ -68,6 +68,9 @@ typings/
 # Yarn Integrity file
 .yarn-integrity
 
+# Package lock files (we use yarn)
+package-lock.json
+
 # dotenv environment variables file
 .env
 .env.test
@@ -86,12 +89,12 @@ dist
 apps/*/dist
 
 # TypeScript compiled files in source directories (but allow dist folders)
-apps/scraper/core/*.js
-apps/scraper/core/*.d.ts
-apps/scraper/core/**/*.js
-apps/scraper/core/**/*.d.ts
-!apps/scraper/core/dist/
-!apps/scraper/cli/dist/
+apps/core/*.js
+apps/core/*.d.ts
+apps/core/**/*.js
+apps/core/**/*.d.ts
+!apps/core/dist/
+!apps/cli/dist/
 
 # Gatsby files
 .cache/

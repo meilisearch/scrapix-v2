@@ -13,7 +13,11 @@ const config = [
       'scripts/**',
       'tests/env/**',
       'coverage/**',
-      'playground/**'
+      'playground/**',
+      '**/__tests__/**',
+      '**/*.test.ts',
+      '**/jest.setup.js',
+      '**/types.d.ts'
     ]
   },
   eslint.configs.recommended,
@@ -47,6 +51,7 @@ const config = [
         __filename: 'readonly',
         Buffer: 'readonly',
         setTimeout: 'readonly',
+        clearTimeout: 'readonly',
         clearInterval: 'readonly',
         setInterval: 'readonly',
         fetch: 'readonly',
@@ -67,6 +72,7 @@ const config = [
     },
     rules: {
       'no-dupe-class-members': 'off', // Off due to conflict with typescript overload functions
+      'no-redeclare': 'off', // Off due to conflict with typescript overload functions
       'prettier/prettier': [
         'error',
         {

@@ -3,8 +3,7 @@
   "license": "MIT",
   "private": true,
   "workspaces": [
-    "apps/*",
-    "packages/*"
+    "apps/*"
   ],
   "scripts": {
     "dev": "turbo run dev",
@@ -12,21 +11,56 @@
     "lint": "turbo run lint",
     "test": "turbo run test",
     "lint:fix": "turbo run lint:fix",
-    "scrape": "./scripts/scrape.sh",
-    "server": "./scripts/server.sh",
-    "server:dev": "cd apps/scraper/server && yarn dev",
+    "typecheck": "turbo run typecheck",
+    "clean": "turbo run clean",
+    "scrape": "turbo run start --filter=@scrapix/cli --",
+    "server": "turbo run start --filter=@scrapix/server",
+    "server:dev": "turbo run dev --filter=@scrapix/server",
+    "proxy": "turbo run start --filter=@scrapix/proxy",
+    "proxy:dev": "turbo run dev --filter=@scrapix/proxy",
+    "dev:server": "turbo run dev --filter=@scrapix/server --filter=@scrapix/core",
+    "dev:cli": "turbo run dev --filter=@scrapix/cli --filter=@scrapix/core",
+    "dev:all": "turbo run dev --parallel",
+    "dev:concurrent": "concurrently -n 'core,server,proxy' -c 'cyan,green,yellow' 'yarn workspace @scrapix/core dev' 'yarn workspace @scrapix/server dev' 'yarn workspace @scrapix/proxy dev'",
+    "build:watch": "turbo run dev:build --parallel",
+    "deploy:server": "./scripts/deploy-server.sh",
+    "deploy:server:staging": "./scripts/deploy-server.sh staging",
+    "deploy:proxy": "./scripts/deploy-proxy.sh",
+    "deploy:proxy:staging": "./scripts/deploy-proxy.sh staging",
     "deploy:proxy:regions": "./scripts/deploy-proxy-regional-apps.sh deploy",
     "deploy:proxy:status": "./scripts/deploy-proxy-regional-apps.sh status",
     "deploy:proxy:destroy": "./scripts/deploy-proxy-regional-apps.sh destroy"
   },
+  "dependencies": {
+    "dotenv": "^16.0.0",
+    "meilisearch": "0.45.0",
+    "uuid": "^11.1.0",
+    "zod": "^3.23.8"
+  },
   "devDependencies": {
+    "@eslint/js": "^9.32.0",
+    "@types/express": "^5.0.0",
+    "@types/jest": "^29.0.0",
+    "@types/node": "22.9.3",
+    "@types/uuid": "^10.0.0",
+    "@types/yargs": "17.0.33",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "concurrently": "^9.2.0",
+    "eslint": "^9.32.0",
+    "eslint-config-prettier": "^9.1.0",
     "eslint-plugin-jest": "^28.0.0",
     "eslint-plugin-prettier": "^5.5.3",
-    "prettier": "^3.6.2",
-    "turbo": "^2.5.4"
+    "jest": "^29.7.0",
+    "nodemon": "^3.1.10",
+    "prettier": "^3.3.3",
+    "ts-jest": "^29.1.2",
+    "ts-node": "^10.9.2",
+    "turbo": "^2.5.5",
+    "typescript": "^5.9.2"
   },
   "resolutions": {
     "form-data": "^4.0.4"
   },
-  "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
+  "packageManager": "yarn@1.22.22"
 }
