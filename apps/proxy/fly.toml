@@ -3,6 +3,7 @@ app = "scrapix-proxy"
 primary_region = "iad"
 
 [build]
+  dockerfile = "apps/proxy/Dockerfile"
 
 [env]
   PORT = "3000"

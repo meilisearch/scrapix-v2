@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist/",
+    "types": ["node"],
+    "typeRoots": ["./node_modules/@types", "../../node_modules/@types"],
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noImplicitReturns": false,
+    "noImplicitAny": false
+  },
+  "include": ["./src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "**/*.test.ts"]
+}
