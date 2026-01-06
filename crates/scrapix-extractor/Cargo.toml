@@ -1,0 +1,33 @@
+[package]
+name = "scrapix-extractor"
+description = "Feature extraction from parsed HTML"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+scrapix-core = { path = "../scrapix-core" }
+
+tokio = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# HTML parsing
+scraper = { workspace = true }
+
+# URL handling
+url = { workspace = true }
+glob = { workspace = true }
+
+# Regex for transform operations
+regex = { workspace = true }
+
+# Date/time handling for schema date conversion
+chrono = { workspace = true }
+
+# Tracing
+tracing = { workspace = true }

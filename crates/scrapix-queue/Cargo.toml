@@ -1,0 +1,29 @@
+[package]
+name = "scrapix-queue"
+description = "Message queue integration (Redpanda/Kafka)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+scrapix-core = { path = "../scrapix-core" }
+
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Kafka/Redpanda client
+rdkafka = { workspace = true }
+
+# Utilities
+uuid = { workspace = true }
+chrono = { workspace = true }
+url = { workspace = true }
+
+# Tracing
+tracing = { workspace = true }

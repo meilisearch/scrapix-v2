@@ -1,0 +1,52 @@
+[package]
+name = "scrapix-frontier"
+description = "URL frontier service with deduplication and politeness"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+scrapix-core = { path = "../scrapix-core" }
+
+tokio = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+url = { workspace = true }
+
+# Bloom filter for deduplication
+bloomfilter = { workspace = true }
+
+# Message queue (Redpanda/Kafka) - optional for distributed frontier
+rdkafka = { workspace = true, optional = true }
+
+# Local storage (per-worker state) - optional
+rocksdb = { workspace = true, optional = true }
+
+# Rate limiting (distributed) - optional
+redis = { workspace = true, optional = true }
+
+# Utilities
+chrono = { workspace = true }
+uuid = { workspace = true }
+parking_lot = { workspace = true }
+
+# Tracing
+tracing = { workspace = true }
+
+[features]
+default = []
+distributed = ["rdkafka", "redis"]
+persistent = ["rocksdb"]
+full = ["distributed", "persistent"]
+
+[dev-dependencies]
+criterion = { workspace = true }
+rand = { workspace = true }
+
+[[bench]]
+name = "frontier_benchmarks"
+harness = false

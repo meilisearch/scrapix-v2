@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: scrapix-api
+  namespace: scrapix
+  labels:
+    app.kubernetes.io/name: scrapix-api
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: scrapix
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: scrapix-api

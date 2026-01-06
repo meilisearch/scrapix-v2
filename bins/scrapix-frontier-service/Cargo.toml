@@ -1,0 +1,28 @@
+[package]
+name = "scrapix-frontier-service"
+description = "URL frontier management service"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "scrapix-frontier-service"
+path = "src/main.rs"
+
+[dependencies]
+scrapix-core = { path = "../../crates/scrapix-core" }
+scrapix-frontier = { path = "../../crates/scrapix-frontier" }
+scrapix-queue = { path = "../../crates/scrapix-queue" }
+scrapix-telemetry = { path = "../../crates/scrapix-telemetry" }
+
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+parking_lot = { workspace = true }

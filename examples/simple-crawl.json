@@ -1,0 +1,35 @@
+{
+  "start_urls": ["https://docs.meilisearch.com"],
+  "index_uid": "meilisearch-docs",
+  "crawler_type": "http",
+  "max_depth": 5,
+  "max_pages": 1000,
+  "url_patterns": {
+    "include": ["https://docs.meilisearch.com/**"],
+    "exclude": ["**/api-reference/**"]
+  },
+  "concurrency": {
+    "max_concurrent_requests": 10
+  },
+  "rate_limit": {
+    "requests_per_second": 5,
+    "respect_robots_txt": true
+  },
+  "features": {
+    "metadata": {
+      "enabled": true
+    },
+    "markdown": {
+      "enabled": true
+    }
+  },
+  "meilisearch": {
+    "url": "http://localhost:7700",
+    "api_key": "masterKey",
+    "batch_size": 100,
+    "settings": {
+      "searchable_attributes": ["title", "content", "markdown"],
+      "filterable_attributes": ["url", "language", "depth"]
+    }
+  }
+}

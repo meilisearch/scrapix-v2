@@ -1,0 +1,29 @@
+[package]
+name = "scrapix-cli"
+description = "Command-line interface for Scrapix"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "scrapix"
+path = "src/main.rs"
+
+[dependencies]
+scrapix-core = { path = "../../crates/scrapix-core" }
+
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+reqwest = { workspace = true }
+chrono = { workspace = true }
+futures = { workspace = true }
+
+# Pretty output
+colored = "2.1"
+indicatif = "0.17"
+console = "0.15"
+tabled = "0.15"

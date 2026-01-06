@@ -1,0 +1,39 @@
+{
+  "start_urls": ["https://target-site.example.com"],
+  "index_uid": "proxied-crawl",
+  "crawler_type": "http",
+  "max_depth": 5,
+  "max_pages": 2000,
+  "url_patterns": {
+    "include": ["https://target-site.example.com/**"]
+  },
+  "concurrency": {
+    "max_concurrent_requests": 20
+  },
+  "rate_limit": {
+    "requests_per_second": 10,
+    "per_domain_delay_ms": 100,
+    "respect_robots_txt": true
+  },
+  "proxy": {
+    "urls": [
+      "http://proxy1.example.com:8080",
+      "http://proxy2.example.com:8080",
+      "http://proxy3.example.com:8080"
+    ],
+    "rotation": "round_robin"
+  },
+  "features": {
+    "metadata": {
+      "enabled": true
+    },
+    "markdown": {
+      "enabled": true
+    }
+  },
+  "meilisearch": {
+    "url": "http://localhost:7700",
+    "api_key": "masterKey",
+    "batch_size": 100
+  }
+}

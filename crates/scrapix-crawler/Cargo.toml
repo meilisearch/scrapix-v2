@@ -1,0 +1,62 @@
+[package]
+name = "scrapix-crawler"
+description = "HTTP and browser-based web crawler"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+scrapix-core = { path = "../scrapix-core" }
+
+tokio = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# HTTP client
+reqwest = { workspace = true }
+hyper = { workspace = true }
+
+# URL handling
+url = { workspace = true }
+percent-encoding = { workspace = true }
+
+# HTML parsing (for link extraction)
+scraper = { workspace = true }
+
+# Robots.txt
+robotstxt = { workspace = true }
+
+# DNS resolution
+hickory-resolver = { workspace = true }
+
+# Browser automation (tiered - all optional)
+# Tier 1: CDP for Chrome/Chromium (most mature)
+chromiumoxide = { workspace = true, optional = true }
+futures = { workspace = true, optional = true }
+# Tier 2: WebDriver protocol (cross-browser)
+fantoccini = { workspace = true, optional = true }
+# Future: Lightpanda integration (when stable)
+# Future: Browserbase API client
+
+# Utilities
+chrono = { workspace = true }
+uuid = { workspace = true }
+bytes = { workspace = true }
+base64 = { workspace = true }
+parking_lot = { workspace = true }
+
+# Tracing
+tracing = { workspace = true }
+
+[features]
+default = []
+# Chrome/Chromium via CDP (chromiumoxide)
+browser-cdp = ["chromiumoxide", "futures"]
+# WebDriver protocol (fantoccini) - Firefox, Safari, etc.
+browser-webdriver = ["fantoccini"]
+# All browser rendering options
+browser-full = ["browser-cdp", "browser-webdriver"]

@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: redpanda
+  namespace: scrapix
+  labels:
+    app.kubernetes.io/name: redpanda
+    app.kubernetes.io/component: messaging
+    app.kubernetes.io/part-of: scrapix
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - name: kafka
+      port: 9092
+      targetPort: kafka
+      protocol: TCP
+    - name: kafka-external
+      port: 19092
+      targetPort: kafka-external
+      protocol: TCP
+    - name: schema-registry
+      port: 8081
+      targetPort: schema-registry
+      protocol: TCP
+    - name: proxy
+      port: 8082
+      targetPort: proxy
+      protocol: TCP
+    - name: rpc
+      port: 33145
+      targetPort: rpc
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: redpanda

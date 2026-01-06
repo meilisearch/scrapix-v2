@@ -1,0 +1,32 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: scrapix
+
+resources:
+  # Namespace
+  - namespace.yaml
+
+  # Configuration
+  - config/configmap.yaml
+
+  # Infrastructure
+  - redpanda-statefulset.yaml
+  - meilisearch-statefulset.yaml
+  - dragonfly-deployment.yaml
+
+  # Scrapix Services
+  - api-deployment.yaml
+  - frontier-deployment.yaml
+  - crawler-worker-deployment.yaml
+  - content-worker-deployment.yaml
+
+  # Services
+  - services/api-service.yaml
+  - services/redpanda-service.yaml
+  - services/meilisearch-service.yaml
+  - services/dragonfly-service.yaml
+
+commonLabels:
+  app.kubernetes.io/managed-by: kustomize
+  app.kubernetes.io/version: "0.1.0"
