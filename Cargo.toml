@@ -1,0 +1,155 @@
+[workspace]
+resolver = "2"
+
+members = [
+    "crates/scrapix-core",
+    "crates/scrapix-frontier",
+    "crates/scrapix-crawler",
+    "crates/scrapix-parser",
+    "crates/scrapix-extractor",
+    "crates/scrapix-ai",
+    "crates/scrapix-storage",
+    "crates/scrapix-queue",
+    "crates/scrapix-telemetry",
+    "bins/scrapix-api",
+    "bins/scrapix-worker-crawler",
+    "bins/scrapix-worker-content",
+    "bins/scrapix-frontier-service",
+    "bins/scrapix-cli",
+    "benches",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT"
+repository = "https://github.com/quentindequelen/scrapix"
+authors = ["Quentin de Quelen"]
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.49", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures = "0.3"
+async-trait = "0.1"
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json", "gzip", "brotli", "cookies", "rustls-tls"] }
+hyper = { version = "1.8", features = ["full"] }
+
+# Web framework
+axum = { version = "0.8", features = ["macros", "ws"] }
+tower = { version = "0.5", features = ["full"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip"] }
+
+# HTML parsing
+scraper = "0.22"
+html5ever = "0.29"
+markup5ever_rcdom = "0.4"
+url = "2.5"
+percent-encoding = "2.3"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# Configuration & validation
+config = "0.14"
+validator = { version = "0.20", features = ["derive"] }
+
+# Database clients
+meilisearch-sdk = "0.28"  # Primary store: search + metadata + vectors
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }  # Rate limiting, caching
+rocksdb = "0.24"  # Local per-worker state
+
+# Message queue (Kafka/Redpanda)
+rdkafka = { version = "0.38", features = ["cmake-build", "ssl"] }
+
+# Object storage (S3-compatible: RustFS, MinIO, AWS S3)
+# Using rust-s3 crate directly in scrapix-storage
+
+# Bloom filter
+bloomfilter = "1.0"
+probabilistic-collections = "0.7"
+
+# Robots.txt
+robotstxt = "0.3"
+
+# DNS
+hickory-resolver = "0.25"
+
+# Browser automation (tiered approach)
+# Tier 1: chromiumoxide - mature CDP client for Chrome/Chromium
+chromiumoxide = { version = "0.7", features = ["tokio-runtime"] }
+# Tier 2: fantoccini - WebDriver protocol (cross-browser)
+fantoccini = "0.21"
+# Future: Lightpanda (Zig-based, 10x faster) - watch https://github.com/lightpanda-io/browser
+# Future: Servo (Rust-native) - watch https://servo.org when production-ready
+# Optional: Browserbase API client for hosted browser infrastructure
+
+# AI/ML
+async-openai = "0.28"
+tiktoken-rs = "0.6"
+
+# Telemetry
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "time"] }
+time = { version = "0.3", features = ["formatting"] }
+opentelemetry = "0.27"
+opentelemetry-otlp = { version = "0.27", features = ["tokio"] }
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
+metrics = "0.24"
+metrics-exporter-prometheus = "0.16"
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# CLI
+clap = { version = "4.5", features = ["derive", "env"] }
+
+# Utilities
+uuid = { version = "1.16", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+glob = "0.3"
+regex = "1.11"
+once_cell = "1.20"
+parking_lot = "0.12"
+dashmap = "6.1"
+bytes = "1.9"
+base64 = "0.22"
+md5 = "0.7"
+sha2 = { version = "0.10", features = ["std"] }
+
+# Language detection
+whatlang = "0.16"
+
+# Markdown conversion
+html2md = "0.2"
+
+# Testing
+mockall = "0.13"
+wiremock = "0.6"
+testcontainers = "0.23"
+
+# Benchmarking
+criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
+rand = "0.8"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.dev]
+opt-level = 0
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.bench]
+lto = "thin"
+debug = true

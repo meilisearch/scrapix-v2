@@ -1,0 +1,23 @@
+[package]
+name = "scrapix-benchmarks"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+scrapix-core = { path = "../crates/scrapix-core" }
+scrapix-frontier = { path = "../crates/scrapix-frontier" }
+scrapix-parser = { path = "../crates/scrapix-parser" }
+
+tokio = { workspace = true }
+criterion = { workspace = true }
+rand = { workspace = true }
+chrono = { workspace = true }
+
+[[bench]]
+name = "integrated_benchmarks"
+harness = false
+
+[[bench]]
+name = "wikipedia_e2e"
+harness = false

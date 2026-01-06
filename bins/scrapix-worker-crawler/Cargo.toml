@@ -1,0 +1,27 @@
+[package]
+name = "scrapix-worker-crawler"
+description = "Crawler worker for fetching web pages"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "scrapix-worker-crawler"
+path = "src/main.rs"
+
+[dependencies]
+scrapix-core = { path = "../../crates/scrapix-core" }
+scrapix-crawler = { path = "../../crates/scrapix-crawler" }
+scrapix-queue = { path = "../../crates/scrapix-queue" }
+scrapix-telemetry = { path = "../../crates/scrapix-telemetry" }
+
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }

@@ -1,0 +1,61 @@
+{
+  "start_urls": ["https://blog.example.com"],
+  "index_uid": "blog-ai-enriched",
+  "crawler_type": "http",
+  "max_depth": 5,
+  "max_pages": 500,
+  "url_patterns": {
+    "include": ["https://blog.example.com/posts/**"],
+    "exclude": ["**/tags/**", "**/authors/**"]
+  },
+  "concurrency": {
+    "max_concurrent_requests": 10
+  },
+  "rate_limit": {
+    "requests_per_second": 5,
+    "respect_robots_txt": true
+  },
+  "features": {
+    "metadata": {
+      "enabled": true
+    },
+    "markdown": {
+      "enabled": true
+    },
+    "ai_extraction": {
+      "enabled": true,
+      "prompt": "Extract the following from this blog post:\n- main_topic: The primary topic or theme\n- key_points: List of 3-5 main takeaways\n- target_audience: Who would benefit from this content\n- difficulty_level: beginner/intermediate/advanced\n- related_topics: List of related topics or technologies mentioned",
+      "model": "gpt-4",
+      "max_tokens": 500
+    },
+    "ai_summary": {
+      "enabled": true,
+      "include_pages": ["**/posts/**"]
+    },
+    "embeddings": {
+      "enabled": true,
+      "model": "text-embedding-3-small",
+      "dimensions": 1536
+    }
+  },
+  "meilisearch": {
+    "url": "http://localhost:7700",
+    "api_key": "masterKey",
+    "batch_size": 20,
+    "settings": {
+      "searchable_attributes": [
+        "title",
+        "markdown",
+        "ai_summary",
+        "ai_extraction.main_topic",
+        "ai_extraction.key_points"
+      ],
+      "filterable_attributes": [
+        "ai_extraction.target_audience",
+        "ai_extraction.difficulty_level",
+        "ai_extraction.related_topics"
+      ],
+      "sortable_attributes": ["created_at"]
+    }
+  }
+}

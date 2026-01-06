@@ -1,0 +1,377 @@
+//! Readability-style content extraction
+//!
+//! Extracts the main content from a web page by removing boilerplate
+//! (navigation, ads, footers, etc.) and keeping the main article content.
+
+use scraper::{ElementRef, Html, Selector};
+
+/// Configuration for content extraction
+#[derive(Debug, Clone)]
+pub struct ReadabilityConfig {
+    /// Minimum paragraph length to consider
+    pub min_paragraph_length: usize,
+    /// Minimum text density (text/total characters ratio)
+    pub min_text_density: f64,
+    /// Tags to remove completely
+    pub remove_tags: Vec<String>,
+    /// Class names that indicate non-content
+    pub negative_classes: Vec<String>,
+    /// Class names that indicate content
+    pub positive_classes: Vec<String>,
+}
+
+impl Default for ReadabilityConfig {
+    fn default() -> Self {
+        Self {
+            min_paragraph_length: 25,
+            min_text_density: 0.3,
+            remove_tags: vec![
+                "script".to_string(),
+                "style".to_string(),
+                "noscript".to_string(),
+                "iframe".to_string(),
+                "svg".to_string(),
+                "nav".to_string(),
+                "footer".to_string(),
+                "header".to_string(),
+                "aside".to_string(),
+                "form".to_string(),
+                "button".to_string(),
+                "input".to_string(),
+                "select".to_string(),
+                "textarea".to_string(),
+            ],
+            negative_classes: vec![
+                "sidebar".to_string(),
+                "nav".to_string(),
+                "navigation".to_string(),
+                "menu".to_string(),
+                "footer".to_string(),
+                "header".to_string(),
+                "comment".to_string(),
+                "comments".to_string(),
+                "ad".to_string(),
+                "ads".to_string(),
+                "advertisement".to_string(),
+                "social".to_string(),
+                "share".to_string(),
+                "related".to_string(),
+                "recommended".to_string(),
+                "popular".to_string(),
+                "trending".to_string(),
+                "breadcrumb".to_string(),
+                "pagination".to_string(),
+                "widget".to_string(),
+            ],
+            positive_classes: vec![
+                "article".to_string(),
+                "content".to_string(),
+                "main".to_string(),
+                "post".to_string(),
+                "entry".to_string(),
+                "text".to_string(),
+                "body".to_string(),
+                "story".to_string(),
+            ],
+        }
+    }
+}
+
+/// Extract main content from HTML
+pub fn extract_content(html: &str) -> String {
+    extract_content_with_config(html, &ReadabilityConfig::default())
+}
+
+/// Extract main content with custom configuration
+pub fn extract_content_with_config(html: &str, config: &ReadabilityConfig) -> String {
+    let document = Html::parse_document(html);
+
+    // Try to find the main content container
+    if let Some(content) = find_main_content(&document, config) {
+        return content;
+    }
+
+    // Fallback: extract all text from body, filtering out noise
+    extract_body_content(&document, config)
+}
+
+/// Find the main content container
+fn find_main_content(document: &Html, config: &ReadabilityConfig) -> Option<String> {
+    // Try semantic HTML5 elements first
+    let semantic_selectors = [
+        "article",
+        "main",
+        "[role='main']",
+        "[role='article']",
+        ".article",
+        ".post",
+        ".content",
+        "#content",
+        "#main",
+        ".entry-content",
+        ".post-content",
+    ];
+
+    for selector_str in &semantic_selectors {
+        if let Ok(selector) = Selector::parse(selector_str) {
+            if let Some(element) = document.select(&selector).next() {
+                let content = extract_element_content(&element, config);
+                if content.len() > 200 {
+                    return Some(content);
+                }
+            }
+        }
+    }
+
+    // Score-based approach: find the element with highest content score
+    let mut best_element = None;
+    let mut best_score = 0.0;
+
+    if let Ok(selector) = Selector::parse("div, section, article") {
+        for element in document.select(&selector) {
+            let score = score_element(&element, config);
+            if score > best_score {
+                best_score = score;
+                best_element = Some(element);
+            }
+        }
+    }
+
+    if best_score > 50.0 {
+        if let Some(element) = best_element {
+            return Some(extract_element_content(&element, config));
+        }
+    }
+
+    None
+}
+
+/// Score an element based on content likelihood
+fn score_element(element: &ElementRef, config: &ReadabilityConfig) -> f64 {
+    let mut score = 0.0;
+
+    // Get class and id attributes
+    let class = element.value().attr("class").unwrap_or("");
+    let id = element.value().attr("id").unwrap_or("");
+    let combined = format!("{} {}", class, id).to_lowercase();
+
+    // Negative indicators
+    for neg in &config.negative_classes {
+        if combined.contains(neg) {
+            score -= 25.0;
+        }
+    }
+
+    // Positive indicators
+    for pos in &config.positive_classes {
+        if combined.contains(pos) {
+            score += 25.0;
+        }
+    }
+
+    // Count paragraphs
+    if let Ok(p_selector) = Selector::parse("p") {
+        let paragraphs: Vec<_> = element.select(&p_selector).collect();
+        score += paragraphs.len() as f64 * 3.0;
+
+        // Count words in paragraphs
+        for p in paragraphs {
+            let text = p.text().collect::<String>();
+            let word_count = text.split_whitespace().count();
+            if word_count > 100 {
+                score += 10.0;
+            } else if word_count > 50 {
+                score += 5.0;
+            }
+        }
+    }
+
+    // Penalty for too many links
+    if let Ok(a_selector) = Selector::parse("a") {
+        let links = element.select(&a_selector).count();
+        let text_len = element.text().collect::<String>().len();
+        if text_len > 0 {
+            let link_density = links as f64 / (text_len as f64 / 100.0);
+            if link_density > 0.5 {
+                score -= link_density * 10.0;
+            }
+        }
+    }
+
+    score
+}
+
+/// Extract content from an element
+fn extract_element_content(element: &ElementRef, config: &ReadabilityConfig) -> String {
+    let mut parts = Vec::new();
+
+    // Build list of tags to skip
+    let skip_tags: Vec<&str> = config.remove_tags.iter().map(|s| s.as_str()).collect();
+
+    extract_text_recursive(element, &skip_tags, config, &mut parts);
+
+    parts.join("\n\n")
+}
+
+/// Recursively extract text from element
+fn extract_text_recursive(
+    element: &ElementRef,
+    skip_tags: &[&str],
+    config: &ReadabilityConfig,
+    parts: &mut Vec<String>,
+) {
+    let tag_name = element.value().name();
+
+    // Skip unwanted tags
+    if skip_tags.contains(&tag_name) {
+        return;
+    }
+
+    // Check for negative classes
+    if let Some(class) = element.value().attr("class") {
+        let class_lower = class.to_lowercase();
+        for neg in &config.negative_classes {
+            if class_lower.contains(neg) {
+                return;
+            }
+        }
+    }
+
+    // Handle block-level elements
+    match tag_name {
+        "p" | "div" | "section" | "article" | "blockquote" | "li" => {
+            let text: String = element.text().collect();
+            let text = text.trim();
+            if text.len() >= config.min_paragraph_length {
+                parts.push(text.to_string());
+            }
+        }
+        "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
+            let text: String = element.text().collect();
+            let text = text.trim();
+            if !text.is_empty() {
+                let level = tag_name.chars().last().unwrap();
+                let prefix = "#".repeat(level.to_digit(10).unwrap() as usize);
+                parts.push(format!("{} {}", prefix, text));
+            }
+        }
+        "ul" | "ol" => {
+            if let Ok(li_selector) = Selector::parse("li") {
+                for li in element.select(&li_selector) {
+                    let text: String = li.text().collect();
+                    let text = text.trim();
+                    if !text.is_empty() {
+                        parts.push(format!("- {}", text));
+                    }
+                }
+            }
+        }
+        "pre" | "code" => {
+            let text: String = element.text().collect();
+            if !text.trim().is_empty() {
+                parts.push(format!("```\n{}\n```", text.trim()));
+            }
+        }
+        _ => {
+            // Recurse into children
+            for child in element.children() {
+                if let Some(child_element) = ElementRef::wrap(child) {
+                    extract_text_recursive(&child_element, skip_tags, config, parts);
+                }
+            }
+        }
+    }
+}
+
+/// Extract content from body as fallback
+fn extract_body_content(document: &Html, config: &ReadabilityConfig) -> String {
+    let mut paragraphs = Vec::new();
+
+    // Try to find body
+    if let Ok(body_selector) = Selector::parse("body") {
+        if let Some(body) = document.select(&body_selector).next() {
+            extract_text_recursive(
+                &body,
+                &config
+                    .remove_tags
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>(),
+                config,
+                &mut paragraphs,
+            );
+        }
+    }
+
+    // If we got nothing, just extract all text
+    if paragraphs.is_empty() {
+        let all_text = document.root_element().text().collect::<Vec<_>>().join(" ");
+        return all_text.split_whitespace().collect::<Vec<_>>().join(" ");
+    }
+
+    paragraphs.join("\n\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_article() {
+        let html = r#"
+            <html>
+            <body>
+                <nav>Navigation menu</nav>
+                <article>
+                    <h1>Article Title</h1>
+                    <p>This is the first paragraph of the article with enough content to be considered valid text that should be extracted by the readability algorithm.</p>
+                    <p>This is the second paragraph with more interesting content about the topic at hand that we want to extract and process.</p>
+                </article>
+                <footer>Footer content</footer>
+            </body>
+            </html>
+        "#;
+
+        let content = extract_content(html);
+        assert!(content.contains("Article Title"));
+        assert!(content.contains("first paragraph"));
+        assert!(!content.contains("Navigation"));
+        assert!(!content.contains("Footer"));
+    }
+
+    #[test]
+    fn test_extract_main_content() {
+        let html = r#"
+            <html>
+            <body>
+                <main>
+                    <p>Main content paragraph that is long enough to be considered valid content for extraction purposes.</p>
+                </main>
+                <aside>Sidebar content</aside>
+            </body>
+            </html>
+        "#;
+
+        let content = extract_content(html);
+        assert!(content.contains("Main content"));
+        assert!(!content.contains("Sidebar"));
+    }
+
+    #[test]
+    fn test_code_blocks() {
+        let html = r#"
+            <html>
+            <body>
+                <article>
+                    <p>Here is some code:</p>
+                    <pre><code>fn main() { println!("Hello"); }</code></pre>
+                </article>
+            </body>
+            </html>
+        "#;
+
+        let content = extract_content(html);
+        // The code content should be extracted (may or may not have backticks depending on extraction path)
+        assert!(content.contains("fn main()"), "Expected 'fn main()' in content: {}", content);
+    }
+}

@@ -1,0 +1,42 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Reference base configuration
+resources:
+  - ../../base
+
+namespace: scrapix
+
+# Production environment specific labels
+commonLabels:
+  environment: production
+
+# Apply production patches
+patches:
+  - path: patches/hpa.yaml
+  - path: patches/pdb.yaml
+  - path: patches/production-resources.yaml
+  - path: patches/production-config.yaml
+
+# Override images with registry prefix
+images:
+  - name: scrapix-api
+    newName: ghcr.io/quentindequelen/scrapix-api
+    newTag: v0.1.0
+  - name: scrapix-frontier-service
+    newName: ghcr.io/quentindequelen/scrapix-frontier-service
+    newTag: v0.1.0
+  - name: scrapix-worker-crawler
+    newName: ghcr.io/quentindequelen/scrapix-worker-crawler
+    newTag: v0.1.0
+  - name: scrapix-worker-content
+    newName: ghcr.io/quentindequelen/scrapix-worker-content
+    newTag: v0.1.0
+
+# Secret generator for production secrets
+# NOTE: In production, use external secrets manager (e.g., Sealed Secrets, External Secrets)
+# secretGenerator:
+#   - name: scrapix-secrets
+#     behavior: replace
+#     envs:
+#       - secrets.env

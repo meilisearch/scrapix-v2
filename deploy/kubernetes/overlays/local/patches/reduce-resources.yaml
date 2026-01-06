@@ -1,0 +1,126 @@
+# Reduce resource requirements for local development
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scrapix-api
+  namespace: scrapix
+spec:
+  template:
+    spec:
+      containers:
+        - name: api
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scrapix-frontier
+  namespace: scrapix
+spec:
+  template:
+    spec:
+      containers:
+        - name: frontier
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "200m"
+              memory: "512Mi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scrapix-worker-crawler
+  namespace: scrapix
+spec:
+  template:
+    spec:
+      containers:
+        - name: crawler
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scrapix-worker-content
+  namespace: scrapix
+spec:
+  template:
+    spec:
+      containers:
+        - name: content
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redpanda
+  namespace: scrapix
+spec:
+  template:
+    spec:
+      containers:
+        - name: redpanda
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: meilisearch
+  namespace: scrapix
+spec:
+  template:
+    spec:
+      containers:
+        - name: meilisearch
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dragonfly
+  namespace: scrapix
+spec:
+  template:
+    spec:
+      containers:
+        - name: dragonfly
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"

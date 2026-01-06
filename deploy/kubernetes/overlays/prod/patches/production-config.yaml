@@ -1,0 +1,27 @@
+# Production configuration overrides
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scrapix-config
+  namespace: scrapix
+data:
+  # Logging
+  RUST_LOG: "info"
+
+  # Frontier configuration - higher throughput
+  DISPATCH_INTERVAL_MS: "50"
+  DISPATCH_BATCH_SIZE: "500"
+  DOMAIN_DELAY_MS: "1000"
+  BLOOM_CAPACITY: "100000000"
+  BLOOM_FP_RATE: "0.001"
+
+  # Crawler configuration - higher concurrency
+  CONCURRENCY: "50"
+  REQUEST_TIMEOUT: "30"
+  MAX_RETRIES: "3"
+  MAX_DEPTH: "100"
+  RESPECT_ROBOTS: "true"
+
+  # Content worker configuration - larger batches
+  BATCH_SIZE: "500"
+  BATCH_TIMEOUT_SECS: "10"

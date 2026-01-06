@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scrapix-worker-content
+  namespace: scrapix
+  labels:
+    app.kubernetes.io/name: scrapix-worker-content
+    app.kubernetes.io/component: worker
+    app.kubernetes.io/part-of: scrapix
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: scrapix-worker-content
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: scrapix-worker-content
+        app.kubernetes.io/component: worker
+        app.kubernetes.io/part-of: scrapix
+    spec:
+      containers:
+        - name: content
+          image: scrapix-worker-content:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: scrapix-config
+            - secretRef:
+                name: scrapix-secrets
+          env:
+            - name: KAFKA_GROUP_ID
+              value: "scrapix-content"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "1000m"
+              memory: "512Mi"
+      restartPolicy: Always

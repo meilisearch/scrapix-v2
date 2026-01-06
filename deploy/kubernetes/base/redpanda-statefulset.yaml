@@ -1,0 +1,129 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redpanda
+  namespace: scrapix
+  labels:
+    app.kubernetes.io/name: redpanda
+    app.kubernetes.io/component: messaging
+    app.kubernetes.io/part-of: scrapix
+spec:
+  serviceName: redpanda
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redpanda
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: redpanda
+        app.kubernetes.io/component: messaging
+        app.kubernetes.io/part-of: scrapix
+    spec:
+      containers:
+        - name: redpanda
+          image: redpandadata/redpanda:v25.3.4
+          args:
+            - redpanda
+            - start
+            - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+            - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+            - --pandaproxy-addr internal://0.0.0.0:8082,external://0.0.0.0:18082
+            - --advertise-pandaproxy-addr internal://redpanda:8082,external://localhost:18082
+            - --schema-registry-addr internal://0.0.0.0:8081,external://0.0.0.0:18081
+            - --rpc-addr redpanda:33145
+            - --advertise-rpc-addr redpanda:33145
+            - --mode dev-container
+            - --smp 1
+            - --memory 1G
+            - --default-log-level=info
+          ports:
+            - name: kafka
+              containerPort: 9092
+              protocol: TCP
+            - name: kafka-external
+              containerPort: 19092
+              protocol: TCP
+            - name: schema-registry
+              containerPort: 8081
+              protocol: TCP
+            - name: proxy
+              containerPort: 8082
+              protocol: TCP
+            - name: rpc
+              containerPort: 33145
+              protocol: TCP
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2000m"
+              memory: "2Gi"
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/redpanda/data
+          livenessProbe:
+            exec:
+              command:
+                - /bin/bash
+                - -c
+                - rpk cluster health | grep -E 'Healthy:.+true'
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - /bin/bash
+                - -c
+                - rpk cluster health | grep -E 'Healthy:.+true'
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 3
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
+---
+# Job to create Kafka topics
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: init-kafka-topics
+  namespace: scrapix
+  labels:
+    app.kubernetes.io/name: init-kafka-topics
+    app.kubernetes.io/component: setup
+    app.kubernetes.io/part-of: scrapix
+spec:
+  template:
+    spec:
+      containers:
+        - name: init-topics
+          image: redpandadata/redpanda:v25.3.4
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              echo "Waiting for Redpanda to be ready..."
+              until rpk cluster health --brokers redpanda:9092 | grep -E 'Healthy:.+true'; do
+                sleep 2
+              done
+              echo "Creating Kafka topics..."
+              rpk topic create scrapix.urls.frontier --brokers redpanda:9092 -p 12 -r 1 || true
+              rpk topic create scrapix.urls.processing --brokers redpanda:9092 -p 12 -r 1 || true
+              rpk topic create scrapix.pages.raw --brokers redpanda:9092 -p 6 -r 1 || true
+              rpk topic create scrapix.documents --brokers redpanda:9092 -p 6 -r 1 || true
+              rpk topic create scrapix.events --brokers redpanda:9092 -p 3 -r 1 || true
+              rpk topic create scrapix.dlq.urls --brokers redpanda:9092 -p 3 -r 1 || true
+              rpk topic create scrapix.jobs.status --brokers redpanda:9092 -p 3 -r 1 || true
+              echo "Topics created successfully!"
+              rpk topic list --brokers redpanda:9092
+      restartPolicy: OnFailure
+  backoffLimit: 5

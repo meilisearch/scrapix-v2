@@ -1,0 +1,14 @@
+# Expose API via NodePort for local access
+apiVersion: v1
+kind: Service
+metadata:
+  name: scrapix-api
+  namespace: scrapix
+spec:
+  type: NodePort
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      nodePort: 30080
+      protocol: TCP

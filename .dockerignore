@@ -1,0 +1,76 @@
+# Build artifacts
+target/
+debug/
+release/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Documentation
+*.md
+!README.md
+docs/
+
+# Test and development files
+tests/
+misc/tests/
+*.test.*
+coverage/
+.coverage
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+Jenkinsfile
+
+# Docker files (don't need to copy these)
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Environment files
+.env*
+!.env.example
+
+# Node.js (if any TypeScript remnants)
+node_modules/
+apps/
+package.json
+yarn.lock
+tsconfig*.json
+*.ts
+*.js
+!*.config.js
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Supabase (not needed for Rust services)
+supabase/
+
+# Scripts (not needed in image)
+scripts/
+
+# Chrome extension (not needed)
+chrome/
+
+# Cargo lock should be included for reproducible builds
+!Cargo.lock

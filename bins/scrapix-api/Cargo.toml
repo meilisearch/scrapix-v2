@@ -1,0 +1,44 @@
+[package]
+name = "scrapix-api"
+description = "REST/GraphQL API server for Scrapix"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "scrapix-api"
+path = "src/main.rs"
+
+[dependencies]
+scrapix-core = { path = "../../crates/scrapix-core" }
+scrapix-queue = { path = "../../crates/scrapix-queue" }
+scrapix-storage = { path = "../../crates/scrapix-storage" }
+scrapix-telemetry = { path = "../../crates/scrapix-telemetry" }
+
+tokio = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Web framework
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+
+# Utilities
+uuid = { workspace = true }
+chrono = { workspace = true }
+
+# CLI
+clap = { workspace = true }
+
+# Async utilities
+parking_lot = { workspace = true }
+tokio-stream = { workspace = true }
+
+# Tracing
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

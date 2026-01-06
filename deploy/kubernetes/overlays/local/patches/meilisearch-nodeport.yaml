@@ -1,0 +1,15 @@
+# Expose Meilisearch via NodePort for local access
+apiVersion: v1
+kind: Service
+metadata:
+  name: meilisearch
+  namespace: scrapix
+spec:
+  type: NodePort
+  clusterIP: null
+  ports:
+    - name: http
+      port: 7700
+      targetPort: http
+      nodePort: 30700
+      protocol: TCP

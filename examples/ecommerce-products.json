@@ -1,0 +1,83 @@
+{
+  "start_urls": ["https://shop.example.com/products"],
+  "index_uid": "products",
+  "crawler_type": "browser",
+  "max_depth": 3,
+  "max_pages": 10000,
+  "url_patterns": {
+    "include": [
+      "https://shop.example.com/products/**",
+      "https://shop.example.com/category/**"
+    ],
+    "exclude": [
+      "**/cart/**",
+      "**/checkout/**",
+      "**/account/**",
+      "**/wishlist/**"
+    ],
+    "index_only": [
+      "https://shop.example.com/products/*"
+    ]
+  },
+  "concurrency": {
+    "max_concurrent_requests": 5,
+    "browser_pool_size": 3
+  },
+  "rate_limit": {
+    "requests_per_second": 2,
+    "per_domain_delay_ms": 500,
+    "respect_robots_txt": true
+  },
+  "features": {
+    "metadata": {
+      "enabled": true
+    },
+    "schema": {
+      "enabled": true,
+      "only_types": ["Product", "Offer"],
+      "convert_dates": true
+    },
+    "custom_selectors": {
+      "enabled": true,
+      "selectors": {
+        "name": "h1.product-title",
+        "price": ".product-price .amount",
+        "currency": ".product-price .currency",
+        "description": ".product-description",
+        "brand": ".product-brand",
+        "sku": "[data-sku]",
+        "availability": ".stock-status",
+        "images": [".product-gallery img", ".product-image img"],
+        "categories": ".breadcrumb a",
+        "rating": ".rating-value",
+        "reviews_count": ".reviews-count"
+      }
+    }
+  },
+  "meilisearch": {
+    "url": "http://localhost:7700",
+    "api_key": "masterKey",
+    "primary_key": "url",
+    "batch_size": 50,
+    "settings": {
+      "searchable_attributes": [
+        "custom.name",
+        "custom.description",
+        "custom.brand",
+        "custom.categories"
+      ],
+      "filterable_attributes": [
+        "custom.brand",
+        "custom.categories",
+        "custom.availability",
+        "custom.price",
+        "schema.Product.offers.price"
+      ],
+      "sortable_attributes": [
+        "custom.price",
+        "custom.rating",
+        "custom.reviews_count"
+      ]
+    }
+  }
+}

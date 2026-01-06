@@ -1,0 +1,102 @@
+{
+  "start_urls": ["https://docs.example.com"],
+  "index_uid": "example-docs",
+  "crawler_type": "http",
+  "max_depth": 10,
+  "max_pages": 5000,
+  "url_patterns": {
+    "include": [
+      "https://docs.example.com/**"
+    ],
+    "exclude": [
+      "**/changelog/**",
+      "**/releases/**",
+      "**/*.pdf",
+      "**/*.zip"
+    ],
+    "index_only": [
+      "https://docs.example.com/docs/**",
+      "https://docs.example.com/guides/**",
+      "https://docs.example.com/tutorials/**"
+    ]
+  },
+  "sitemap": {
+    "enabled": true,
+    "urls": ["https://docs.example.com/sitemap.xml"]
+  },
+  "concurrency": {
+    "max_concurrent_requests": 20
+  },
+  "rate_limit": {
+    "requests_per_second": 10,
+    "per_domain_delay_ms": 100,
+    "respect_robots_txt": true
+  },
+  "features": {
+    "metadata": {
+      "enabled": true
+    },
+    "markdown": {
+      "enabled": true
+    },
+    "block_split": {
+      "enabled": true
+    },
+    "schema": {
+      "enabled": true,
+      "only_types": ["Article", "HowTo", "TechArticle"],
+      "convert_dates": true
+    },
+    "custom_selectors": {
+      "enabled": true,
+      "selectors": {
+        "title": "h1, .doc-title",
+        "description": "meta[name='description']",
+        "category": ".breadcrumb li:nth-child(2)",
+        "version": ".version-selector .current"
+      }
+    }
+  },
+  "meilisearch": {
+    "url": "http://localhost:7700",
+    "api_key": "masterKey",
+    "batch_size": 100,
+    "settings": {
+      "searchable_attributes": [
+        "title",
+        "content",
+        "markdown",
+        "blocks.content",
+        "meta.description"
+      ],
+      "filterable_attributes": [
+        "url",
+        "language",
+        "depth",
+        "custom.category",
+        "custom.version"
+      ],
+      "sortable_attributes": ["depth", "created_at"],
+      "ranking_rules": [
+        "words",
+        "typo",
+        "proximity",
+        "attribute",
+        "sort",
+        "exactness"
+      ]
+    }
+  },
+  "webhooks": [
+    {
+      "url": "https://hooks.example.com/crawl-events",
+      "events": ["crawl_started", "crawl_completed", "crawl_failed"],
+      "auth": {
+        "bearer": {
+          "token": "your-webhook-token"
+        }
+      },
+      "enabled": true
+    }
+  ]
+}

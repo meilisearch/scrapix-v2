@@ -1,0 +1,28 @@
+[package]
+name = "scrapix-worker-content"
+description = "Content processing worker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "scrapix-worker-content"
+path = "src/main.rs"
+
+[dependencies]
+scrapix-core = { path = "../../crates/scrapix-core" }
+scrapix-parser = { path = "../../crates/scrapix-parser" }
+scrapix-storage = { path = "../../crates/scrapix-storage" }
+scrapix-queue = { path = "../../crates/scrapix-queue" }
+scrapix-telemetry = { path = "../../crates/scrapix-telemetry" }
+
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }

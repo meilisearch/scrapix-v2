@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: meilisearch
+  namespace: scrapix
+  labels:
+    app.kubernetes.io/name: meilisearch
+    app.kubernetes.io/component: search
+    app.kubernetes.io/part-of: scrapix
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - name: http
+      port: 7700
+      targetPort: http
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: meilisearch
