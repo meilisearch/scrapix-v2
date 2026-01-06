@@ -22,7 +22,8 @@ use tokio::sync::Semaphore;
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use scrapix_core::{RawPage, ScrapixError};
+use scrapix_ai::{AiClient, AiClientConfig, AiService};
+use scrapix_core::{Document, RawPage, ScrapixError};
 use scrapix_parser::{HtmlParser, HtmlParserConfig};
 use scrapix_queue::{
     topic_names, ConsumerBuilder, CrawlEvent, DocumentMessage, KafkaConsumer, KafkaProducer,
@@ -98,6 +99,44 @@ struct Args {
     /// Enable verbose logging
     #[arg(short, long)]
     verbose: bool,
+
+    // === AI ENRICHMENT OPTIONS ===
+    /// OpenAI API key (required for AI features)
+    #[arg(long, env = "OPENAI_API_KEY")]
+    openai_api_key: Option<String>,
+
+    /// OpenAI API base URL (for compatible APIs like Azure, local models)
+    #[arg(long, env = "OPENAI_API_BASE")]
+    openai_api_base: Option<String>,
+
+    /// Enable AI summarization (generates ai_summary field)
+    #[arg(long, env = "ENABLE_SUMMARY")]
+    enable_summary: bool,
+
+    /// Summary model to use
+    #[arg(long, env = "SUMMARY_MODEL", default_value = "gpt-4o-mini")]
+    summary_model: String,
+
+    /// Enable AI extraction with custom prompt (generates ai_extraction field)
+    #[arg(long, env = "ENABLE_EXTRACTION")]
+    enable_extraction: bool,
+
+    /// Custom extraction prompt (required if enable_extraction is true)
+    /// Use {content} as placeholder for the page content
+    #[arg(long, env = "EXTRACTION_PROMPT")]
+    extraction_prompt: Option<String>,
+
+    /// Extraction model to use
+    #[arg(long, env = "EXTRACTION_MODEL", default_value = "gpt-4o-mini")]
+    extraction_model: String,
+
+    /// Maximum tokens for AI responses
+    #[arg(long, env = "AI_MAX_TOKENS", default_value = "1000")]
+    ai_max_tokens: u32,
+
+    /// Maximum concurrent AI requests
+    #[arg(long, env = "AI_CONCURRENCY", default_value = "5")]
+    ai_concurrency: usize,
 }
 
 /// Worker metrics for monitoring
@@ -174,12 +213,26 @@ struct MetricsSnapshot {
     active_processors: u64,
 }
 
+/// AI configuration for the worker
+#[derive(Clone)]
+#[allow(dead_code)]
+struct AiConfig {
+    enable_summary: bool,
+    enable_extraction: bool,
+    extraction_prompt: Option<String>,
+    summary_model: String,
+    extraction_model: String,
+    max_tokens: u32,
+}
+
 /// The main content worker
 struct ContentWorker {
     consumer: KafkaConsumer,
     producer: KafkaProducer,
     parser: HtmlParser,
     storage: Option<Arc<MeilisearchStorage>>,
+    ai_service: Option<Arc<AiService>>,
+    ai_config: AiConfig,
     semaphore: Arc<Semaphore>,
     metrics: Arc<WorkerMetrics>,
     shutdown: Arc<AtomicBool>,
@@ -262,11 +315,64 @@ impl ContentWorker {
         // Create concurrency limiter
         let semaphore = Arc::new(Semaphore::new(args.concurrency));
 
+        // Create AI config
+        let ai_config = AiConfig {
+            enable_summary: args.enable_summary,
+            enable_extraction: args.enable_extraction,
+            extraction_prompt: args.extraction_prompt.clone(),
+            summary_model: args.summary_model.clone(),
+            extraction_model: args.extraction_model.clone(),
+            max_tokens: args.ai_max_tokens,
+        };
+
+        // Create AI service if API key is provided and any AI feature is enabled
+        let ai_service = if (args.enable_summary || args.enable_extraction)
+            && args.openai_api_key.is_some()
+        {
+            let api_key = args.openai_api_key.clone().unwrap();
+            let ai_client_config = AiClientConfig {
+                api_key,
+                base_url: args.openai_api_base.clone(),
+                max_concurrent_requests: args.ai_concurrency,
+                ..Default::default()
+            };
+
+            match AiClient::new(ai_client_config) {
+                Ok(client) => {
+                    let client = Arc::new(client);
+                    let mut service = AiService::minimal(client);
+
+                    if args.enable_summary {
+                        service = service.with_summarization();
+                        info!(model = %args.summary_model, "AI summarization enabled");
+                    }
+
+                    if args.enable_extraction {
+                        service = service.with_extraction();
+                        info!(model = %args.extraction_model, "AI extraction enabled");
+                    }
+
+                    Some(Arc::new(service))
+                }
+                Err(e) => {
+                    warn!(error = %e, "Failed to create AI client, AI features disabled");
+                    None
+                }
+            }
+        } else {
+            if args.enable_summary || args.enable_extraction {
+                warn!("AI features enabled but no API key provided, AI features disabled");
+            }
+            None
+        };
+
         Ok(Self {
             consumer,
             producer,
             parser,
             storage,
+            ai_service,
+            ai_config,
             semaphore,
             metrics: Arc::new(WorkerMetrics::new()),
             shutdown: Arc::new(AtomicBool::new(false)),
@@ -423,17 +529,21 @@ impl ContentWorker {
             return Ok(());
         }
 
-        let process_duration = start.elapsed();
+        let parse_duration = start.elapsed();
 
         info!(
             url = %msg.url,
             title = ?document.title,
             content_len = content_len,
             language = ?document.language,
-            duration_ms = process_duration.as_millis(),
+            duration_ms = parse_duration.as_millis(),
             "Page parsed successfully"
         );
 
+        // Apply AI enrichment if enabled
+        let document = self.enrich_with_ai(document).await;
+
+        let _process_duration = start.elapsed();
         self.metrics.record_success(page_size, 1);
 
         // Index document to Meilisearch
@@ -482,6 +592,83 @@ impl ContentWorker {
             .send(topic_names::EVENTS, Some(job_id), event)
             .await?;
         Ok(())
+    }
+
+    /// Enrich document with AI-generated content (summary, extraction)
+    async fn enrich_with_ai(&self, mut document: Document) -> Document {
+        let ai_service = match &self.ai_service {
+            Some(s) => s,
+            None => return document,
+        };
+
+        // Get content to process - prefer markdown, fallback to content
+        let content = document
+            .markdown
+            .as_ref()
+            .or(document.content.as_ref())
+            .cloned()
+            .unwrap_or_default();
+
+        if content.is_empty() {
+            return document;
+        }
+
+        // Truncate content if too long (keep first ~6000 tokens worth)
+        let content_for_ai = if content.len() > 24000 {
+            content[..24000].to_string()
+        } else {
+            content
+        };
+
+        // Generate AI summary if enabled
+        if self.ai_config.enable_summary {
+            match ai_service.tldr(&content_for_ai).await {
+                Ok(summary) => {
+                    debug!(
+                        url = %document.url,
+                        summary_len = summary.len(),
+                        "Generated AI summary"
+                    );
+                    document.ai_summary = Some(summary);
+                }
+                Err(e) => {
+                    warn!(
+                        url = %document.url,
+                        error = %e,
+                        "Failed to generate AI summary"
+                    );
+                }
+            }
+        }
+
+        // Run AI extraction if enabled and prompt is provided
+        if self.ai_config.enable_extraction {
+            if let Some(ref prompt) = self.ai_config.extraction_prompt {
+                match ai_service.extract(&content_for_ai, prompt).await {
+                    Ok(result) => {
+                        debug!(
+                            url = %document.url,
+                            "Generated AI extraction"
+                        );
+                        document.ai_extraction = Some(result.data);
+                    }
+                    Err(e) => {
+                        warn!(
+                            url = %document.url,
+                            error = %e,
+                            "Failed to run AI extraction"
+                        );
+                    }
+                }
+            } else {
+                warn!(
+                    url = %document.url,
+                    "AI extraction enabled but no prompt provided"
+                );
+            }
+        }
+
+        document
     }
 
     /// Graceful shutdown

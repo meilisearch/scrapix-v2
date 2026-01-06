@@ -22,9 +22,18 @@
 //!
 //! # Cancel a job
 //! scrapix cancel <job-id>
+//!
+//! # Validate a configuration file
+//! scrapix validate config.json
+//!
+//! # Run a local crawl (without Kafka)
+//! scrapix local -p config.json --output results.json
 //! ```
 
+use std::collections::{HashSet, VecDeque};
 use std::pin::pin;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -34,8 +43,12 @@ use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tabled::{Table, Tabled};
+use tokio::sync::Mutex;
+use tracing::debug;
 
 use scrapix_core::CrawlConfig;
+use scrapix_extractor::Extractor;
+use scrapix_parser::{extract_content, html_to_markdown};
 
 /// Scrapix web crawler CLI
 #[derive(Parser, Debug)]
@@ -127,6 +140,39 @@ enum Commands {
 
     /// Check API server health
     Health,
+
+    /// Validate a configuration file
+    Validate {
+        /// Configuration file path (JSON)
+        config_path: String,
+
+        /// Output validation details
+        #[arg(short, long)]
+        verbose: bool,
+    },
+
+    /// Run a local crawl (without Kafka infrastructure)
+    Local {
+        /// Configuration file path (JSON)
+        #[arg(short = 'p', long, group = "config_source")]
+        config_path: Option<String>,
+
+        /// Inline JSON configuration
+        #[arg(short, long, group = "config_source")]
+        config: Option<String>,
+
+        /// Output file for results (JSON)
+        #[arg(short, long)]
+        output: Option<String>,
+
+        /// Maximum concurrent requests
+        #[arg(long, default_value = "10")]
+        concurrency: usize,
+
+        /// Enable verbose logging
+        #[arg(short, long)]
+        verbose: bool,
+    },
 }
 
 // ============================================================================
@@ -776,6 +822,469 @@ async fn handle_health(client: &ApiClient, format: OutputFormat) -> Result<()> {
     Ok(())
 }
 
+async fn handle_validate(config_path: &str, verbose: bool, format: OutputFormat) -> Result<()> {
+    let content = std::fs::read_to_string(config_path)
+        .with_context(|| format!("Failed to read config file: {}", config_path))?;
+
+    let config: CrawlConfig = serde_json::from_str(&content)
+        .with_context(|| format!("Failed to parse config file: {}", config_path))?;
+
+    // Validate configuration
+    let mut errors: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+
+    // Required fields
+    if config.start_urls.is_empty() {
+        errors.push("start_urls is empty - at least one URL is required".to_string());
+    }
+    if config.index_uid.is_empty() {
+        errors.push("index_uid is empty - required for indexing".to_string());
+    }
+
+    // Validate URLs
+    for (i, url) in config.start_urls.iter().enumerate() {
+        if url::Url::parse(url).is_err() {
+            errors.push(format!("start_urls[{}]: invalid URL '{}'", i, url));
+        }
+    }
+
+    // Check for potential issues
+    if config.max_depth.is_none() && config.max_pages.is_none() {
+        warnings.push("No max_depth or max_pages set - crawl may run indefinitely".to_string());
+    }
+
+    if let Some(depth) = config.max_depth {
+        if depth > 10 {
+            warnings.push(format!(
+                "max_depth={} is quite deep - consider a smaller value",
+                depth
+            ));
+        }
+    }
+
+    match format {
+        OutputFormat::Json => {
+            let result = serde_json::json!({
+                "valid": errors.is_empty(),
+                "errors": errors,
+                "warnings": warnings,
+                "config": if verbose { Some(&config) } else { None }
+            });
+            println!("{}", serde_json::to_string_pretty(&result).unwrap());
+        }
+        OutputFormat::Text => {
+            println!();
+            if errors.is_empty() {
+                print_success(&format!("Configuration '{}' is valid", config_path));
+            } else {
+                print_error(&format!(
+                    "Configuration '{}' has {} error(s)",
+                    config_path,
+                    errors.len()
+                ));
+            }
+            println!();
+
+            if !errors.is_empty() {
+                println!("{}", "Errors:".bold().red());
+                for error in &errors {
+                    println!("  {} {}", "✗".red(), error);
+                }
+                println!();
+            }
+
+            if !warnings.is_empty() {
+                println!("{}", "Warnings:".bold().yellow());
+                for warning in &warnings {
+                    println!("  {} {}", "⚠".yellow(), warning);
+                }
+                println!();
+            }
+
+            if verbose {
+                println!("{}", "Configuration Details:".bold());
+                println!("  {} {}", "Index UID:".dimmed(), config.index_uid);
+                println!("  {} {}", "Start URLs:".dimmed(), config.start_urls.len());
+                println!(
+                    "  {} {:?}",
+                    "Crawler Type:".dimmed(),
+                    config.crawler_type
+                );
+                if let Some(depth) = config.max_depth {
+                    println!("  {} {}", "Max Depth:".dimmed(), depth);
+                }
+                if let Some(pages) = config.max_pages {
+                    println!("  {} {}", "Max Pages:".dimmed(), pages);
+                }
+                println!();
+            }
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        anyhow::bail!("Configuration validation failed")
+    }
+}
+
+/// Local crawl result document
+#[derive(Debug, Clone, Serialize)]
+struct LocalCrawlDocument {
+    url: String,
+    title: Option<String>,
+    description: Option<String>,
+    content: String,
+    markdown: Option<String>,
+    crawled_at: String,
+    status_code: u16,
+    depth: u32,
+}
+
+/// Local crawl result
+#[derive(Debug, Serialize)]
+struct LocalCrawlResult {
+    index_uid: String,
+    pages_crawled: u64,
+    pages_failed: u64,
+    duration_seconds: f64,
+    documents: Vec<LocalCrawlDocument>,
+}
+
+async fn handle_local(
+    config_path: Option<String>,
+    config_json: Option<String>,
+    output: Option<String>,
+    concurrency: usize,
+    verbose: bool,
+    format: OutputFormat,
+) -> Result<()> {
+    // Initialize tracing if verbose
+    if verbose {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter("scrapix=debug,info")
+            .try_init();
+    }
+
+    // Parse configuration
+    let config: CrawlConfig = if let Some(path) = config_path {
+        let content = std::fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read config file: {}", path))?;
+        serde_json::from_str(&content)
+            .with_context(|| format!("Failed to parse config file: {}", path))?
+    } else if let Some(json) = config_json {
+        serde_json::from_str(&json).context("Failed to parse inline config")?
+    } else {
+        anyhow::bail!("Either --config-path (-p) or --config (-c) is required");
+    };
+
+    // Validate config
+    if config.start_urls.is_empty() {
+        anyhow::bail!("Configuration must include at least one start_url");
+    }
+
+    if format == OutputFormat::Text {
+        print_info(&format!(
+            "Starting local crawl of {} URL(s)",
+            config.start_urls.len()
+        ));
+        println!();
+    }
+
+    let start_time = std::time::Instant::now();
+
+    // Create HTTP client
+    let http_client = reqwest::Client::builder()
+        .user_agent("Scrapix/1.0 (Local Crawl)")
+        .timeout(Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .build()?;
+
+    // Create feature extractor with all features
+    let feature_extractor = Arc::new(Extractor::with_all_features());
+
+    // Crawl state
+    let visited: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
+    let queue: Arc<Mutex<VecDeque<(String, u32)>>> = Arc::new(Mutex::new(VecDeque::new()));
+    let documents: Arc<Mutex<Vec<LocalCrawlDocument>>> = Arc::new(Mutex::new(Vec::new()));
+    let pages_crawled = Arc::new(AtomicU64::new(0));
+    let pages_failed = Arc::new(AtomicU64::new(0));
+
+    // Seed the queue
+    {
+        let mut q = queue.lock().await;
+        let mut v = visited.lock().await;
+        for url in &config.start_urls {
+            if let Ok(parsed) = url::Url::parse(url) {
+                let normalized = parsed.to_string();
+                if v.insert(normalized.clone()) {
+                    q.push_back((normalized, 0));
+                }
+            }
+        }
+    }
+
+    // Get max depth and max pages
+    let max_depth = config.max_depth.unwrap_or(2);
+    let max_pages = config.max_pages.unwrap_or(100);
+
+    // Get base domain for limiting scope
+    let base_domains: HashSet<String> = config
+        .start_urls
+        .iter()
+        .filter_map(|u| url::Url::parse(u).ok())
+        .filter_map(|u| u.host_str().map(|h| h.to_string()))
+        .collect();
+
+    // Create progress bar
+    let progress = if format == OutputFormat::Text {
+        let pb = ProgressBar::new(max_pages);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template("{spinner:.green} [{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} pages ({msg})")
+                .unwrap()
+                .progress_chars("##-"),
+        );
+        Some(pb)
+    } else {
+        None
+    };
+
+    // Crawl loop
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency));
+
+    loop {
+        // Check if we've reached limits
+        let current_pages = pages_crawled.load(Ordering::Relaxed);
+        if current_pages >= max_pages {
+            break;
+        }
+
+        // Get next URL from queue
+        let next = {
+            let mut q = queue.lock().await;
+            q.pop_front()
+        };
+
+        let Some((url, depth)) = next else {
+            // Queue is empty, wait a bit for in-flight requests
+            tokio::time::sleep(Duration::from_millis(100)).await;
+
+            // Check if queue is still empty
+            let q = queue.lock().await;
+            if q.is_empty() {
+                break;
+            }
+            continue;
+        };
+
+        // Skip if too deep
+        if depth > max_depth {
+            continue;
+        }
+
+        // Acquire semaphore
+        let permit = semaphore.clone().acquire_owned().await?;
+
+        // Clone for the task
+        let http_client = http_client.clone();
+        let feature_extractor = feature_extractor.clone();
+        let visited = visited.clone();
+        let queue = queue.clone();
+        let documents = documents.clone();
+        let pages_crawled = pages_crawled.clone();
+        let pages_failed = pages_failed.clone();
+        let base_domains = base_domains.clone();
+        let progress = progress.clone();
+
+        tokio::spawn(async move {
+            let _permit = permit;
+
+            debug!(url = %url, depth, "Fetching");
+
+            match http_client.get(&url).send().await {
+                Ok(response) => {
+                    let status_code = response.status().as_u16();
+
+                    match response.text().await {
+                        Ok(html) => {
+                            // Extract content using readability
+                            let content = extract_content(&html);
+
+                            // Extract features (metadata, etc.)
+                            let features = feature_extractor.extract(&html).ok();
+
+                            // Convert to markdown
+                            let markdown = html_to_markdown(&html);
+
+                            // Get title and description from features
+                            let title = features
+                                .as_ref()
+                                .and_then(|f| f.metadata.as_ref())
+                                .and_then(|m| m.title.clone());
+                            let description = features
+                                .as_ref()
+                                .and_then(|f| f.metadata.as_ref())
+                                .and_then(|m| m.description.clone());
+
+                            // Create document
+                            let doc = LocalCrawlDocument {
+                                url: url.clone(),
+                                title,
+                                description,
+                                content,
+                                markdown: Some(markdown),
+                                crawled_at: chrono::Utc::now().to_rfc3339(),
+                                status_code,
+                                depth,
+                            };
+
+                            documents.lock().await.push(doc);
+                            pages_crawled.fetch_add(1, Ordering::Relaxed);
+
+                            // Extract URLs from HTML (sync) then queue them (async)
+                            let new_urls = extract_urls_from_html(&html, &url, &base_domains);
+                            queue_urls(new_urls, depth, &visited, &queue).await;
+
+                            if let Some(ref pb) = progress {
+                                pb.set_position(pages_crawled.load(Ordering::Relaxed));
+                                pb.set_message(format!("{} errors", pages_failed.load(Ordering::Relaxed)));
+                            }
+                        }
+                        Err(e) => {
+                            debug!(url = %url, error = %e, "Failed to read response body");
+                            pages_failed.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                }
+                Err(e) => {
+                    debug!(url = %url, error = %e, "Fetch failed");
+                    pages_failed.fetch_add(1, Ordering::Relaxed);
+
+                    if let Some(ref pb) = progress {
+                        pb.set_message(format!("{} errors", pages_failed.load(Ordering::Relaxed)));
+                    }
+                }
+            }
+        });
+    }
+
+    // Wait for all tasks to complete
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    if let Some(pb) = progress {
+        pb.finish_with_message("done");
+    }
+
+    let duration = start_time.elapsed();
+
+    // Build result
+    let docs = documents.lock().await.clone();
+    let result = LocalCrawlResult {
+        index_uid: config.index_uid.clone(),
+        pages_crawled: pages_crawled.load(Ordering::Relaxed),
+        pages_failed: pages_failed.load(Ordering::Relaxed),
+        duration_seconds: duration.as_secs_f64(),
+        documents: docs,
+    };
+
+    // Output results
+    if let Some(output_path) = output {
+        let json = serde_json::to_string_pretty(&result)?;
+        std::fs::write(&output_path, json)?;
+
+        if format == OutputFormat::Text {
+            println!();
+            print_success(&format!("Results written to {}", output_path.cyan()));
+        }
+    }
+
+    match format {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        OutputFormat::Text => {
+            println!();
+            println!("{}", "Crawl Summary".bold().underline());
+            println!();
+            println!(
+                "  {} {}",
+                "Pages Crawled:".dimmed(),
+                result.pages_crawled.to_string().green()
+            );
+            println!(
+                "  {} {}",
+                "Pages Failed:".dimmed(),
+                if result.pages_failed > 0 {
+                    result.pages_failed.to_string().red().to_string()
+                } else {
+                    result.pages_failed.to_string()
+                }
+            );
+            println!("  {} {:.2}s", "Duration:".dimmed(), result.duration_seconds);
+            println!(
+                "  {} {:.2}/s",
+                "Rate:".dimmed(),
+                result.pages_crawled as f64 / result.duration_seconds
+            );
+            println!();
+        }
+    }
+
+    Ok(())
+}
+
+/// Extract URLs from HTML (synchronous part)
+fn extract_urls_from_html(
+    html: &str,
+    base_url: &str,
+    base_domains: &HashSet<String>,
+) -> Vec<String> {
+    use scraper::{Html, Selector};
+
+    let Ok(base) = url::Url::parse(base_url) else {
+        return vec![];
+    };
+
+    let document = Html::parse_document(html);
+    let Ok(selector) = Selector::parse("a[href]") else {
+        return vec![];
+    };
+
+    let mut urls = Vec::new();
+    for element in document.select(&selector) {
+        if let Some(href) = element.value().attr("href") {
+            // Resolve relative URLs
+            if let Ok(resolved) = base.join(href) {
+                // Only include links within base domains
+                if let Some(host) = resolved.host_str() {
+                    if base_domains.contains(host) {
+                        urls.push(resolved.to_string());
+                    }
+                }
+            }
+        }
+    }
+    urls
+}
+
+/// Add extracted URLs to the crawl queue
+async fn queue_urls(
+    urls: Vec<String>,
+    depth: u32,
+    visited: &Arc<Mutex<HashSet<String>>>,
+    queue: &Arc<Mutex<VecDeque<(String, u32)>>>,
+) {
+    let mut q = queue.lock().await;
+    let mut v = visited.lock().await;
+
+    for url_str in urls {
+        if v.insert(url_str.clone()) {
+            q.push_back((url_str, depth + 1));
+        }
+    }
+}
+
 // ============================================================================
 // Main
 // ============================================================================
@@ -806,6 +1315,19 @@ async fn main() -> Result<()> {
         Commands::Cancel { job_id } => handle_cancel(&client, &job_id, cli.output).await,
 
         Commands::Health => handle_health(&client, cli.output).await,
+
+        Commands::Validate {
+            config_path,
+            verbose,
+        } => handle_validate(&config_path, verbose, cli.output).await,
+
+        Commands::Local {
+            config_path,
+            config,
+            output,
+            concurrency,
+            verbose,
+        } => handle_local(config_path, config, output, concurrency, verbose, cli.output).await,
     };
 
     if let Err(e) = result {

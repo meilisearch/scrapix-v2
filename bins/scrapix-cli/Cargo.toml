@@ -12,6 +12,11 @@ path = "src/main.rs"
 
 [dependencies]
 scrapix-core = { path = "../../crates/scrapix-core" }
+scrapix-parser = { path = "../../crates/scrapix-parser" }
+scrapix-extractor = { path = "../../crates/scrapix-extractor" }
+
+# HTML parsing for local crawl
+scraper = { workspace = true }
 
 tokio = { workspace = true }
 serde = { workspace = true }
@@ -21,6 +26,9 @@ clap = { workspace = true }
 reqwest = { workspace = true }
 chrono = { workspace = true }
 futures = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+url = { workspace = true }
 
 # Pretty output
 colored = "2.1"

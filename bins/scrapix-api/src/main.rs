@@ -281,12 +281,14 @@ struct HealthResponse {
 // ============================================================================
 
 /// Health check endpoint
-async fn health(State(_state): State<Arc<AppState>>) -> Json<HealthResponse> {
-    // Simple health check - could add Kafka health check here
+async fn health(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
+    let kafka_connected = state.producer.is_healthy();
+    let status = if kafka_connected { "ok" } else { "degraded" };
+
     Json(HealthResponse {
-        status: "ok".to_string(),
+        status: status.to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
-        kafka_connected: true, // TODO: actual health check
+        kafka_connected,
     })
 }
 

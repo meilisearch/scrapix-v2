@@ -200,6 +200,32 @@ impl KafkaProducer {
     pub fn flush(&self, timeout: Duration) {
         let _ = self.producer.flush(Timeout::After(timeout));
     }
+
+    /// Check if the producer is connected and can reach the broker
+    pub fn is_healthy(&self) -> bool {
+        // Try to get cluster metadata with a short timeout
+        // This verifies we can communicate with the broker
+        match self
+            .producer
+            .client()
+            .fetch_metadata(None, Timeout::After(Duration::from_secs(5)))
+        {
+            Ok(metadata) => {
+                // Check that we have at least one broker
+                !metadata.brokers().is_empty()
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Get broker information for diagnostics
+    pub fn broker_count(&self) -> Option<usize> {
+        self.producer
+            .client()
+            .fetch_metadata(None, Timeout::After(Duration::from_secs(5)))
+            .ok()
+            .map(|m| m.brokers().len())
+    }
 }
 
 /// Builder for KafkaProducer
