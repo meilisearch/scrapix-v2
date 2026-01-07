@@ -175,6 +175,32 @@ Accept: text/event-stream
 # Returns server-sent events with crawl progress
 ```
 
+### WebSocket Real-time Events
+
+Connect to `/ws` for multi-job subscriptions or `/ws/job/{job_id}` for a single job.
+
+**Client Messages:**
+```json
+{"type": "subscribe", "job_id": "..."}      // Subscribe to job
+{"type": "unsubscribe", "job_id": "..."}    // Unsubscribe
+{"type": "get_status", "job_id": "..."}     // Request status
+{"type": "ping"}                            // Keepalive
+```
+
+**Server Messages:**
+```json
+{"type": "event", "job_id": "...", "event": {...}}   // Job event
+{"type": "status", "job_id": "...", "status": {...}} // Status response
+{"type": "subscribed", "job_id": "..."}              // Confirmed
+{"type": "pong", "timestamp": 1234567890}            // Keepalive response
+```
+
+**Example (JavaScript):**
+```javascript
+const ws = new WebSocket('ws://localhost:8080/ws/job/' + jobId);
+ws.onmessage = (e) => console.log(JSON.parse(e.data));
+```
+
 ### Cancel Job
 
 ```bash
@@ -337,6 +363,134 @@ kubectl apply -k deploy/kubernetes/overlays/prod
 | `RESPECT_ROBOTS` | Respect robots.txt | `true` |
 | `OPENAI_API_KEY` | OpenAI API key (for AI features) | - |
 
+## Near-Duplicate Detection
+
+Scrapix includes advanced near-duplicate detection using locality-sensitive hashing:
+
+### SimHash (64-bit fingerprints)
+
+Fast content fingerprinting using weighted token hashing:
+
+```rust
+use scrapix_frontier::SimHash;
+
+let simhash = SimHash::new();
+let hash1 = simhash.hash(content1);
+let hash2 = simhash.hash(content2);
+
+// Hamming distance < 10 indicates near-duplicate
+let distance = SimHash::hamming_distance(hash1, hash2);
+```
+
+### MinHash (Jaccard similarity)
+
+Accurate similarity estimation using multiple hash functions:
+
+```rust
+use scrapix_frontier::MinHash;
+
+let minhash = MinHash::new(128); // 128 hash functions
+let sig1 = minhash.signature(content1);
+let sig2 = minhash.signature(content2);
+
+// Returns similarity estimate 0.0-1.0
+let similarity = MinHash::jaccard_similarity(&sig1, &sig2);
+```
+
+### NearDuplicateDetector
+
+Combines both methods with LSH buckets for efficient detection:
+
+```rust
+use scrapix_frontier::{NearDuplicateDetector, NearDuplicateConfig};
+
+let detector = NearDuplicateDetector::new(NearDuplicateConfig {
+    use_simhash: true,
+    simhash_threshold: 10,  // Max Hamming distance
+    use_minhash: true,
+    minhash_threshold: 0.8, // Min Jaccard similarity
+    ..Default::default()
+});
+
+// Returns Some(canonical_url) if near-duplicate found
+if let Some(original) = detector.check_and_add(url, content) {
+    println!("Duplicate of: {}", original);
+}
+```
+
+## Monitoring Stack
+
+Scrapix includes a complete monitoring stack with Prometheus and Grafana.
+
+### Quick Start
+
+```bash
+# Start monitoring services
+cd deploy/monitoring
+docker compose up -d
+
+# Access dashboards
+# Grafana: http://localhost:3000 (admin/admin)
+# Prometheus: http://localhost:9090
+# Alertmanager: http://localhost:9093
+```
+
+### Prometheus Metrics
+
+The `scrapix-telemetry` crate exports metrics:
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `scrapix_pages_crawled_total` | Counter | Total pages crawled |
+| `scrapix_pages_indexed_total` | Counter | Total pages indexed |
+| `scrapix_crawl_errors_total` | Counter | Crawl errors by type |
+| `scrapix_crawl_latency_seconds` | Histogram | Page fetch latency |
+| `scrapix_index_latency_seconds` | Histogram | Indexing latency |
+| `scrapix_queue_depth` | Gauge | URLs pending in queue |
+| `scrapix_active_crawls` | Gauge | Currently active crawls |
+
+### Grafana Dashboards
+
+Pre-configured dashboards in `deploy/monitoring/grafana/dashboards/`:
+
+- **Scrapix Overview** - Crawl rates, error rates, latency percentiles
+- **Job Performance** - Per-job metrics and progress tracking
+- **System Health** - Resource usage, queue depths, worker status
+
+### Alerting Rules
+
+Configured alerts in `deploy/monitoring/prometheus/alerts.yml`:
+
+- **ScrapixHighErrorRate** - Error rate > 10% for 5 minutes
+- **ScrapixSlowCrawling** - p99 latency > 30s for 10 minutes
+- **ScrapixQueueBacklog** - Queue depth > 100k for 15 minutes
+- **ScrapixWorkerDown** - Worker not responding
+
+## Analytics Storage (ClickHouse)
+
+For large-scale analytics, Scrapix supports ClickHouse:
+
+```rust
+use scrapix_storage::{ClickHouseClient, ClickHouseConfig};
+
+let client = ClickHouseClient::new(ClickHouseConfig {
+    url: "http://localhost:8123".to_string(),
+    database: "scrapix".to_string(),
+    ..Default::default()
+}).await?;
+
+// Query domain statistics
+let stats = client.get_domain_stats("example.com", Some(30)).await?;
+
+// Query hourly aggregates
+let hourly = client.get_hourly_stats(24).await?;
+```
+
+### Event Tables
+
+- `crawl_events` - Every page fetch with status, latency, size
+- `content_events` - Processed content with word counts, language
+
 ## Project Structure
 
 ```
@@ -360,12 +514,17 @@ scrapix/
 │   └── scrapix-cli/           # CLI tool
 │
 ├── deploy/                    # Deployment configs
-│   └── kubernetes/            # K8s manifests
-│       ├── base/              # Base resources
-│       └── overlays/          # Environment overrides
-│           ├── local/         # Local development
-│           └── prod/          # Production
+│   ├── kubernetes/            # K8s manifests
+│   │   ├── base/              # Base resources
+│   │   └── overlays/          # Environment overrides
+│   │       ├── local/         # Local development
+│   │       └── prod/          # Production
+│   └── monitoring/            # Prometheus/Grafana stack
+│       ├── docker-compose.yml
+│       ├── prometheus/        # Prometheus config + alerts
+│       └── grafana/           # Dashboards + datasources
 │
+├── tests/                     # Integration tests
 ├── examples/                  # Example configurations
 ├── ARCHITECTURE.md            # Detailed architecture docs
 └── docker-compose.yml         # Docker Compose stack

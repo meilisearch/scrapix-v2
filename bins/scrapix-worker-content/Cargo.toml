@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 scrapix-core = { path = "../../crates/scrapix-core" }
+scrapix-frontier = { path = "../../crates/scrapix-frontier" }
 scrapix-parser = { path = "../../crates/scrapix-parser" }
 scrapix-storage = { path = "../../crates/scrapix-storage" }
 scrapix-queue = { path = "../../crates/scrapix-queue" }
@@ -27,3 +28,5 @@ tracing-subscriber = { workspace = true }
 clap = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }

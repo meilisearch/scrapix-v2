@@ -28,6 +28,10 @@ redis = { workspace = true }
 # S3-compatible object storage (RustFS, MinIO, AWS S3)
 rust-s3 = "0.34"
 
+# ClickHouse for analytics
+clickhouse = { version = "0.13", features = ["time", "uuid"] }
+time = { workspace = true }
+
 # Utilities
 bytes = { workspace = true }
 chrono = { workspace = true }

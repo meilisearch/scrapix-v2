@@ -33,6 +33,7 @@ uuid = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
+parking_lot = { workspace = true }
 
 [lib]
 name = "scrapix_tests"
@@ -57,3 +58,7 @@ path = "src/incremental_crawling.rs"
 [[test]]
 name = "link_graph"
 path = "src/link_graph.rs"
+
+[[test]]
+name = "dns_cache"
+path = "src/dns_cache.rs"

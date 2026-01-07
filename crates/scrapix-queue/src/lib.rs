@@ -58,5 +58,6 @@ pub mod topics;
 pub use consumer::{ConsumerBuilder, ConsumerConfig, KafkaConsumer, MessageMetadata};
 pub use producer::{KafkaProducer, ProducerBuilder, ProducerConfig};
 pub use topics::{
-    names as topic_names, CrawlEvent, DlqMessage, DocumentMessage, RawPageMessage, UrlMessage,
+    names as topic_names, CrawlEvent, CrawlHistoryMessage, DlqMessage, DocumentMessage,
+    LinksMessage, RawPageMessage, UrlMessage,
 };

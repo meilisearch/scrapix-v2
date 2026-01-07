@@ -276,6 +276,8 @@ mod tests {
             discovered_at: Utc::now(),
             retry_count: 0,
             requires_js: false,
+            etag: None,
+            last_modified: None,
         }
     }
 

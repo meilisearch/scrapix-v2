@@ -30,6 +30,12 @@ scraper = { workspace = true }
 # Robots.txt
 robotstxt = { workspace = true }
 
+# XML parsing (sitemaps)
+quick-xml = { workspace = true }
+
+# Compression (gzipped sitemaps)
+flate2 = { workspace = true }
+
 # DNS resolution
 hickory-resolver = { workspace = true }
 

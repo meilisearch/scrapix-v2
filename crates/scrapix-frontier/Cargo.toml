@@ -34,6 +34,7 @@ chrono = { workspace = true }
 uuid = { workspace = true }
 parking_lot = { workspace = true }
 sha2 = { workspace = true }
+siphasher = { workspace = true }
 
 # Tracing
 tracing = { workspace = true }

@@ -1,0 +1,74 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'scrapix-local'
+    env: 'development'
+
+rule_files:
+  - 'alerts.yml'
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Scrapix API server
+  - job_name: 'scrapix-api'
+    static_configs:
+      - targets: ['host.docker.internal:9090']
+    metrics_path: '/metrics'
+
+  # Scrapix Crawler Workers
+  - job_name: 'scrapix-crawler-workers'
+    static_configs:
+      - targets:
+          - 'host.docker.internal:9091'
+          - 'host.docker.internal:9092'
+          - 'host.docker.internal:9093'
+    metrics_path: '/metrics'
+
+  # Scrapix Content Workers
+  - job_name: 'scrapix-content-workers'
+    static_configs:
+      - targets:
+          - 'host.docker.internal:9094'
+          - 'host.docker.internal:9095'
+    metrics_path: '/metrics'
+
+  # Scrapix Frontier Service
+  - job_name: 'scrapix-frontier'
+    static_configs:
+      - targets: ['host.docker.internal:9096']
+    metrics_path: '/metrics'
+
+  # Kafka/Redpanda metrics (if using)
+  - job_name: 'redpanda'
+    static_configs:
+      - targets: ['host.docker.internal:9644']
+    metrics_path: '/public_metrics'
+
+  # Meilisearch metrics
+  - job_name: 'meilisearch'
+    static_configs:
+      - targets: ['host.docker.internal:7700']
+    metrics_path: '/metrics'
+
+  # Redis/DragonflyDB metrics
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['host.docker.internal:6379']
+    # Note: Redis exporter needed for full metrics
+
+  # ClickHouse metrics (if using)
+  - job_name: 'clickhouse'
+    static_configs:
+      - targets: ['host.docker.internal:9363']
+    metrics_path: '/metrics'

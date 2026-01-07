@@ -24,10 +24,11 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use scrapix_ai::{AiClient, AiClientConfig, AiService};
 use scrapix_core::{Document, RawPage, ScrapixError};
+use scrapix_frontier::{NearDuplicateConfig, NearDuplicateDetector};
 use scrapix_parser::{HtmlParser, HtmlParserConfig};
 use scrapix_queue::{
-    topic_names, ConsumerBuilder, CrawlEvent, DocumentMessage, KafkaConsumer, KafkaProducer,
-    ProducerBuilder, RawPageMessage,
+    topic_names, ConsumerBuilder, CrawlEvent, CrawlHistoryMessage, DocumentMessage, KafkaConsumer,
+    KafkaProducer, ProducerBuilder, RawPageMessage,
 };
 use scrapix_storage::{MeilisearchStorage, MeilisearchStorageBuilder};
 
@@ -84,6 +85,10 @@ struct Args {
     #[arg(long, env = "PUBLISH_TO_KAFKA")]
     publish_to_kafka: bool,
 
+    /// Publish crawl history to frontier service for recrawl scheduling
+    #[arg(long, env = "PUBLISH_HISTORY", default_value = "false")]
+    publish_history: bool,
+
     /// Skip Meilisearch indexing (only publish to Kafka)
     #[arg(long, env = "SKIP_MEILISEARCH")]
     skip_meilisearch: bool,
@@ -130,6 +135,18 @@ struct Args {
     #[arg(long, env = "EXTRACTION_MODEL", default_value = "gpt-4o-mini")]
     extraction_model: String,
 
+    /// Enable AI embeddings for semantic search (generates embeddings field)
+    #[arg(long, env = "ENABLE_EMBEDDINGS")]
+    enable_embeddings: bool,
+
+    /// Embedding model to use
+    #[arg(
+        long,
+        env = "EMBEDDING_MODEL",
+        default_value = "text-embedding-3-small"
+    )]
+    embedding_model: String,
+
     /// Maximum tokens for AI responses
     #[arg(long, env = "AI_MAX_TOKENS", default_value = "1000")]
     ai_max_tokens: u32,
@@ -137,6 +154,27 @@ struct Args {
     /// Maximum concurrent AI requests
     #[arg(long, env = "AI_CONCURRENCY", default_value = "5")]
     ai_concurrency: usize,
+
+    // === NEAR-DUPLICATE DETECTION OPTIONS ===
+    /// Enable near-duplicate detection to skip similar content
+    #[arg(long, env = "ENABLE_DEDUP", default_value = "false")]
+    enable_dedup: bool,
+
+    /// Use SimHash (faster) or MinHash (more accurate) for deduplication
+    #[arg(long, env = "DEDUP_USE_SIMHASH", default_value = "true")]
+    dedup_use_simhash: bool,
+
+    /// SimHash Hamming distance threshold (0-64, lower = stricter, default 3)
+    #[arg(long, env = "DEDUP_SIMHASH_THRESHOLD", default_value = "3")]
+    dedup_simhash_threshold: u32,
+
+    /// MinHash Jaccard similarity threshold (0.0-1.0, higher = stricter, default 0.85)
+    #[arg(long, env = "DEDUP_MINHASH_THRESHOLD", default_value = "0.85")]
+    dedup_minhash_threshold: f64,
+
+    /// Maximum fingerprints to store (memory limit)
+    #[arg(long, env = "DEDUP_MAX_FINGERPRINTS", default_value = "10000000")]
+    dedup_max_fingerprints: usize,
 }
 
 /// Worker metrics for monitoring
@@ -146,6 +184,7 @@ struct WorkerMetrics {
     pages_succeeded: AtomicU64,
     pages_failed: AtomicU64,
     pages_skipped: AtomicU64,
+    pages_duplicate: AtomicU64,
     documents_created: AtomicU64,
     documents_indexed: AtomicU64,
     bytes_processed: AtomicU64,
@@ -175,6 +214,11 @@ impl WorkerMetrics {
         self.pages_skipped.fetch_add(1, Ordering::Relaxed);
     }
 
+    fn record_duplicate(&self) {
+        self.pages_processed.fetch_add(1, Ordering::Relaxed);
+        self.pages_duplicate.fetch_add(1, Ordering::Relaxed);
+    }
+
     fn record_indexed(&self, count: u64) {
         self.documents_indexed.fetch_add(count, Ordering::Relaxed);
     }
@@ -193,6 +237,7 @@ impl WorkerMetrics {
             pages_succeeded: self.pages_succeeded.load(Ordering::Relaxed),
             pages_failed: self.pages_failed.load(Ordering::Relaxed),
             pages_skipped: self.pages_skipped.load(Ordering::Relaxed),
+            pages_duplicate: self.pages_duplicate.load(Ordering::Relaxed),
             documents_created: self.documents_created.load(Ordering::Relaxed),
             documents_indexed: self.documents_indexed.load(Ordering::Relaxed),
             bytes_processed: self.bytes_processed.load(Ordering::Relaxed),
@@ -207,6 +252,7 @@ struct MetricsSnapshot {
     pages_succeeded: u64,
     pages_failed: u64,
     pages_skipped: u64,
+    pages_duplicate: u64,
     documents_created: u64,
     documents_indexed: u64,
     bytes_processed: u64,
@@ -219,9 +265,11 @@ struct MetricsSnapshot {
 struct AiConfig {
     enable_summary: bool,
     enable_extraction: bool,
+    enable_embeddings: bool,
     extraction_prompt: Option<String>,
     summary_model: String,
     extraction_model: String,
+    embedding_model: String,
     max_tokens: u32,
 }
 
@@ -233,11 +281,13 @@ struct ContentWorker {
     storage: Option<Arc<MeilisearchStorage>>,
     ai_service: Option<Arc<AiService>>,
     ai_config: AiConfig,
+    dedup_detector: Option<Arc<NearDuplicateDetector>>,
     semaphore: Arc<Semaphore>,
     metrics: Arc<WorkerMetrics>,
     shutdown: Arc<AtomicBool>,
     worker_id: String,
     publish_to_kafka: bool,
+    publish_history: bool,
     #[allow(dead_code)]
     skip_meilisearch: bool,
 }
@@ -319,14 +369,16 @@ impl ContentWorker {
         let ai_config = AiConfig {
             enable_summary: args.enable_summary,
             enable_extraction: args.enable_extraction,
+            enable_embeddings: args.enable_embeddings,
             extraction_prompt: args.extraction_prompt.clone(),
             summary_model: args.summary_model.clone(),
             extraction_model: args.extraction_model.clone(),
+            embedding_model: args.embedding_model.clone(),
             max_tokens: args.ai_max_tokens,
         };
 
         // Create AI service if API key is provided and any AI feature is enabled
-        let ai_service = if (args.enable_summary || args.enable_extraction)
+        let ai_service = if (args.enable_summary || args.enable_extraction || args.enable_embeddings)
             && args.openai_api_key.is_some()
         {
             let api_key = args.openai_api_key.clone().unwrap();
@@ -352,6 +404,11 @@ impl ContentWorker {
                         info!(model = %args.extraction_model, "AI extraction enabled");
                     }
 
+                    if args.enable_embeddings {
+                        service = service.with_embeddings();
+                        info!(model = %args.embedding_model, "AI embeddings enabled");
+                    }
+
                     Some(Arc::new(service))
                 }
                 Err(e) => {
@@ -360,9 +417,30 @@ impl ContentWorker {
                 }
             }
         } else {
-            if args.enable_summary || args.enable_extraction {
+            if args.enable_summary || args.enable_extraction || args.enable_embeddings {
                 warn!("AI features enabled but no API key provided, AI features disabled");
             }
+            None
+        };
+
+        // Create near-duplicate detector if enabled
+        let dedup_detector = if args.enable_dedup {
+            let config = NearDuplicateConfig {
+                use_simhash: args.dedup_use_simhash,
+                simhash_threshold: args.dedup_simhash_threshold,
+                minhash_threshold: args.dedup_minhash_threshold,
+                max_fingerprints: args.dedup_max_fingerprints,
+                ..Default::default()
+            };
+            info!(
+                use_simhash = args.dedup_use_simhash,
+                simhash_threshold = args.dedup_simhash_threshold,
+                minhash_threshold = args.dedup_minhash_threshold,
+                max_fingerprints = args.dedup_max_fingerprints,
+                "Near-duplicate detection enabled"
+            );
+            Some(Arc::new(NearDuplicateDetector::new(config)))
+        } else {
             None
         };
 
@@ -373,11 +451,13 @@ impl ContentWorker {
             storage,
             ai_service,
             ai_config,
+            dedup_detector,
             semaphore,
             metrics: Arc::new(WorkerMetrics::new()),
             shutdown: Arc::new(AtomicBool::new(false)),
             worker_id,
             publish_to_kafka: args.publish_to_kafka,
+            publish_history: args.publish_history,
             skip_meilisearch: args.skip_meilisearch,
         })
     }
@@ -399,6 +479,7 @@ impl ContentWorker {
                     succeeded = snapshot.pages_succeeded,
                     failed = snapshot.pages_failed,
                     skipped = snapshot.pages_skipped,
+                    duplicates = snapshot.pages_duplicate,
                     docs_created = snapshot.documents_created,
                     docs_indexed = snapshot.documents_indexed,
                     bytes_mb = snapshot.bytes_processed / (1024 * 1024),
@@ -529,6 +610,36 @@ impl ContentWorker {
             return Ok(());
         }
 
+        // Check for near-duplicates if enabled
+        if let Some(ref detector) = self.dedup_detector {
+            let content_for_dedup = document
+                .content
+                .as_ref()
+                .or(document.markdown.as_ref())
+                .map(|s| s.as_str())
+                .unwrap_or("");
+
+            if let Some(duplicate_url) = detector.check_and_add(&msg.url, content_for_dedup) {
+                debug!(
+                    url = %msg.url,
+                    duplicate_of = %duplicate_url,
+                    "Skipping near-duplicate content"
+                );
+                self.metrics.record_duplicate();
+
+                // Send duplicate event
+                let event = CrawlEvent::PageSkipped {
+                    job_id: msg.job_id.clone(),
+                    url: msg.url.clone(),
+                    reason: format!("Near-duplicate of {}", duplicate_url),
+                    timestamp: chrono::Utc::now().timestamp_millis(),
+                };
+                self.publish_event(&msg.job_id, &event).await?;
+
+                return Ok(());
+            }
+        }
+
         let parse_duration = start.elapsed();
 
         info!(
@@ -582,6 +693,43 @@ impl ContentWorker {
             timestamp: chrono::Utc::now().timestamp_millis(),
         };
         self.publish_event(&msg.job_id, &event).await?;
+
+        // Publish crawl history for recrawl scheduling if enabled
+        if self.publish_history {
+            use sha2::{Digest, Sha256};
+
+            // Compute content hash from HTML
+            let content_hash = {
+                let mut hasher = Sha256::new();
+                hasher.update(msg.html.as_bytes());
+                hex::encode(hasher.finalize())
+            };
+
+            let history_msg = CrawlHistoryMessage::new(&msg.url, msg.status, &msg.job_id)
+                .with_content_hash(&content_hash)
+                .with_content_length(msg.html.len() as u64)
+                .with_content_changed(true); // Assume changed since we processed it
+
+            // Add etag and last_modified if available
+            let history_msg = if let Some(ref etag) = msg.etag {
+                history_msg.with_etag(etag)
+            } else {
+                history_msg
+            };
+            let history_msg = if let Some(ref last_modified) = msg.last_modified {
+                history_msg.with_last_modified(last_modified)
+            } else {
+                history_msg
+            };
+
+            if let Err(e) = self
+                .producer
+                .send(topic_names::CRAWL_HISTORY, Some(&msg.job_id), &history_msg)
+                .await
+            {
+                debug!(error = %e, "Failed to publish crawl history");
+            }
+        }
 
         Ok(())
     }
@@ -668,6 +816,27 @@ impl ContentWorker {
             }
         }
 
+        // Generate embeddings if enabled
+        if self.ai_config.enable_embeddings {
+            match ai_service.embed(&content_for_ai).await {
+                Ok(embedding) => {
+                    debug!(
+                        url = %document.url,
+                        dimensions = embedding.dimensions,
+                        "Generated embeddings"
+                    );
+                    document.embeddings = Some(embedding.vector);
+                }
+                Err(e) => {
+                    warn!(
+                        url = %document.url,
+                        error = %e,
+                        "Failed to generate embeddings"
+                    );
+                }
+            }
+        }
+
         document
     }
 
@@ -726,6 +895,7 @@ async fn main() -> anyhow::Result<()> {
         succeeded = metrics.pages_succeeded,
         failed = metrics.pages_failed,
         skipped = metrics.pages_skipped,
+        duplicates = metrics.pages_duplicate,
         docs_created = metrics.documents_created,
         docs_indexed = metrics.documents_indexed,
         bytes_mb = metrics.bytes_processed / (1024 * 1024),

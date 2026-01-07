@@ -112,6 +112,65 @@ Build a high-performance, distributed web crawler capable of:
 - Partition bloom filters by domain hash
 - Periodic compaction/rebuild
 
+### Near-Duplicate Detection: SimHash + MinHash
+
+**Decision**: Dual locality-sensitive hashing for content deduplication
+
+**Why Both Methods:**
+
+| Method | Strength | Use Case |
+|--------|----------|----------|
+| **SimHash** | Fast 64-bit fingerprints | Quick similarity check |
+| **MinHash** | Accurate Jaccard estimation | Fine-grained clustering |
+
+**SimHash Implementation:**
+- 64-bit fingerprint via weighted token hashing
+- Hamming distance for similarity (threshold ~10 bits)
+- LSH buckets for O(1) candidate lookup
+- SipHash-based consistent hashing
+
+**MinHash Implementation:**
+- 128 hash functions for ~2% error margin
+- Jaccard similarity estimation
+- Works on n-gram shingles (3-5 tokens)
+- Threshold typically 0.8 for duplicates
+
+**Integration:**
+```
+Content → SimHash → LSH Bucket Lookup → MinHash Verification → Dedupe Decision
+```
+
+### Analytics: ClickHouse
+
+**Decision**: ClickHouse for crawl analytics and aggregations
+
+**Why ClickHouse:**
+- Columnar storage optimized for analytics
+- 100x faster than PostgreSQL for aggregations
+- Excellent compression (10-20x)
+- SQL interface, easy integration
+
+**Tables:**
+- `crawl_events` - Per-page fetch telemetry
+- `content_events` - Processed content metadata
+- Materialized views for hourly/daily aggregates
+
+### Monitoring: Prometheus + Grafana
+
+**Decision**: Standard observability stack
+
+**Components:**
+- **Prometheus** - Metrics collection and alerting
+- **Grafana** - Visualization dashboards
+- **Alertmanager** - Alert routing and deduplication
+
+**Key Metrics:**
+- Crawl rate (pages/sec by domain, worker)
+- Error rate (by type: timeout, 4xx, 5xx, parse)
+- Latency percentiles (p50, p95, p99)
+- Queue depths (frontier, content processing)
+- Resource utilization (CPU, memory, network)
+
 ### Crawler Stack: Custom Rust
 
 **Core Libraries:**
@@ -411,7 +470,10 @@ scrapix/
 │   │       ├── dedup.rs         # Bloom filter deduplication
 │   │       ├── priority.rs      # Priority assignment
 │   │       ├── politeness.rs    # Rate limiting
-│   │       └── partition.rs     # Domain partitioning
+│   │       ├── partition.rs     # Domain partitioning
+│   │       ├── simhash.rs       # SimHash/MinHash near-duplicate detection
+│   │       ├── history.rs       # URL crawl history tracking
+│   │       └── recrawl.rs       # Incremental re-crawl scheduling
 │   │
 │   ├── scrapix-crawler/         # HTTP/JS crawler
 │   │   ├── Cargo.toml
@@ -458,7 +520,8 @@ scrapix/
 │   │       ├── meilisearch.rs   # Meilisearch client
 │   │       ├── scylla.rs        # ScyllaDB client
 │   │       ├── rocks.rs         # RocksDB wrapper
-│   │       ├── s3.rs            # S3/MinIO client
+│   │       ├── object_storage.rs # S3/MinIO object storage
+│   │       ├── clickhouse.rs    # ClickHouse analytics
 │   │       └── redis.rs         # Redis/Dragonfly
 │   │
 │   ├── scrapix-queue/           # Message queue

@@ -78,6 +78,12 @@ probabilistic-collections = "0.7"
 # Robots.txt
 robotstxt = "0.3"
 
+# XML parsing (for sitemaps)
+quick-xml = { version = "0.37", features = ["serialize"] }
+
+# Compression
+flate2 = "1.0"
+
 # DNS
 hickory-resolver = "0.25"
 
@@ -123,6 +129,8 @@ bytes = "1.9"
 base64 = "0.22"
 md5 = "0.7"
 sha2 = { version = "0.10", features = ["std"] }
+siphasher = "1.0"
+hex = "0.4"
 
 # Language detection
 whatlang = "0.16"

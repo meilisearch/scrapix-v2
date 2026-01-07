@@ -6,13 +6,14 @@
 //! ## Example
 //!
 //! ```rust,no_run
+//! use std::sync::Arc;
 //! use scrapix_frontier::{
-//!     RecrawlScheduler, RecrawlConfig, UrlHistory, UrlHistoryConfig,
+//!     RecrawlScheduler, RecrawlConfig, RecrawlDecision, UrlHistory, UrlHistoryConfig,
 //! };
 //! use scrapix_core::CrawlUrl;
 //!
 //! // Create history tracker
-//! let history = UrlHistory::new(UrlHistoryConfig::default());
+//! let history = Arc::new(UrlHistory::new(UrlHistoryConfig::default()));
 //!
 //! // Create re-crawl scheduler
 //! let scheduler = RecrawlScheduler::new(RecrawlConfig::default(), history);
@@ -22,10 +23,10 @@
 //! let decision = scheduler.should_crawl(&url);
 //!
 //! match decision {
-//!     RecrawlDecision::Crawl { reason } => {
+//!     RecrawlDecision::Crawl { reason, .. } => {
 //!         println!("Should crawl: {}", reason);
 //!     }
-//!     RecrawlDecision::Skip { reason, retry_after } => {
+//!     RecrawlDecision::Skip { reason, .. } => {
 //!         println!("Skip for now: {}", reason);
 //!     }
 //! }

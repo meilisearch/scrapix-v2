@@ -281,6 +281,33 @@ impl KafkaConsumer {
             .resume(&tpl)
             .map_err(|e| ScrapixError::Queue(format!("Resume failed: {}", e)))
     }
+
+    /// Get the broker addresses
+    pub fn brokers(&self) -> &str {
+        &self.config.brokers
+    }
+
+    /// Get the consumer group ID
+    pub fn group_id(&self) -> &str {
+        &self.config.group_id
+    }
+
+    /// Poll for a single message with timeout
+    pub async fn poll_one<T: DeserializeOwned>(&self, timeout: Duration) -> Result<Option<T>> {
+        let mut stream = self.consumer.stream();
+
+        match tokio::time::timeout(timeout, stream.next()).await {
+            Ok(Some(Ok(msg))) => {
+                let result = self.deserialize_message::<T>(&msg)?;
+                // Commit the message
+                let _ = self.commit_message(&msg);
+                Ok(Some(result))
+            }
+            Ok(Some(Err(e))) => Err(ScrapixError::Queue(format!("Kafka error: {}", e))),
+            Ok(None) => Ok(None),
+            Err(_) => Ok(None), // Timeout
+        }
+    }
 }
 
 /// Metadata about a consumed message

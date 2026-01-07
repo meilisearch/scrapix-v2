@@ -24,8 +24,8 @@
 //! history.record_crawl("https://example.com/page", record);
 //!
 //! // Check if re-crawl is needed
-//! if let Some(record) = history.get_record("https://example.com/page") {
-//!     if history.should_recrawl("https://example.com/page", Duration::from_secs(3600)) {
+//! if let Some(_record) = history.get_record("https://example.com/page") {
+//!     if history.should_recrawl("https://example.com/page") {
 //!         // Re-crawl the page
 //!     }
 //! }

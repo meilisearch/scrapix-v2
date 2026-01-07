@@ -161,6 +161,8 @@ impl UrlExtractor {
             discovered_at: chrono::Utc::now(),
             retry_count: 0,
             requires_js: false,
+            etag: None,
+            last_modified: None,
         })
     }
 
