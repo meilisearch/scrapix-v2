@@ -33,6 +33,7 @@ redis = { workspace = true, optional = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
 parking_lot = { workspace = true }
+sha2 = { workspace = true }
 
 # Tracing
 tracing = { workspace = true }
