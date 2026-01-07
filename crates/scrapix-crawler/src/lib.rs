@@ -65,6 +65,7 @@ pub mod extractor;
 pub mod fetcher;
 pub mod proxy;
 pub mod robots;
+pub mod sitemap;
 
 #[cfg(feature = "browser-cdp")]
 pub mod renderer_cdp;
@@ -73,14 +74,18 @@ pub mod renderer_cdp;
 pub mod renderer_webdriver;
 
 // Re-exports for convenience
-pub use dns::{CachingDnsResolver, DnsConfig};
+pub use dns::{CachingDnsResolver, DnsCacheStats, DnsConfig};
 pub use extractor::{ExtractorConfig, UrlExtractor, UrlExtractorBuilder};
 pub use fetcher::{
     ConditionalRequestHeaders, FetchResult, FetcherConfig, HttpFetcher, HttpFetcherBuilder,
     RetryConfig,
 };
 pub use proxy::{ProxyConfig, ProxyPool, RotationStrategy};
-pub use robots::{RobotsCache, RobotsConfig};
+pub use robots::{
+    PersistentRobotsCache, PersistentRobotsEntry, RobotsCache, RobotsCacheStats, RobotsConfig,
+    RocksDbOps, RocksRobotsPersistence, RobotsPersistence,
+};
+pub use sitemap::{ChangeFrequency, SitemapConfig, SitemapContent, SitemapEntry, SitemapParser, SitemapUrl};
 
 // CDP renderer re-exports
 #[cfg(feature = "browser-cdp")]

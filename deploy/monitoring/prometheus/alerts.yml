@@ -1,0 +1,174 @@
+groups:
+  - name: scrapix-crawler-alerts
+    interval: 30s
+    rules:
+      # High error rate
+      - alert: HighCrawlerErrorRate
+        expr: |
+          (
+            sum(rate(scrapix_crawler_errors_total[5m])) by (worker_id)
+            /
+            sum(rate(scrapix_crawler_pages_fetched_total[5m])) by (worker_id)
+          ) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High crawler error rate on {{ $labels.worker_id }}"
+          description: "Crawler {{ $labels.worker_id }} has error rate {{ printf \"%.2f\" $value }}% over the last 5 minutes."
+
+      # Crawler worker down
+      - alert: CrawlerWorkerDown
+        expr: up{job="scrapix-crawler-workers"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Crawler worker is down"
+          description: "Crawler worker {{ $labels.instance }} has been down for more than 2 minutes."
+
+      # Low throughput
+      - alert: LowCrawlerThroughput
+        expr: |
+          sum(rate(scrapix_crawler_pages_fetched_total[15m])) < 1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low crawler throughput"
+          description: "Overall crawler throughput is below 1 page/second for 15 minutes."
+
+      # High response time
+      - alert: HighAverageResponseTime
+        expr: |
+          histogram_quantile(0.95, sum(rate(scrapix_crawler_fetch_duration_seconds_bucket[5m])) by (le)) > 10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High average response time"
+          description: "95th percentile response time is {{ printf \"%.2f\" $value }} seconds."
+
+      # Queue backlog growing
+      - alert: QueueBacklogGrowing
+        expr: |
+          delta(scrapix_frontier_queue_size[10m]) > 100000
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Queue backlog is growing"
+          description: "Frontier queue has grown by {{ $value }} URLs in the last 10 minutes."
+
+  - name: scrapix-content-alerts
+    interval: 30s
+    rules:
+      # Content worker down
+      - alert: ContentWorkerDown
+        expr: up{job="scrapix-content-workers"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Content worker is down"
+          description: "Content worker {{ $labels.instance }} has been down for more than 2 minutes."
+
+      # High AI token usage
+      - alert: HighAITokenUsage
+        expr: |
+          sum(rate(scrapix_ai_tokens_consumed_total[1h])) * 3600 > 1000000
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High AI token consumption"
+          description: "AI token consumption is {{ printf \"%.0f\" $value }} tokens/hour."
+
+      # Content extraction failures
+      - alert: HighContentExtractionFailures
+        expr: |
+          (
+            sum(rate(scrapix_content_extraction_errors_total[5m]))
+            /
+            sum(rate(scrapix_content_extractions_total[5m]))
+          ) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High content extraction failure rate"
+          description: "Content extraction failure rate is {{ printf \"%.2f\" $value }}%."
+
+  - name: scrapix-infrastructure-alerts
+    interval: 30s
+    rules:
+      # Kafka consumer lag
+      - alert: HighKafkaConsumerLag
+        expr: |
+          kafka_consumer_group_lag > 10000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High Kafka consumer lag"
+          description: "Consumer group {{ $labels.group }} has lag of {{ $value }} on topic {{ $labels.topic }}."
+
+      # Meilisearch down
+      - alert: MeilisearchDown
+        expr: up{job="meilisearch"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Meilisearch is down"
+          description: "Meilisearch has been down for more than 2 minutes."
+
+      # Redis down
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis is down"
+          description: "Redis has been down for more than 2 minutes."
+
+      # High memory usage
+      - alert: HighMemoryUsage
+        expr: |
+          (process_resident_memory_bytes / 1024 / 1024 / 1024) > 4
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage on {{ $labels.job }}"
+          description: "{{ $labels.instance }} is using {{ printf \"%.2f\" $value }}GB of memory."
+
+  - name: scrapix-job-alerts
+    interval: 60s
+    rules:
+      # Job stuck (no progress)
+      - alert: CrawlJobStuck
+        expr: |
+          increase(scrapix_job_urls_crawled_total[30m]) == 0
+          and
+          scrapix_job_status == 1
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Crawl job appears to be stuck"
+          description: "Job {{ $labels.job_id }} has made no progress in 30 minutes."
+
+      # Job running too long
+      - alert: CrawlJobRunningTooLong
+        expr: |
+          (time() - scrapix_job_start_timestamp) / 3600 > 24
+          and
+          scrapix_job_status == 1
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Crawl job running longer than expected"
+          description: "Job {{ $labels.job_id }} has been running for {{ printf \"%.1f\" $value }} hours."

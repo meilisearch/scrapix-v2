@@ -63,6 +63,7 @@ pub mod partition;
 pub mod politeness;
 pub mod priority;
 pub mod recrawl;
+pub mod simhash;
 
 // Re-exports
 pub use dedup::{DedupConfig, DedupStats, PartitionedUrlDedup, UrlDedup};
@@ -77,4 +78,8 @@ pub use linkgraph::{LinkGraph, LinkGraphBuilder, LinkGraphConfig, LinkGraphStats
 pub use recrawl::{
     RecrawlConfig, RecrawlDecision, RecrawlReason, RecrawlScheduler, RecrawlSchedulerBuilder,
     RecrawlStats, SkipReason,
+};
+pub use simhash::{
+    DuplicateCluster, DuplicateClusterer, MinHash, NearDuplicateConfig, NearDuplicateDetector,
+    NearDuplicateStats, SimHash,
 };

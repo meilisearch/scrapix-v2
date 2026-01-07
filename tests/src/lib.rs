@@ -202,6 +202,10 @@ pub fn init_test_tracing() {
         .try_init();
 }
 
+// Integration test modules
+#[cfg(test)]
+mod e2e_pipeline;
+
 /// URL generation helpers for testing
 pub mod urls {
     pub fn generate_urls(domain: &str, count: usize) -> Vec<String> {

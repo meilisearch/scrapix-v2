@@ -29,11 +29,13 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use scrapix_core::{CrawlUrl, ScrapixError};
 use scrapix_frontier::{
-    extract_domain, DedupConfig, PolitenessConfig, PolitenessScheduler, PriorityConfig,
-    PriorityQueue, UrlDedup,
+    extract_domain, CrawlRecord, DedupConfig, LinkGraph, LinkGraphConfig, PolitenessConfig,
+    PolitenessScheduler, PriorityConfig, PriorityQueue, RecrawlConfig, RecrawlDecision,
+    RecrawlScheduler, UrlDedup, UrlHistory, UrlHistoryConfig,
 };
 use scrapix_queue::{
-    topic_names, ConsumerBuilder, KafkaConsumer, KafkaProducer, ProducerBuilder, UrlMessage,
+    topic_names, ConsumerBuilder, CrawlHistoryMessage, KafkaConsumer, KafkaProducer, LinksMessage,
+    ProducerBuilder, UrlMessage,
 };
 
 /// Scrapix Frontier Service
@@ -92,6 +94,44 @@ struct Args {
     /// Enable verbose logging
     #[arg(short, long)]
     verbose: bool,
+
+    // === LINK GRAPH OPTIONS ===
+    /// Enable PageRank-based prioritization
+    #[arg(long, env = "ENABLE_LINKGRAPH", default_value = "false")]
+    enable_linkgraph: bool,
+
+    /// PageRank damping factor (0.0-1.0)
+    #[arg(long, env = "LINKGRAPH_DAMPING", default_value = "0.85")]
+    linkgraph_damping: f64,
+
+    /// Maximum priority boost from PageRank
+    #[arg(long, env = "LINKGRAPH_MAX_BOOST", default_value = "50")]
+    linkgraph_max_boost: i32,
+
+    /// Maximum pages to track in link graph (0 = unlimited)
+    #[arg(long, env = "LINKGRAPH_MAX_PAGES", default_value = "10000000")]
+    linkgraph_max_pages: usize,
+
+    /// PageRank computation interval in seconds
+    #[arg(long, env = "LINKGRAPH_COMPUTE_INTERVAL", default_value = "300")]
+    linkgraph_compute_interval: u64,
+
+    // === RECRAWL OPTIONS ===
+    /// Enable incremental recrawl scheduling
+    #[arg(long, env = "ENABLE_RECRAWL", default_value = "false")]
+    enable_recrawl: bool,
+
+    /// Minimum age before allowing recrawl (seconds)
+    #[arg(long, env = "RECRAWL_MIN_AGE", default_value = "3600")]
+    recrawl_min_age: u64,
+
+    /// Maximum age before forcing recrawl (seconds)
+    #[arg(long, env = "RECRAWL_MAX_AGE", default_value = "604800")]
+    recrawl_max_age: u64,
+
+    /// Maximum URLs to track in history (0 = unlimited)
+    #[arg(long, env = "RECRAWL_MAX_URLS", default_value = "10000000")]
+    recrawl_max_urls: usize,
 }
 
 /// Per-job frontier state
@@ -186,8 +226,11 @@ struct ServiceMetrics {
     urls_duplicate: AtomicU64,
     urls_dispatched: AtomicU64,
     urls_delayed: AtomicU64,
+    urls_recrawl_skipped: AtomicU64,
     active_jobs: AtomicU64,
     active_domains: AtomicU64,
+    links_recorded: AtomicU64,
+    history_updates: AtomicU64,
 }
 
 impl ServiceMetrics {
@@ -203,8 +246,11 @@ impl ServiceMetrics {
             urls_duplicate: self.urls_duplicate.load(Ordering::Relaxed),
             urls_dispatched: self.urls_dispatched.load(Ordering::Relaxed),
             urls_delayed: self.urls_delayed.load(Ordering::Relaxed),
+            urls_recrawl_skipped: self.urls_recrawl_skipped.load(Ordering::Relaxed),
             active_jobs: self.active_jobs.load(Ordering::Relaxed),
             active_domains: self.active_domains.load(Ordering::Relaxed),
+            links_recorded: self.links_recorded.load(Ordering::Relaxed),
+            history_updates: self.history_updates.load(Ordering::Relaxed),
         }
     }
 }
@@ -217,8 +263,11 @@ struct MetricsSnapshot {
     urls_duplicate: u64,
     urls_dispatched: u64,
     urls_delayed: u64,
+    urls_recrawl_skipped: u64,
     active_jobs: u64,
     active_domains: u64,
+    links_recorded: u64,
+    history_updates: u64,
 }
 
 /// URL ready for dispatch with metadata
@@ -232,9 +281,14 @@ struct ReadyUrl {
 /// The frontier service
 struct FrontierService {
     consumer: KafkaConsumer,
+    links_consumer: Option<KafkaConsumer>,
+    history_consumer: Option<KafkaConsumer>,
     producer: Arc<KafkaProducer>,
     jobs: Arc<RwLock<HashMap<String, Arc<JobFrontier>>>>,
     politeness: Arc<PolitenessScheduler>,
+    link_graph: Option<Arc<LinkGraph>>,
+    recrawl_scheduler: Option<Arc<RecrawlScheduler>>,
+    url_history: Option<Arc<UrlHistory>>,
     metrics: Arc<ServiceMetrics>,
     shutdown: Arc<AtomicBool>,
     instance_id: String,
@@ -242,6 +296,7 @@ struct FrontierService {
     priority_config: PriorityConfig,
     dispatch_batch_size: usize,
     dispatch_interval: Duration,
+    linkgraph_compute_interval: Duration,
 }
 
 impl FrontierService {
@@ -298,11 +353,82 @@ impl FrontierService {
             seed_bonus: 1000,
         };
 
+        // Create link graph if enabled
+        let (link_graph, links_consumer) = if args.enable_linkgraph {
+            let config = LinkGraphConfig {
+                damping_factor: args.linkgraph_damping,
+                max_priority_boost: args.linkgraph_max_boost,
+                max_pages: args.linkgraph_max_pages,
+                ..Default::default()
+            };
+            let graph = Arc::new(LinkGraph::new(config));
+            info!(
+                damping = args.linkgraph_damping,
+                max_boost = args.linkgraph_max_boost,
+                max_pages = args.linkgraph_max_pages,
+                "LinkGraph enabled for PageRank-based prioritization"
+            );
+
+            // Create links consumer
+            let links_consumer = ConsumerBuilder::new(&args.brokers, &format!("{}-links", args.group_id))
+                .client_id(format!("scrapix-frontier-{}-links", instance_id))
+                .auto_offset_reset("earliest")
+                .build()?;
+            links_consumer.subscribe(&[topic_names::LINKS])?;
+            info!(topic = topic_names::LINKS, "Subscribed to links topic");
+
+            (Some(graph), Some(links_consumer))
+        } else {
+            (None, None)
+        };
+
+        // Create recrawl scheduler if enabled
+        let (recrawl_scheduler, url_history, history_consumer) = if args.enable_recrawl {
+            let history_config = UrlHistoryConfig {
+                max_entries: args.recrawl_max_urls,
+                min_recrawl_interval: Duration::from_secs(args.recrawl_min_age),
+                max_recrawl_interval: Duration::from_secs(args.recrawl_max_age),
+                ..Default::default()
+            };
+            let history = Arc::new(UrlHistory::new(history_config));
+
+            let recrawl_config = RecrawlConfig {
+                enabled: true,
+                min_age: Duration::from_secs(args.recrawl_min_age),
+                max_age: Duration::from_secs(args.recrawl_max_age),
+                ..Default::default()
+            };
+            let scheduler = Arc::new(RecrawlScheduler::new(recrawl_config, history.clone()));
+            info!(
+                min_age_secs = args.recrawl_min_age,
+                max_age_secs = args.recrawl_max_age,
+                max_urls = args.recrawl_max_urls,
+                "RecrawlScheduler enabled for incremental crawling"
+            );
+
+            // Create history consumer
+            let history_consumer = ConsumerBuilder::new(&args.brokers, &format!("{}-history", args.group_id))
+                .client_id(format!("scrapix-frontier-{}-history", instance_id))
+                .auto_offset_reset("earliest")
+                .build()?;
+            history_consumer.subscribe(&[topic_names::CRAWL_HISTORY])?;
+            info!(topic = topic_names::CRAWL_HISTORY, "Subscribed to crawl history topic");
+
+            (Some(scheduler), Some(history), Some(history_consumer))
+        } else {
+            (None, None, None)
+        };
+
         Ok(Self {
             consumer,
+            links_consumer,
+            history_consumer,
             producer: Arc::new(producer),
             jobs: Arc::new(RwLock::new(HashMap::new())),
             politeness: Arc::new(politeness),
+            link_graph,
+            recrawl_scheduler,
+            url_history,
             metrics: Arc::new(ServiceMetrics::new()),
             shutdown: Arc::new(AtomicBool::new(false)),
             instance_id,
@@ -310,6 +436,7 @@ impl FrontierService {
             priority_config,
             dispatch_batch_size: args.dispatch_batch_size,
             dispatch_interval: Duration::from_millis(args.dispatch_interval_ms),
+            linkgraph_compute_interval: Duration::from_secs(args.linkgraph_compute_interval),
         })
     }
 
@@ -345,6 +472,8 @@ impl FrontierService {
 
         // Start metrics reporter
         let metrics = self.metrics.clone();
+        let link_graph = self.link_graph.clone();
+        let url_history = self.url_history.clone();
         let shutdown = self.shutdown.clone();
         let metrics_handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(30));
@@ -358,10 +487,36 @@ impl FrontierService {
                     duplicate = snapshot.urls_duplicate,
                     dispatched = snapshot.urls_dispatched,
                     delayed = snapshot.urls_delayed,
+                    recrawl_skipped = snapshot.urls_recrawl_skipped,
+                    links_recorded = snapshot.links_recorded,
+                    history_updates = snapshot.history_updates,
                     jobs = snapshot.active_jobs,
                     domains = snapshot.active_domains,
                     "Frontier metrics"
                 );
+
+                // Log link graph stats if enabled
+                if let Some(ref graph) = link_graph {
+                    let stats = graph.stats();
+                    info!(
+                        pages = stats.page_count,
+                        links = stats.link_count,
+                        avg_inbound = format!("{:.2}", stats.avg_inbound),
+                        "LinkGraph stats"
+                    );
+                }
+
+                // Log recrawl stats if enabled
+                if let Some(ref history) = url_history {
+                    let stats = history.stats();
+                    info!(
+                        tracked_urls = stats.tracked_urls,
+                        total_crawls = stats.total_crawls,
+                        total_changes = stats.total_changes,
+                        avg_change_rate = format!("{:.2}", stats.avg_change_rate),
+                        "Recrawl stats"
+                    );
+                }
             }
         });
 
@@ -374,6 +529,15 @@ impl FrontierService {
         // Start URL collector task (collects from job queues and checks politeness)
         let collector_handle = self.start_collector(dispatch_tx);
 
+        // Start links consumer task if enabled
+        let links_handle = self.start_links_consumer();
+
+        // Start history consumer task if enabled
+        let history_handle = self.start_history_consumer();
+
+        // Start PageRank computation task if enabled
+        let pagerank_handle = self.start_pagerank_computer();
+
         // Process incoming messages
         let result = self.process_messages().await;
 
@@ -382,6 +546,15 @@ impl FrontierService {
         metrics_handle.abort();
         dispatcher_handle.abort();
         collector_handle.abort();
+        if let Some(h) = links_handle {
+            h.abort();
+        }
+        if let Some(h) = history_handle {
+            h.abort();
+        }
+        if let Some(h) = pagerank_handle {
+            h.abort();
+        }
 
         result
     }
@@ -407,16 +580,56 @@ impl FrontierService {
                     "Received URL"
                 );
 
+                // Check recrawl decision if enabled
+                let mut url = msg.url.clone();
+                if let Some(ref scheduler) = self.recrawl_scheduler {
+                    match scheduler.should_crawl(&url) {
+                        RecrawlDecision::Crawl { priority_boost, reason, .. } => {
+                            // Apply priority boost from recrawl decision
+                            url.priority += priority_boost;
+                            debug!(
+                                url = %url.url,
+                                reason = %reason,
+                                priority_boost = priority_boost,
+                                "Recrawl decision: crawl"
+                            );
+                        }
+                        RecrawlDecision::Skip { reason, retry_after } => {
+                            self.metrics.urls_recrawl_skipped.fetch_add(1, Ordering::Relaxed);
+                            debug!(
+                                url = %url.url,
+                                reason = %reason,
+                                retry_after_secs = retry_after.map(|d| d.as_secs()),
+                                "Recrawl decision: skip"
+                            );
+                            return Ok(()); // Skip this URL
+                        }
+                    }
+                }
+
+                // Apply PageRank priority boost if enabled
+                if let Some(ref graph) = self.link_graph {
+                    let boost = graph.get_priority_boost(&url.url);
+                    if boost > 0 {
+                        url.priority += boost;
+                        debug!(
+                            url = %url.url,
+                            pagerank_boost = boost,
+                            "Applied PageRank priority boost"
+                        );
+                    }
+                }
+
                 // Get or create job frontier
                 let job = self.get_or_create_job(&msg.job_id, &msg.index_uid);
 
                 // Try to add URL (deduplication happens here)
-                if job.try_add(msg.url.clone()) {
+                if job.try_add(url.clone()) {
                     self.metrics.urls_new.fetch_add(1, Ordering::Relaxed);
-                    debug!(url = %msg.url.url, job_id = %msg.job_id, "New URL added to queue");
+                    debug!(url = %url.url, job_id = %msg.job_id, "New URL added to queue");
                 } else {
                     self.metrics.urls_duplicate.fetch_add(1, Ordering::Relaxed);
-                    debug!(url = %msg.url.url, job_id = %msg.job_id, "Duplicate URL filtered");
+                    debug!(url = %url.url, job_id = %msg.job_id, "Duplicate URL filtered");
                 }
 
                 Ok(())
@@ -544,6 +757,158 @@ impl FrontierService {
                 }
             }
         })
+    }
+
+    /// Start the links consumer task that updates the link graph
+    fn start_links_consumer(&self) -> Option<tokio::task::JoinHandle<()>> {
+        let links_consumer = self.links_consumer.as_ref()?;
+        let link_graph = self.link_graph.clone()?;
+        let metrics = Arc::clone(&self.metrics);
+        let shutdown = Arc::clone(&self.shutdown);
+
+        // We need to clone the consumer's underlying client for the spawned task
+        // Since KafkaConsumer doesn't impl Clone, we'll use a different approach:
+        // Process in a loop with timeout
+        let brokers = links_consumer.brokers().to_string();
+        let group_id = format!("{}", links_consumer.group_id());
+
+        Some(tokio::spawn(async move {
+            // Create a dedicated consumer for this task
+            let consumer = match ConsumerBuilder::new(&brokers, &group_id)
+                .auto_offset_reset("earliest")
+                .build()
+            {
+                Ok(c) => c,
+                Err(e) => {
+                    error!(error = %e, "Failed to create links consumer");
+                    return;
+                }
+            };
+
+            if let Err(e) = consumer.subscribe(&[topic_names::LINKS]) {
+                error!(error = %e, "Failed to subscribe to links topic");
+                return;
+            }
+
+            while !shutdown.load(Ordering::Relaxed) {
+                // Poll for messages with timeout
+                match consumer.poll_one::<LinksMessage>(Duration::from_millis(100)).await {
+                    Ok(Some(msg)) => {
+                        // Record links in the graph
+                        link_graph.record_links(&msg.source_url, msg.target_urls.clone());
+                        metrics.links_recorded.fetch_add(msg.target_urls.len() as u64, Ordering::Relaxed);
+                        debug!(
+                            source = %msg.source_url,
+                            links_count = msg.target_urls.len(),
+                            "Recorded links in graph"
+                        );
+                    }
+                    Ok(None) => {
+                        // No message, continue
+                    }
+                    Err(e) => {
+                        debug!(error = %e, "Error polling links topic");
+                    }
+                }
+            }
+        }))
+    }
+
+    /// Start the history consumer task that updates URL history
+    fn start_history_consumer(&self) -> Option<tokio::task::JoinHandle<()>> {
+        let history_consumer = self.history_consumer.as_ref()?;
+        let url_history = self.url_history.clone()?;
+        let metrics = Arc::clone(&self.metrics);
+        let shutdown = Arc::clone(&self.shutdown);
+
+        let brokers = history_consumer.brokers().to_string();
+        let group_id = format!("{}", history_consumer.group_id());
+
+        Some(tokio::spawn(async move {
+            // Create a dedicated consumer for this task
+            let consumer = match ConsumerBuilder::new(&brokers, &group_id)
+                .auto_offset_reset("earliest")
+                .build()
+            {
+                Ok(c) => c,
+                Err(e) => {
+                    error!(error = %e, "Failed to create history consumer");
+                    return;
+                }
+            };
+
+            if let Err(e) = consumer.subscribe(&[topic_names::CRAWL_HISTORY]) {
+                error!(error = %e, "Failed to subscribe to history topic");
+                return;
+            }
+
+            while !shutdown.load(Ordering::Relaxed) {
+                // Poll for messages with timeout
+                match consumer.poll_one::<CrawlHistoryMessage>(Duration::from_millis(100)).await {
+                    Ok(Some(msg)) => {
+                        // Create crawl record from message
+                        let mut record = CrawlRecord::new()
+                            .with_status(msg.status);
+
+                        if let Some(etag) = msg.etag {
+                            record = record.with_etag(etag);
+                        }
+                        if let Some(last_modified) = msg.last_modified {
+                            record = record.with_last_modified(last_modified);
+                        }
+                        if let Some(content_hash) = msg.content_hash {
+                            record = record.with_content_hash(content_hash);
+                        }
+                        if let Some(content_length) = msg.content_length {
+                            record = record.with_content_length(content_length);
+                        }
+
+                        // Record in history
+                        url_history.record_crawl(&msg.url, record);
+                        metrics.history_updates.fetch_add(1, Ordering::Relaxed);
+                        debug!(
+                            url = %msg.url,
+                            content_changed = msg.content_changed,
+                            "Recorded crawl history"
+                        );
+                    }
+                    Ok(None) => {
+                        // No message, continue
+                    }
+                    Err(e) => {
+                        debug!(error = %e, "Error polling history topic");
+                    }
+                }
+            }
+        }))
+    }
+
+    /// Start the PageRank computation task
+    fn start_pagerank_computer(&self) -> Option<tokio::task::JoinHandle<()>> {
+        let link_graph = self.link_graph.clone()?;
+        let shutdown = Arc::clone(&self.shutdown);
+        let interval = self.linkgraph_compute_interval;
+
+        Some(tokio::spawn(async move {
+            let mut tick = tokio::time::interval(interval);
+
+            while !shutdown.load(Ordering::Relaxed) {
+                tick.tick().await;
+
+                let start = std::time::Instant::now();
+                link_graph.compute_scores();
+                let duration = start.elapsed();
+
+                let stats = link_graph.stats();
+                info!(
+                    pages = stats.page_count,
+                    links = stats.link_count,
+                    duration_ms = duration.as_millis(),
+                    max_score = format!("{:.6}", stats.max_score),
+                    "Recomputed PageRank scores"
+                );
+            }
+        }))
     }
 
     /// Graceful shutdown

@@ -35,12 +35,17 @@
 //! }
 //! ```
 
+pub mod clickhouse;
 pub mod meilisearch;
 pub mod object_storage;
 pub mod redis;
 pub mod rocks;
 
 // Re-exports
+pub use clickhouse::{
+    AiTokenStats, ClickHouseConfig, ClickHouseError, ClickHouseStorage, ContentEvent,
+    CrawlEvent, CrawlEventBatcher, DomainStats, HourlyStats, JobStats,
+};
 pub use meilisearch::{MeilisearchConfig, MeilisearchStorage, MeilisearchStorageBuilder};
 pub use object_storage::{
     ObjectInfo, ObjectMetadata, ObjectStorageError, S3Config, S3ConfigBuilder, S3Storage,
@@ -49,4 +54,4 @@ pub use object_storage::{
 pub use redis::{
     AcquireResult, RateLimiterConfig, RedisConfig, RedisRateLimiter, RedisSeenCache, RedisStorage,
 };
-pub use rocks::{RocksConfig, RocksSeenTracker, RocksStorage, WorkerState};
+pub use rocks::{RocksConfig, RocksSeenTracker, RocksStorage, RocksStorageAdapter, WorkerState};

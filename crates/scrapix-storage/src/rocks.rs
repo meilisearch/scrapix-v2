@@ -38,6 +38,7 @@ impl Default for RocksConfig {
                 "default".to_string(),
                 "seen_urls".to_string(),
                 "state".to_string(),
+                "robots_cache".to_string(),
             ],
             write_buffer_size: 64 * 1024 * 1024, // 64MB
             max_write_buffer_number: 3,
@@ -197,6 +198,25 @@ impl RocksStorage {
         self.db.prefix_iterator(prefix).filter_map(|r| r.ok())
     }
 
+    /// Iterate over keys with a prefix in a specific column family
+    pub fn prefix_iter_cf(
+        &self,
+        cf_name: &str,
+        prefix: &[u8],
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+        let cf = self.db.cf_handle(cf_name).ok_or_else(|| {
+            ScrapixError::Storage(format!("Column family not found: {}", cf_name))
+        })?;
+
+        let iter = self.db.prefix_iterator_cf(&cf, prefix);
+        let results: Vec<(Vec<u8>, Vec<u8>)> = iter
+            .filter_map(|r| r.ok())
+            .map(|(k, v)| (k.to_vec(), v.to_vec()))
+            .collect();
+
+        Ok(results)
+    }
+
     /// Count keys in default column family
     pub fn count(&self) -> usize {
         self.iter().count()
@@ -328,6 +348,58 @@ impl WorkerState {
     /// Check if a state key exists
     pub fn exists(&self, key: &str) -> Result<bool> {
         self.storage.exists_cf(&self.cf_name, key.as_bytes())
+    }
+}
+
+/// Adapter to use RocksStorage with scrapix-crawler's RocksDbOps trait
+///
+/// This allows RocksStorage to be used as a backend for PersistentRobotsCache.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use std::sync::Arc;
+/// use scrapix_storage::{RocksStorage, RocksStorageAdapter};
+/// use scrapix_crawler::{RocksRobotsPersistence, PersistentRobotsCache, RobotsConfig};
+///
+/// let rocks = RocksStorage::at_path("./data/rocksdb")?;
+/// let adapter = Arc::new(RocksStorageAdapter::new(rocks));
+/// let persistence = Arc::new(RocksRobotsPersistence::with_defaults(adapter));
+/// let robots_cache = PersistentRobotsCache::new(RobotsConfig::default(), persistence)?;
+/// ```
+pub struct RocksStorageAdapter {
+    storage: RocksStorage,
+}
+
+impl RocksStorageAdapter {
+    /// Create a new adapter wrapping a RocksStorage instance
+    pub fn new(storage: RocksStorage) -> Self {
+        Self { storage }
+    }
+
+    /// Get the underlying storage
+    pub fn inner(&self) -> &RocksStorage {
+        &self.storage
+    }
+
+    /// Get a value from a column family
+    pub fn get_cf(&self, cf: &str, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        self.storage.get_cf(cf, key)
+    }
+
+    /// Put a value in a column family
+    pub fn put_cf(&self, cf: &str, key: &[u8], value: &[u8]) -> Result<()> {
+        self.storage.put_cf(cf, key, value)
+    }
+
+    /// Delete a key from a column family
+    pub fn delete_cf(&self, cf: &str, key: &[u8]) -> Result<()> {
+        self.storage.delete_cf(cf, key)
+    }
+
+    /// Iterate with prefix in a column family
+    pub fn prefix_iter_cf(&self, cf: &str, prefix: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+        self.storage.prefix_iter_cf(cf, prefix)
     }
 }
 

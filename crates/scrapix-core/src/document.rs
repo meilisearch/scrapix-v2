@@ -220,6 +220,14 @@ pub struct CrawlUrl {
 
     /// Whether this requires JS rendering
     pub requires_js: bool,
+
+    /// ETag from previous crawl (for conditional requests)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub etag: Option<String>,
+
+    /// Last-Modified timestamp from previous crawl (for conditional requests)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_modified: Option<String>,
 }
 
 impl CrawlUrl {
@@ -233,6 +241,8 @@ impl CrawlUrl {
             discovered_at: Utc::now(),
             retry_count: 0,
             requires_js: false,
+            etag: None,
+            last_modified: None,
         }
     }
 
@@ -248,6 +258,23 @@ impl CrawlUrl {
     pub fn with_parent(mut self, parent_url: impl Into<String>) -> Self {
         self.parent_url = Some(parent_url.into());
         self
+    }
+
+    /// Set the ETag for conditional requests (incremental crawling)
+    pub fn with_etag(mut self, etag: impl Into<String>) -> Self {
+        self.etag = Some(etag.into());
+        self
+    }
+
+    /// Set the Last-Modified for conditional requests (incremental crawling)
+    pub fn with_last_modified(mut self, last_modified: impl Into<String>) -> Self {
+        self.last_modified = Some(last_modified.into());
+        self
+    }
+
+    /// Check if this URL has conditional headers for incremental crawling
+    pub fn has_conditional_headers(&self) -> bool {
+        self.etag.is_some() || self.last_modified.is_some()
     }
 }
 

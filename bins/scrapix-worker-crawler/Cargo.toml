@@ -10,10 +10,16 @@ license.workspace = true
 name = "scrapix-worker-crawler"
 path = "src/main.rs"
 
+[features]
+default = []
+browser = ["scrapix-crawler/browser-cdp"]
+
 [dependencies]
 scrapix-core = { path = "../../crates/scrapix-core" }
 scrapix-crawler = { path = "../../crates/scrapix-crawler" }
+scrapix-frontier = { path = "../../crates/scrapix-frontier" }
 scrapix-queue = { path = "../../crates/scrapix-queue" }
+scrapix-storage = { path = "../../crates/scrapix-storage" }
 scrapix-telemetry = { path = "../../crates/scrapix-telemetry" }
 
 tokio = { workspace = true }
@@ -25,3 +31,6 @@ tracing-subscriber = { workspace = true }
 clap = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
+regex = { workspace = true }
+url = { workspace = true }
+parking_lot = { workspace = true }

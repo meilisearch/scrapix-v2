@@ -19,6 +19,7 @@ use url::Url;
 
 use scrapix_core::{CrawlUrl, RawPage, Result, ScrapixError};
 
+use crate::dns::{CachingDnsResolver, DnsCacheStats, DnsConfig};
 use crate::robots::RobotsCache;
 
 /// Conditional request headers for incremental crawling
@@ -140,11 +141,21 @@ pub struct HttpFetcher {
     client: Client,
     config: FetcherConfig,
     robots_cache: Arc<RobotsCache>,
+    dns_resolver: Option<Arc<CachingDnsResolver>>,
 }
 
 impl HttpFetcher {
     /// Create a new HTTP fetcher with the given configuration
     pub fn new(config: FetcherConfig, robots_cache: Arc<RobotsCache>) -> Result<Self> {
+        Self::new_with_dns(config, robots_cache, None)
+    }
+
+    /// Create a new HTTP fetcher with DNS caching enabled
+    pub fn new_with_dns(
+        config: FetcherConfig,
+        robots_cache: Arc<RobotsCache>,
+        dns_resolver: Option<Arc<CachingDnsResolver>>,
+    ) -> Result<Self> {
         let mut default_headers = HeaderMap::new();
         default_headers.insert(
             ACCEPT,
@@ -194,12 +205,23 @@ impl HttpFetcher {
             client,
             config,
             robots_cache,
+            dns_resolver,
         })
     }
 
     /// Create a new HTTP fetcher with default configuration
     pub fn with_defaults(robots_cache: Arc<RobotsCache>) -> Result<Self> {
         Self::new(FetcherConfig::default(), robots_cache)
+    }
+
+    /// Create a new HTTP fetcher with default configuration and DNS caching
+    pub fn with_defaults_and_dns(robots_cache: Arc<RobotsCache>) -> Result<Self> {
+        let dns_resolver = Arc::new(CachingDnsResolver::with_defaults()?);
+        Self::new_with_dns(
+            FetcherConfig::default(),
+            robots_cache,
+            Some(dns_resolver),
+        )
     }
 
     /// Fetch a URL with retry logic
@@ -343,6 +365,17 @@ impl HttpFetcher {
 
     /// Perform a single fetch attempt
     async fn fetch_once(&self, url: &Url) -> Result<(Response, String)> {
+        // Pre-resolve DNS if resolver is configured (warms cache for future requests)
+        if let Some(ref resolver) = self.dns_resolver {
+            if let Some(host) = url.host_str() {
+                // Pre-resolve to warm the cache; we don't fail on DNS errors here
+                // since reqwest will still try to resolve
+                if let Err(e) = resolver.resolve(host).await {
+                    debug!(host, error = %e, "DNS pre-resolution failed, reqwest will resolve");
+                }
+            }
+        }
+
         let response = self.client.get(url.as_str()).send().await.map_err(|e| {
             if e.is_timeout() {
                 ScrapixError::Timeout(format!("Request timed out: {}", url))
@@ -367,6 +400,15 @@ impl HttpFetcher {
         url: &Url,
         conditional_headers: &ConditionalRequestHeaders,
     ) -> Result<(Response, String)> {
+        // Pre-resolve DNS if resolver is configured (warms cache for future requests)
+        if let Some(ref resolver) = self.dns_resolver {
+            if let Some(host) = url.host_str() {
+                if let Err(e) = resolver.resolve(host).await {
+                    debug!(host, error = %e, "DNS pre-resolution failed, reqwest will resolve");
+                }
+            }
+        }
+
         let mut request = self.client.get(url.as_str());
 
         // Add conditional headers if present
@@ -468,6 +510,47 @@ impl HttpFetcher {
     pub async fn get_crawl_delay(&self, domain: &str) -> Result<Option<u64>> {
         self.robots_cache.get_crawl_delay(domain).await
     }
+
+    /// Pre-resolve DNS for a hostname (warms the cache)
+    ///
+    /// This can be called before fetching to ensure DNS is cached.
+    /// Returns the resolved IP addresses.
+    pub async fn resolve_dns(&self, hostname: &str) -> Result<Vec<std::net::IpAddr>> {
+        if let Some(ref resolver) = self.dns_resolver {
+            resolver.resolve(hostname).await
+        } else {
+            Err(ScrapixError::Crawl(
+                "DNS resolver not configured".to_string(),
+            ))
+        }
+    }
+
+    /// Pre-resolve DNS for a URL (warms the cache)
+    pub async fn resolve_url_dns(&self, url: &str) -> Result<Vec<std::net::IpAddr>> {
+        let parsed = Url::parse(url)?;
+        if let Some(host) = parsed.host_str() {
+            self.resolve_dns(host).await
+        } else {
+            Err(ScrapixError::Crawl(format!("No host in URL: {}", url)))
+        }
+    }
+
+    /// Get DNS cache statistics
+    pub fn dns_cache_stats(&self) -> Option<DnsCacheStats> {
+        self.dns_resolver.as_ref().map(|r| r.cache_stats())
+    }
+
+    /// Clear the DNS cache
+    pub fn clear_dns_cache(&self) {
+        if let Some(ref resolver) = self.dns_resolver {
+            resolver.clear_cache();
+        }
+    }
+
+    /// Check if DNS caching is enabled
+    pub fn has_dns_cache(&self) -> bool {
+        self.dns_resolver.is_some()
+    }
 }
 
 /// Trait implementation for the core Fetcher trait
@@ -489,12 +572,14 @@ impl scrapix_core::traits::Fetcher for HttpFetcher {
 /// Builder for HttpFetcher
 pub struct HttpFetcherBuilder {
     config: FetcherConfig,
+    dns_config: Option<DnsConfig>,
 }
 
 impl HttpFetcherBuilder {
     pub fn new() -> Self {
         Self {
             config: FetcherConfig::default(),
+            dns_config: None,
         }
     }
 
@@ -543,8 +628,39 @@ impl HttpFetcherBuilder {
         self
     }
 
+    /// Enable DNS caching with default configuration
+    pub fn with_dns_cache(mut self) -> Self {
+        self.dns_config = Some(DnsConfig::default());
+        self
+    }
+
+    /// Enable DNS caching with custom configuration
+    pub fn with_dns_config(mut self, config: DnsConfig) -> Self {
+        self.dns_config = Some(config);
+        self
+    }
+
+    /// Set DNS cache TTL
+    pub fn dns_cache_ttl(mut self, ttl: Duration) -> Self {
+        let config = self.dns_config.get_or_insert_with(DnsConfig::default);
+        config.cache_ttl = ttl;
+        self
+    }
+
+    /// Set maximum DNS cache size
+    pub fn dns_max_cache_size(mut self, size: usize) -> Self {
+        let config = self.dns_config.get_or_insert_with(DnsConfig::default);
+        config.max_cache_size = size;
+        self
+    }
+
     pub fn build(self, robots_cache: Arc<RobotsCache>) -> Result<HttpFetcher> {
-        HttpFetcher::new(self.config, robots_cache)
+        let dns_resolver = if let Some(dns_config) = self.dns_config {
+            Some(Arc::new(CachingDnsResolver::new(dns_config)?))
+        } else {
+            None
+        };
+        HttpFetcher::new_with_dns(self.config, robots_cache, dns_resolver)
     }
 }
 

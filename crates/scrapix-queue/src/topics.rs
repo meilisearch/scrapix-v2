@@ -20,6 +20,10 @@ pub mod names {
     pub const EVENTS: &str = "scrapix.events";
     /// Job status updates
     pub const JOB_STATUS: &str = "scrapix.jobs.status";
+    /// Link graph updates (discovered links)
+    pub const LINKS: &str = "scrapix.links";
+    /// Crawl history updates (for incremental crawling)
+    pub const CRAWL_HISTORY: &str = "scrapix.crawl.history";
 }
 
 /// Message types for the URL frontier queue
@@ -83,6 +87,12 @@ pub struct RawPageMessage {
     pub index_uid: String,
     /// Message ID
     pub message_id: String,
+    /// ETag from response (for incremental crawling)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub etag: Option<String>,
+    /// Last-Modified from response (for incremental crawling)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_modified: Option<String>,
 }
 
 /// Message for processed documents
@@ -176,6 +186,13 @@ pub enum CrawlEvent {
         wait_ms: u64,
         timestamp: i64,
     },
+    /// Page skipped (duplicate, filtered, etc.)
+    PageSkipped {
+        job_id: String,
+        url: String,
+        reason: String,
+        timestamp: i64,
+    },
 }
 
 impl CrawlEvent {
@@ -265,5 +282,280 @@ impl DlqMessage {
         self.retry_count += 1;
         self.failed_at = chrono::Utc::now().timestamp_millis();
         self
+    }
+}
+
+/// Message for link graph updates
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LinksMessage {
+    /// Source URL where links were found
+    pub source_url: String,
+    /// Target URLs (outbound links)
+    pub target_urls: Vec<String>,
+    /// Job ID
+    pub job_id: String,
+    /// Timestamp
+    pub timestamp: i64,
+}
+
+impl LinksMessage {
+    pub fn new(
+        source_url: impl Into<String>,
+        target_urls: Vec<String>,
+        job_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            source_url: source_url.into(),
+            target_urls,
+            job_id: job_id.into(),
+            timestamp: chrono::Utc::now().timestamp_millis(),
+        }
+    }
+}
+
+/// Message for crawl history updates (for recrawl scheduling)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrawlHistoryMessage {
+    /// URL that was crawled
+    pub url: String,
+    /// ETag from response
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub etag: Option<String>,
+    /// Last-Modified from response
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_modified: Option<String>,
+    /// SHA-256 hash of content
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_hash: Option<String>,
+    /// HTTP status code
+    pub status: u16,
+    /// Content length
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_length: Option<u64>,
+    /// Whether content changed since last crawl
+    pub content_changed: bool,
+    /// Job ID
+    pub job_id: String,
+    /// Timestamp
+    pub timestamp: i64,
+}
+
+impl CrawlHistoryMessage {
+    pub fn new(url: impl Into<String>, status: u16, job_id: impl Into<String>) -> Self {
+        Self {
+            url: url.into(),
+            etag: None,
+            last_modified: None,
+            content_hash: None,
+            status,
+            content_length: None,
+            content_changed: true, // Assume changed by default
+            job_id: job_id.into(),
+            timestamp: chrono::Utc::now().timestamp_millis(),
+        }
+    }
+
+    pub fn with_etag(mut self, etag: impl Into<String>) -> Self {
+        self.etag = Some(etag.into());
+        self
+    }
+
+    pub fn with_last_modified(mut self, last_modified: impl Into<String>) -> Self {
+        self.last_modified = Some(last_modified.into());
+        self
+    }
+
+    pub fn with_content_hash(mut self, hash: impl Into<String>) -> Self {
+        self.content_hash = Some(hash.into());
+        self
+    }
+
+    pub fn with_content_length(mut self, length: u64) -> Self {
+        self.content_length = Some(length);
+        self
+    }
+
+    pub fn with_content_changed(mut self, changed: bool) -> Self {
+        self.content_changed = changed;
+        self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_links_message_creation() {
+        let msg = LinksMessage::new(
+            "https://example.com/page",
+            vec![
+                "https://example.com/link1".to_string(),
+                "https://example.com/link2".to_string(),
+            ],
+            "job-123",
+        );
+
+        assert_eq!(msg.source_url, "https://example.com/page");
+        assert_eq!(msg.target_urls.len(), 2);
+        assert_eq!(msg.job_id, "job-123");
+        assert!(msg.timestamp > 0);
+    }
+
+    #[test]
+    fn test_links_message_serialization() {
+        let msg = LinksMessage::new(
+            "https://example.com/source",
+            vec!["https://example.com/target".to_string()],
+            "job-456",
+        );
+
+        let json = serde_json::to_string(&msg).expect("Failed to serialize");
+        let deserialized: LinksMessage =
+            serde_json::from_str(&json).expect("Failed to deserialize");
+
+        assert_eq!(deserialized.source_url, msg.source_url);
+        assert_eq!(deserialized.target_urls, msg.target_urls);
+        assert_eq!(deserialized.job_id, msg.job_id);
+    }
+
+    #[test]
+    fn test_crawl_history_message_creation() {
+        let msg = CrawlHistoryMessage::new("https://example.com/page", 200, "job-789");
+
+        assert_eq!(msg.url, "https://example.com/page");
+        assert_eq!(msg.status, 200);
+        assert_eq!(msg.job_id, "job-789");
+        assert!(msg.content_changed); // Default is true
+        assert!(msg.etag.is_none());
+        assert!(msg.last_modified.is_none());
+        assert!(msg.content_hash.is_none());
+    }
+
+    #[test]
+    fn test_crawl_history_message_builder() {
+        let msg = CrawlHistoryMessage::new("https://example.com/page", 200, "job-123")
+            .with_etag("\"abc123\"")
+            .with_last_modified("Wed, 21 Oct 2023 07:28:00 GMT")
+            .with_content_hash("sha256:deadbeef")
+            .with_content_length(12345)
+            .with_content_changed(false);
+
+        assert_eq!(msg.etag, Some("\"abc123\"".to_string()));
+        assert_eq!(
+            msg.last_modified,
+            Some("Wed, 21 Oct 2023 07:28:00 GMT".to_string())
+        );
+        assert_eq!(msg.content_hash, Some("sha256:deadbeef".to_string()));
+        assert_eq!(msg.content_length, Some(12345));
+        assert!(!msg.content_changed);
+    }
+
+    #[test]
+    fn test_crawl_history_message_serialization() {
+        let msg = CrawlHistoryMessage::new("https://example.com/page", 200, "job-123")
+            .with_etag("\"etag\"")
+            .with_content_hash("hash123");
+
+        let json = serde_json::to_string(&msg).expect("Failed to serialize");
+        let deserialized: CrawlHistoryMessage =
+            serde_json::from_str(&json).expect("Failed to deserialize");
+
+        assert_eq!(deserialized.url, msg.url);
+        assert_eq!(deserialized.status, msg.status);
+        assert_eq!(deserialized.etag, msg.etag);
+        assert_eq!(deserialized.content_hash, msg.content_hash);
+    }
+
+    #[test]
+    fn test_url_message_partition_key() {
+        let url = CrawlUrl::seed("https://example.com/path/to/page");
+        let msg = UrlMessage::new(url, "job-1", "index-1");
+
+        let key = msg.partition_key();
+        assert_eq!(key, "example.com");
+    }
+
+    #[test]
+    fn test_document_message_creation() {
+        let doc = Document::new("https://example.com/doc", "example.com");
+        let msg = DocumentMessage::new(doc.clone(), "job-1", "index-1");
+
+        assert_eq!(msg.document.url, "https://example.com/doc");
+        assert_eq!(msg.job_id, "job-1");
+        assert_eq!(msg.index_uid, "index-1");
+        assert!(!msg.message_id.is_empty());
+    }
+
+    #[test]
+    fn test_dlq_message_creation() {
+        let msg = DlqMessage::new(
+            r#"{"url": "https://failed.com"}"#,
+            "scrapix.urls.frontier",
+            "Connection timeout",
+        )
+        .with_job_id("job-failed");
+
+        assert!(msg.original_message.contains("failed.com"));
+        assert_eq!(msg.original_topic, "scrapix.urls.frontier");
+        assert_eq!(msg.error, "Connection timeout");
+        assert_eq!(msg.job_id, Some("job-failed".to_string()));
+        assert_eq!(msg.retry_count, 1);
+
+        // Test increment_retry
+        let msg = msg.increment_retry();
+        assert_eq!(msg.retry_count, 2);
+    }
+
+    #[test]
+    fn test_crawl_event_constructors() {
+        let started = CrawlEvent::job_started("job-1", "index-1", vec!["https://example.com".to_string()]);
+        match started {
+            CrawlEvent::JobStarted {
+                job_id,
+                index_uid,
+                start_urls,
+                ..
+            } => {
+                assert_eq!(job_id, "job-1");
+                assert_eq!(index_uid, "index-1");
+                assert_eq!(start_urls.len(), 1);
+            }
+            _ => panic!("Expected JobStarted"),
+        }
+
+        let crawled = CrawlEvent::page_crawled("job-1", "https://example.com", 200, 150);
+        match crawled {
+            CrawlEvent::PageCrawled {
+                job_id,
+                url,
+                status,
+                duration_ms,
+                ..
+            } => {
+                assert_eq!(job_id, "job-1");
+                assert_eq!(url, "https://example.com");
+                assert_eq!(status, 200);
+                assert_eq!(duration_ms, 150);
+            }
+            _ => panic!("Expected PageCrawled"),
+        }
+
+        let failed = CrawlEvent::page_failed("job-1", "https://failed.com", "Timeout", 3);
+        match failed {
+            CrawlEvent::PageFailed {
+                job_id,
+                url,
+                error,
+                retry_count,
+                ..
+            } => {
+                assert_eq!(job_id, "job-1");
+                assert_eq!(url, "https://failed.com");
+                assert_eq!(error, "Timeout");
+                assert_eq!(retry_count, 3);
+            }
+            _ => panic!("Expected PageFailed"),
+        }
     }
 }

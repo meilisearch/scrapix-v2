@@ -1,0 +1,55 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by: ['alertname', 'severity']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  receiver: 'default-receiver'
+  routes:
+    - match:
+        severity: critical
+      receiver: 'critical-receiver'
+      group_wait: 10s
+    - match:
+        severity: warning
+      receiver: 'warning-receiver'
+
+receivers:
+  - name: 'default-receiver'
+    # Webhook example (configure your notification service)
+    # webhook_configs:
+    #   - url: 'http://your-notification-service/alert'
+    #     send_resolved: true
+
+  - name: 'critical-receiver'
+    # Slack example (uncomment and configure)
+    # slack_configs:
+    #   - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+    #     channel: '#scrapix-alerts'
+    #     title: '{{ .Status | toUpper }}: {{ .CommonLabels.alertname }}'
+    #     text: '{{ .CommonAnnotations.description }}'
+    #     send_resolved: true
+
+    # PagerDuty example (uncomment and configure)
+    # pagerduty_configs:
+    #   - service_key: 'your-pagerduty-service-key'
+    #     severity: '{{ .CommonLabels.severity }}'
+
+  - name: 'warning-receiver'
+    # Email example (uncomment and configure)
+    # email_configs:
+    #   - to: 'ops@yourcompany.com'
+    #     from: 'alertmanager@scrapix.local'
+    #     smarthost: 'smtp.gmail.com:587'
+    #     auth_username: 'your-email@gmail.com'
+    #     auth_password: 'your-app-password'
+
+inhibit_rules:
+  # Inhibit warning alerts when critical alerts are firing for the same service
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'instance']
