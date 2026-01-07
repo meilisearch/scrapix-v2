@@ -57,12 +57,24 @@
 //! ```
 
 pub mod dedup;
+pub mod history;
+pub mod linkgraph;
 pub mod partition;
 pub mod politeness;
 pub mod priority;
+pub mod recrawl;
 
 // Re-exports
 pub use dedup::{DedupConfig, DedupStats, PartitionedUrlDedup, UrlDedup};
+pub use history::{
+    check_content_change, fingerprint_bytes, fingerprint_content, ConditionalHeaders,
+    ContentChangeResult, CrawlRecord, UrlHistory, UrlHistoryConfig, UrlHistoryStats,
+};
 pub use partition::{extract_domain, DomainGrouper, PartitionConfig, Partitioner};
 pub use politeness::{DomainStats, PolitenessConfig, PolitenessScheduler};
 pub use priority::{MultiLevelPriorityQueue, PriorityConfig, PriorityQueue};
+pub use linkgraph::{LinkGraph, LinkGraphBuilder, LinkGraphConfig, LinkGraphStats};
+pub use recrawl::{
+    RecrawlConfig, RecrawlDecision, RecrawlReason, RecrawlScheduler, RecrawlSchedulerBuilder,
+    RecrawlStats, SkipReason,
+};

@@ -17,6 +17,7 @@ members = [
     "bins/scrapix-frontier-service",
     "bins/scrapix-cli",
     "benches",
+    "tests",
 ]
 
 [workspace.package]

@@ -7,9 +7,12 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use chrono::Utc;
 use reqwest::{
-    header::{HeaderMap, HeaderName, HeaderValue, ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE},
+    header::{
+        HeaderMap, HeaderName, HeaderValue, ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE,
+        IF_MODIFIED_SINCE, IF_NONE_MATCH,
+    },
     redirect::Policy,
-    Client, Response,
+    Client, Response, StatusCode,
 };
 use tracing::{debug, instrument};
 use url::Url;
@@ -17,6 +20,53 @@ use url::Url;
 use scrapix_core::{CrawlUrl, RawPage, Result, ScrapixError};
 
 use crate::robots::RobotsCache;
+
+/// Conditional request headers for incremental crawling
+#[derive(Debug, Clone, Default)]
+pub struct ConditionalRequestHeaders {
+    /// ETag from previous response (for If-None-Match header)
+    pub etag: Option<String>,
+    /// Last-Modified from previous response (for If-Modified-Since header)
+    pub last_modified: Option<String>,
+}
+
+impl ConditionalRequestHeaders {
+    /// Create new conditional headers
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the ETag
+    pub fn with_etag(mut self, etag: impl Into<String>) -> Self {
+        self.etag = Some(etag.into());
+        self
+    }
+
+    /// Set the Last-Modified header
+    pub fn with_last_modified(mut self, last_modified: impl Into<String>) -> Self {
+        self.last_modified = Some(last_modified.into());
+        self
+    }
+
+    /// Check if any conditional headers are set
+    pub fn has_headers(&self) -> bool {
+        self.etag.is_some() || self.last_modified.is_some()
+    }
+}
+
+/// Result of a conditional fetch operation
+#[derive(Debug)]
+pub enum FetchResult {
+    /// Content was fetched (status 200 or similar)
+    Fetched(RawPage),
+    /// Content not modified (status 304)
+    NotModified {
+        /// The URL that was checked
+        url: String,
+        /// Duration of the request
+        fetch_duration_ms: u64,
+    },
+}
 
 /// Configuration for the HTTP fetcher
 #[derive(Debug, Clone)]
@@ -211,9 +261,127 @@ impl HttpFetcher {
         }))
     }
 
+    /// Fetch a URL with conditional headers for incremental crawling
+    ///
+    /// This method sends If-None-Match and If-Modified-Since headers if provided,
+    /// allowing the server to return 304 Not Modified if content hasn't changed.
+    #[instrument(skip(self), fields(url = %url.url))]
+    pub async fn fetch_conditional(
+        &self,
+        url: &CrawlUrl,
+        conditional_headers: &ConditionalRequestHeaders,
+    ) -> Result<FetchResult> {
+        let parsed_url = Url::parse(&url.url)?;
+
+        // Check robots.txt
+        if !self.robots_cache.is_allowed(&url.url).await? {
+            return Err(ScrapixError::RobotsDisallowed {
+                url: url.url.clone(),
+            });
+        }
+
+        let mut last_error = None;
+        let mut backoff = self.config.retry_config.initial_backoff;
+
+        for attempt in 0..=self.config.retry_config.max_retries {
+            if attempt > 0 {
+                debug!(attempt, "Retrying request after {:?}", backoff);
+                tokio::time::sleep(backoff).await;
+                backoff = Duration::from_secs_f64(
+                    (backoff.as_secs_f64() * self.config.retry_config.backoff_multiplier)
+                        .min(self.config.retry_config.max_backoff.as_secs_f64()),
+                );
+            }
+
+            let start = Instant::now();
+
+            match self
+                .fetch_once_conditional(&parsed_url, conditional_headers)
+                .await
+            {
+                Ok((response, final_url)) => {
+                    let fetch_duration = start.elapsed();
+
+                    // Check for 304 Not Modified
+                    if response.status() == StatusCode::NOT_MODIFIED {
+                        debug!(url = %url.url, "Content not modified (304)");
+                        return Ok(FetchResult::NotModified {
+                            url: url.url.clone(),
+                            fetch_duration_ms: fetch_duration.as_millis() as u64,
+                        });
+                    }
+
+                    let page = self
+                        .process_response(url, response, final_url, fetch_duration)
+                        .await?;
+                    return Ok(FetchResult::Fetched(page));
+                }
+                Err(e) => {
+                    // Check if this is a non-retryable HTTP error
+                    if let ScrapixError::Http { status, .. } = e {
+                        if !self
+                            .config
+                            .retry_config
+                            .retryable_status_codes
+                            .contains(&status)
+                        {
+                            return Err(ScrapixError::Http {
+                                status,
+                                url: url.url.clone(),
+                            });
+                        }
+                    }
+                    last_error = Some(e);
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| {
+            ScrapixError::Crawl(format!("Failed to fetch {} after retries", url.url))
+        }))
+    }
+
     /// Perform a single fetch attempt
     async fn fetch_once(&self, url: &Url) -> Result<(Response, String)> {
         let response = self.client.get(url.as_str()).send().await.map_err(|e| {
+            if e.is_timeout() {
+                ScrapixError::Timeout(format!("Request timed out: {}", url))
+            } else if e.is_connect() {
+                ScrapixError::Connection(format!("Connection failed: {}", e))
+            } else if let Some(status) = e.status() {
+                ScrapixError::Http {
+                    status: status.as_u16(),
+                    url: url.to_string(),
+                }
+            } else {
+                ScrapixError::Network(e.to_string())
+            }
+        })?;
+        let final_url = response.url().to_string();
+        Ok((response, final_url))
+    }
+
+    /// Perform a single fetch attempt with conditional headers
+    async fn fetch_once_conditional(
+        &self,
+        url: &Url,
+        conditional_headers: &ConditionalRequestHeaders,
+    ) -> Result<(Response, String)> {
+        let mut request = self.client.get(url.as_str());
+
+        // Add conditional headers if present
+        if let Some(ref etag) = conditional_headers.etag {
+            if let Ok(value) = HeaderValue::from_str(etag) {
+                request = request.header(IF_NONE_MATCH, value);
+            }
+        }
+        if let Some(ref last_modified) = conditional_headers.last_modified {
+            if let Ok(value) = HeaderValue::from_str(last_modified) {
+                request = request.header(IF_MODIFIED_SINCE, value);
+            }
+        }
+
+        let response = request.send().await.map_err(|e| {
             if e.is_timeout() {
                 ScrapixError::Timeout(format!("Request timed out: {}", url))
             } else if e.is_connect() {

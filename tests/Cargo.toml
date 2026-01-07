@@ -1,0 +1,59 @@
+[package]
+name = "scrapix-tests"
+description = "Integration tests for Scrapix"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# Core crates to test
+scrapix-core = { path = "../crates/scrapix-core" }
+scrapix-parser = { path = "../crates/scrapix-parser" }
+scrapix-extractor = { path = "../crates/scrapix-extractor" }
+scrapix-frontier = { path = "../crates/scrapix-frontier" }
+scrapix-crawler = { path = "../crates/scrapix-crawler" }
+scrapix-storage = { path = "../crates/scrapix-storage" }
+scrapix-queue = { path = "../crates/scrapix-queue" }
+
+# Async runtime
+tokio = { workspace = true }
+futures = { workspace = true }
+
+# HTTP mocking
+wiremock = { workspace = true }
+
+# Utilities
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+url = { workspace = true }
+uuid = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+
+[lib]
+name = "scrapix_tests"
+path = "src/lib.rs"
+
+[[test]]
+name = "parser_extractor"
+path = "src/parser_extractor.rs"
+
+[[test]]
+name = "frontier"
+path = "src/frontier.rs"
+
+[[test]]
+name = "crawl_pipeline"
+path = "src/crawl_pipeline.rs"
+
+[[test]]
+name = "incremental_crawling"
+path = "src/incremental_crawling.rs"
+
+[[test]]
+name = "link_graph"
+path = "src/link_graph.rs"

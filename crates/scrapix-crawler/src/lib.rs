@@ -75,7 +75,10 @@ pub mod renderer_webdriver;
 // Re-exports for convenience
 pub use dns::{CachingDnsResolver, DnsConfig};
 pub use extractor::{ExtractorConfig, UrlExtractor, UrlExtractorBuilder};
-pub use fetcher::{FetcherConfig, HttpFetcher, HttpFetcherBuilder, RetryConfig};
+pub use fetcher::{
+    ConditionalRequestHeaders, FetchResult, FetcherConfig, HttpFetcher, HttpFetcherBuilder,
+    RetryConfig,
+};
 pub use proxy::{ProxyConfig, ProxyPool, RotationStrategy};
 pub use robots::{RobotsCache, RobotsConfig};
 
