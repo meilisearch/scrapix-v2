@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 scrapix-core = { path = "../../crates/scrapix-core" }
+scrapix-extractor = { path = "../../crates/scrapix-extractor" }
 scrapix-frontier = { path = "../../crates/scrapix-frontier" }
 scrapix-parser = { path = "../../crates/scrapix-parser" }
 scrapix-storage = { path = "../../crates/scrapix-storage" }

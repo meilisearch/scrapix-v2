@@ -33,10 +33,12 @@
 //! - `{"type": "error", "message": "...", "code": "..."}` - Error
 //! - `{"type": "pong", "timestamp": 123456789}` - Pong response
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
+
+mod analytics;
 
 use axum::{
     extract::{
@@ -62,7 +64,10 @@ use tracing::{debug, error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use scrapix_core::{CrawlConfig, CrawlUrl, JobState, JobStatus};
-use scrapix_queue::{topic_names, CrawlEvent, KafkaProducer, ProducerBuilder, UrlMessage};
+use scrapix_queue::{topic_names, ConsumerBuilder, CrawlEvent, KafkaProducer, ProducerBuilder, UrlMessage};
+use scrapix_storage::clickhouse::{
+    ClickHouseStorage, CrawlEvent as ClickHouseCrawlEvent, CrawlEventBatcher,
+};
 
 /// Scrapix API Server
 #[derive(Parser, Debug)]
@@ -108,6 +113,12 @@ struct AppState {
     event_tx: broadcast::Sender<(String, CrawlEvent)>,
     /// Configuration
     config: AppConfig,
+    /// Recent errors ring buffer (for diagnostics)
+    recent_errors: RwLock<VecDeque<ErrorRecord>>,
+    /// Per-domain counters (for diagnostics)
+    domain_counters: RwLock<HashMap<String, DomainCounter>>,
+    /// ClickHouse event batcher (optional - for analytics persistence)
+    clickhouse_batcher: Option<Arc<CrawlEventBatcher>>,
 }
 
 #[derive(Debug, Clone)]
@@ -116,13 +127,20 @@ struct AppConfig {
 }
 
 impl AppState {
-    fn new(producer: KafkaProducer, config: AppConfig) -> Self {
+    fn new(
+        producer: KafkaProducer,
+        config: AppConfig,
+        clickhouse_batcher: Option<Arc<CrawlEventBatcher>>,
+    ) -> Self {
         let (event_tx, _) = broadcast::channel(1000);
         Self {
             producer,
             jobs: RwLock::new(HashMap::new()),
             event_tx,
             config,
+            recent_errors: RwLock::new(VecDeque::with_capacity(1000)),
+            domain_counters: RwLock::new(HashMap::new()),
+            clickhouse_batcher,
         }
     }
 
@@ -183,6 +201,190 @@ impl AppState {
     /// Broadcast an event
     fn broadcast_event(&self, job_id: &str, event: CrawlEvent) {
         let _ = self.event_tx.send((job_id.to_string(), event));
+    }
+
+    /// Process an event and update job state accordingly
+    fn process_event(&self, job_id: &str, event: &CrawlEvent) {
+        // Persist to ClickHouse if configured
+        if let Some(ref batcher) = self.clickhouse_batcher {
+            if let Some(ch_event) = kafka_event_to_clickhouse(job_id, event) {
+                let batcher = batcher.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = batcher.add(ch_event).await {
+                        debug!(error = %e, "Failed to add event to ClickHouse batcher");
+                    }
+                });
+            }
+        }
+
+        match event {
+            CrawlEvent::PageCrawled { url, duration_ms, .. } => {
+                self.update_job(job_id, |j| {
+                    j.pages_crawled += 1;
+                    // Update crawl rate based on elapsed time
+                    if let Some(started) = j.started_at {
+                        let elapsed = chrono::Utc::now()
+                            .signed_duration_since(started)
+                            .num_seconds();
+                        if elapsed > 0 {
+                            j.crawl_rate = j.pages_crawled as f64 / elapsed as f64;
+                        }
+                    }
+                });
+
+                // Track domain stats
+                if let Some(domain) = extract_domain(url) {
+                    let mut counters = self.domain_counters.write();
+                    let counter = counters.entry(domain).or_default();
+                    counter.requests += 1;
+                    counter.successes += 1;
+                    counter.total_response_time_ms += *duration_ms as u64;
+                }
+            }
+            CrawlEvent::PageFailed { url, error, retry_count, .. } => {
+                self.update_job(job_id, |j| {
+                    j.errors += 1;
+                });
+
+                // Track error
+                let domain = extract_domain(url).unwrap_or_else(|| "unknown".to_string());
+                let error_record = ErrorRecord {
+                    url: url.clone(),
+                    domain: domain.clone(),
+                    error: error.clone(),
+                    status_code: extract_status_code(error),
+                    job_id: job_id.to_string(),
+                    timestamp: chrono::Utc::now().to_rfc3339(),
+                    retry_count: *retry_count,
+                };
+
+                {
+                    let mut errors = self.recent_errors.write();
+                    errors.push_back(error_record);
+                    while errors.len() > 1000 {
+                        errors.pop_front();
+                    }
+                }
+
+                // Track domain stats
+                {
+                    let mut counters = self.domain_counters.write();
+                    let counter = counters.entry(domain).or_default();
+                    counter.requests += 1;
+                    counter.failures += 1;
+                }
+            }
+            CrawlEvent::DocumentIndexed { .. } => {
+                self.update_job(job_id, |j| {
+                    j.pages_indexed += 1;
+                    j.documents_sent += 1;
+                });
+            }
+            CrawlEvent::JobCompleted { pages_crawled, documents_indexed, duration_secs, .. } => {
+                self.update_job(job_id, |j| {
+                    j.status = JobStatus::Completed;
+                    j.pages_crawled = *pages_crawled;
+                    j.pages_indexed = *documents_indexed;
+                    j.completed_at = Some(chrono::Utc::now());
+                    if *duration_secs > 0 {
+                        j.crawl_rate = j.pages_crawled as f64 / *duration_secs as f64;
+                    }
+                });
+            }
+            CrawlEvent::JobFailed { error, .. } => {
+                self.update_job(job_id, |j| {
+                    j.status = JobStatus::Failed;
+                    j.error_message = Some(error.clone());
+                    j.completed_at = Some(chrono::Utc::now());
+                });
+            }
+            CrawlEvent::UrlsDiscovered { count, .. } => {
+                self.update_job(job_id, |j| {
+                    // Track discovered URLs for progress estimation
+                    if j.crawl_rate > 0.0 {
+                        j.eta_seconds = Some((*count as f64 / j.crawl_rate) as u64);
+                    }
+                });
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Extract domain from URL
+fn extract_domain(url: &str) -> Option<String> {
+    url::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(|s| s.to_string()))
+}
+
+/// Try to extract HTTP status code from error message
+fn extract_status_code(error: &str) -> Option<u16> {
+    // Common patterns: "404 Not Found", "HTTP 500", "status: 503"
+    let patterns = [
+        r"^(\d{3})\s",
+        r"HTTP\s+(\d{3})",
+        r"status[:\s]+(\d{3})",
+    ];
+    for pattern in patterns {
+        if let Ok(re) = regex::Regex::new(pattern) {
+            if let Some(caps) = re.captures(error) {
+                if let Some(m) = caps.get(1) {
+                    if let Ok(code) = m.as_str().parse::<u16>() {
+                        return Some(code);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Convert a Kafka CrawlEvent to a ClickHouse CrawlEvent for analytics persistence
+fn kafka_event_to_clickhouse(job_id: &str, event: &CrawlEvent) -> Option<ClickHouseCrawlEvent> {
+    match event {
+        CrawlEvent::PageCrawled { url, status, content_length, duration_ms, account_id, .. } => {
+            let domain = extract_domain(url).unwrap_or_default();
+            Some(ClickHouseCrawlEvent {
+                url: url.clone(),
+                domain,
+                status_code: *status,
+                response_time_ms: *duration_ms as u32,
+                content_length: *content_length,
+                content_type: String::new(),
+                js_rendered: false,
+                depth: 0,
+                worker_id: String::new(),
+                job_id: job_id.to_string(),
+                account_id: account_id.clone().unwrap_or_default(),
+                crawled_at: time::OffsetDateTime::now_utc(),
+                error: String::new(),
+                links_extracted: 0,
+                content_changed: false,
+            })
+        }
+        CrawlEvent::PageFailed { url, error, account_id, .. } => {
+            let domain = extract_domain(url).unwrap_or_default();
+            let status_code = extract_status_code(error).unwrap_or(0);
+            Some(ClickHouseCrawlEvent {
+                url: url.clone(),
+                domain,
+                status_code,
+                response_time_ms: 0,
+                content_length: 0,
+                content_type: String::new(),
+                js_rendered: false,
+                depth: 0,
+                worker_id: String::new(),
+                job_id: job_id.to_string(),
+                account_id: account_id.clone().unwrap_or_default(),
+                crawled_at: time::OffsetDateTime::now_utc(),
+                error: error.clone(),
+                links_extracted: 0,
+                content_changed: false,
+            })
+        }
+        _ => None, // Other events don't map to crawl_events table
     }
 }
 
@@ -300,6 +502,115 @@ struct HealthResponse {
 }
 
 // ============================================================================
+// Diagnostic Response Types
+// ============================================================================
+
+/// System stats response
+#[derive(Debug, Serialize)]
+struct SystemStatsResponse {
+    meilisearch: Option<MeilisearchStats>,
+    jobs: JobSummary,
+    diagnostics: DiagnosticsStats,
+    collected_at: String,
+}
+
+#[derive(Debug, Serialize)]
+struct MeilisearchStats {
+    available: bool,
+    url: String,
+}
+
+#[derive(Debug, Serialize)]
+struct JobSummary {
+    total: usize,
+    running: usize,
+    completed: usize,
+    failed: usize,
+    pending: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct DiagnosticsStats {
+    recent_errors_count: usize,
+    tracked_domains: usize,
+    total_requests: u64,
+    total_successes: u64,
+    total_failures: u64,
+}
+
+/// Errors response
+#[derive(Debug, Serialize)]
+struct ErrorsResponse {
+    errors: Vec<ErrorRecord>,
+    total_count: usize,
+    by_status: HashMap<u16, u64>,
+    by_domain: Vec<(String, u64)>,
+    source: String,
+}
+
+/// Error record for tracking
+#[derive(Debug, Clone, Serialize)]
+struct ErrorRecord {
+    url: String,
+    domain: String,
+    error: String,
+    status_code: Option<u16>,
+    job_id: String,
+    timestamp: String,
+    retry_count: u32,
+}
+
+/// Errors query parameters
+#[derive(Debug, Deserialize)]
+struct ErrorsQuery {
+    #[serde(default = "default_last")]
+    last: usize,
+    job_id: Option<String>,
+}
+
+fn default_last() -> usize {
+    20
+}
+
+/// Domains response
+#[derive(Debug, Serialize)]
+struct DomainsResponse {
+    domains: Vec<DomainInfo>,
+    total_domains: usize,
+    source: String,
+}
+
+#[derive(Debug, Serialize)]
+struct DomainInfo {
+    domain: String,
+    total_requests: u64,
+    successful_requests: u64,
+    failed_requests: u64,
+    avg_response_time_ms: Option<f64>,
+}
+
+/// Domains query parameters
+#[derive(Debug, Deserialize)]
+struct DomainsQuery {
+    #[serde(default = "default_top")]
+    top: usize,
+    filter: Option<String>,
+}
+
+fn default_top() -> usize {
+    20
+}
+
+/// Per-domain counter for in-memory tracking
+#[derive(Debug, Clone, Default)]
+struct DomainCounter {
+    requests: u64,
+    successes: u64,
+    failures: u64,
+    total_response_time_ms: u64,
+}
+
+// ============================================================================
 // Route Handlers
 // ============================================================================
 
@@ -346,11 +657,17 @@ async fn create_crawl(
     let mut job = state.create_job(&job_id, &config.index_uid);
     job.start();
 
-    // Publish seed URLs to frontier
+    // Publish seed URLs to frontier with URL patterns
     let mut urls_published = 0;
+    let has_patterns = !config.url_patterns.include.is_empty() || !config.url_patterns.exclude.is_empty();
+
     for url in &config.start_urls {
         let crawl_url = CrawlUrl::seed(url);
-        let msg = UrlMessage::new(crawl_url, &job_id, &config.index_uid);
+        let msg = if has_patterns {
+            UrlMessage::with_patterns(crawl_url, &job_id, &config.index_uid, config.url_patterns.clone())
+        } else {
+            UrlMessage::new(crawl_url, &job_id, &config.index_uid)
+        };
 
         match state
             .producer
@@ -509,6 +826,179 @@ async fn job_events(
     });
 
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+}
+
+// ============================================================================
+// Diagnostic Handlers
+// ============================================================================
+
+/// System stats endpoint
+async fn handle_stats(State(state): State<Arc<AppState>>) -> Json<SystemStatsResponse> {
+    // Compute job summary
+    let jobs = state.jobs.read();
+    let mut running = 0;
+    let mut completed = 0;
+    let mut failed = 0;
+    let mut pending = 0;
+
+    for job in jobs.values() {
+        match job.status {
+            JobStatus::Running => running += 1,
+            JobStatus::Completed => completed += 1,
+            JobStatus::Failed => failed += 1,
+            JobStatus::Pending => pending += 1,
+            JobStatus::Cancelled => failed += 1,
+        }
+    }
+
+    let job_summary = JobSummary {
+        total: jobs.len(),
+        running,
+        completed,
+        failed,
+        pending,
+    };
+    drop(jobs);
+
+    // Compute diagnostics stats
+    let errors_count = state.recent_errors.read().len();
+    let counters = state.domain_counters.read();
+    let tracked_domains = counters.len();
+    let mut total_requests = 0u64;
+    let mut total_successes = 0u64;
+    let mut total_failures = 0u64;
+
+    for counter in counters.values() {
+        total_requests += counter.requests;
+        total_successes += counter.successes;
+        total_failures += counter.failures;
+    }
+    drop(counters);
+
+    let diagnostics = DiagnosticsStats {
+        recent_errors_count: errors_count,
+        tracked_domains,
+        total_requests,
+        total_successes,
+        total_failures,
+    };
+
+    // Meilisearch status (we don't have direct access, just indicate availability from env)
+    let meilisearch = std::env::var("MEILISEARCH_URL").ok().map(|url| MeilisearchStats {
+        available: true,
+        url,
+    });
+
+    Json(SystemStatsResponse {
+        meilisearch,
+        jobs: job_summary,
+        diagnostics,
+        collected_at: chrono::Utc::now().to_rfc3339(),
+    })
+}
+
+/// Errors endpoint
+async fn handle_errors(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ErrorsQuery>,
+) -> Json<ErrorsResponse> {
+    let errors = state.recent_errors.read();
+
+    // Filter by job_id if specified
+    let filtered: Vec<ErrorRecord> = if let Some(ref job_id) = params.job_id {
+        errors
+            .iter()
+            .filter(|e| &e.job_id == job_id)
+            .cloned()
+            .collect()
+    } else {
+        errors.iter().cloned().collect()
+    };
+
+    let total_count = filtered.len();
+
+    // Take last N errors (most recent)
+    let recent: Vec<ErrorRecord> = filtered
+        .into_iter()
+        .rev()
+        .take(params.last)
+        .collect();
+
+    // Compute status code distribution
+    let mut by_status: HashMap<u16, u64> = HashMap::new();
+    for error in &recent {
+        if let Some(code) = error.status_code {
+            *by_status.entry(code).or_insert(0) += 1;
+        }
+    }
+
+    // Compute domain distribution
+    let mut domain_counts: HashMap<String, u64> = HashMap::new();
+    for error in &recent {
+        *domain_counts.entry(error.domain.clone()).or_insert(0) += 1;
+    }
+
+    let mut by_domain: Vec<(String, u64)> = domain_counts.into_iter().collect();
+    by_domain.sort_by(|a, b| b.1.cmp(&a.1));
+    by_domain.truncate(10);
+
+    Json(ErrorsResponse {
+        errors: recent,
+        total_count,
+        by_status,
+        by_domain,
+        source: "memory".to_string(),
+    })
+}
+
+/// Domains endpoint
+async fn handle_domains(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<DomainsQuery>,
+) -> Json<DomainsResponse> {
+    let counters = state.domain_counters.read();
+
+    // Filter by pattern if specified
+    let filtered: Vec<(&String, &DomainCounter)> = if let Some(ref filter) = params.filter {
+        counters
+            .iter()
+            .filter(|(domain, _)| domain.contains(filter))
+            .collect()
+    } else {
+        counters.iter().collect()
+    };
+
+    let total_domains = filtered.len();
+
+    // Sort by total requests and take top N
+    let mut sorted: Vec<_> = filtered;
+    sorted.sort_by(|a, b| b.1.requests.cmp(&a.1.requests));
+    sorted.truncate(params.top);
+
+    let domains: Vec<DomainInfo> = sorted
+        .into_iter()
+        .map(|(domain, counter)| {
+            let avg_time = if counter.successes > 0 {
+                Some(counter.total_response_time_ms as f64 / counter.successes as f64)
+            } else {
+                None
+            };
+
+            DomainInfo {
+                domain: domain.clone(),
+                total_requests: counter.requests,
+                successful_requests: counter.successes,
+                failed_requests: counter.failures,
+                avg_response_time_ms: avg_time,
+            }
+        })
+        .collect();
+
+    Json(DomainsResponse {
+        domains,
+        total_domains,
+        source: "memory".to_string(),
+    })
 }
 
 // ============================================================================
@@ -806,6 +1296,108 @@ async fn list_jobs(
 }
 
 // ============================================================================
+// Event Consumer
+// ============================================================================
+
+/// Start consuming events from Kafka to update job state
+async fn start_event_consumer(brokers: &str, state: Arc<AppState>) -> anyhow::Result<()> {
+    let consumer = ConsumerBuilder::new(brokers, "scrapix-api-events")
+        .client_id("scrapix-api-event-consumer")
+        .auto_offset_reset("latest") // Only process new events
+        .build()?;
+
+    consumer.subscribe(&[topic_names::EVENTS])?;
+    info!("Event consumer subscribed to {} topic", topic_names::EVENTS);
+
+    // Process events in background
+    tokio::spawn(async move {
+        loop {
+            match consumer.poll_one::<CrawlEvent>(Duration::from_millis(100)).await {
+                Ok(Some(event)) => {
+                    // Extract job_id from event
+                    let job_id = match &event {
+                        CrawlEvent::JobStarted { job_id, .. } => job_id.clone(),
+                        CrawlEvent::PageCrawled { job_id, .. } => job_id.clone(),
+                        CrawlEvent::PageFailed { job_id, .. } => job_id.clone(),
+                        CrawlEvent::DocumentIndexed { job_id, .. } => job_id.clone(),
+                        CrawlEvent::UrlsDiscovered { job_id, .. } => job_id.clone(),
+                        CrawlEvent::JobCompleted { job_id, .. } => job_id.clone(),
+                        CrawlEvent::JobFailed { job_id, .. } => job_id.clone(),
+                        CrawlEvent::PageSkipped { job_id, .. } => job_id.clone(),
+                        CrawlEvent::RateLimited { job_id, .. } => job_id.clone(),
+                    };
+
+                    // Update job state and broadcast
+                    state.process_event(&job_id, &event);
+                    state.broadcast_event(&job_id, event);
+                }
+                Ok(None) => {
+                    // No message, continue
+                }
+                Err(e) => {
+                    debug!(error = %e, "Error polling events topic");
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            }
+        }
+    });
+
+    Ok(())
+}
+
+// ============================================================================
+// ClickHouse Initialization
+// ============================================================================
+
+/// Initialize ClickHouse storage and event batcher.
+/// Returns (AnalyticsState for API, CrawlEventBatcher for event persistence).
+async fn init_clickhouse() -> (
+    Option<Arc<analytics::AnalyticsState>>,
+    Option<Arc<CrawlEventBatcher>>,
+) {
+    // Check if ClickHouse is configured
+    let config = match analytics::AnalyticsConfig::from_env() {
+        Some(c) => c,
+        None => {
+            info!("ClickHouse not configured (CLICKHOUSE_URL not set)");
+            return (None, None);
+        }
+    };
+
+    // Initialize ClickHouse storage
+    let ch_config = scrapix_storage::clickhouse::ClickHouseConfig {
+        url: config.clickhouse_url.clone(),
+        database: config.clickhouse_database.clone(),
+        username: config.clickhouse_user.clone(),
+        password: config.clickhouse_password.clone(),
+        auto_create_tables: true,
+        ..Default::default()
+    };
+
+    let storage = match ClickHouseStorage::new(ch_config).await {
+        Ok(s) => s,
+        Err(e) => {
+            warn!(error = %e, "Failed to connect to ClickHouse. Analytics and event persistence disabled.");
+            return (None, None);
+        }
+    };
+
+    info!(
+        url = %config.clickhouse_url,
+        database = %config.clickhouse_database,
+        "Connected to ClickHouse"
+    );
+
+    // Create event batcher (batch size of 100 events)
+    let batcher = Arc::new(CrawlEventBatcher::new(storage.clone(), 100));
+
+    // Create analytics state (sharing the same storage connection)
+    let analytics_state = Arc::new(analytics::AnalyticsState::with_storage(storage));
+
+    (Some(analytics_state), Some(batcher))
+}
+
+// ============================================================================
 // Main
 // ============================================================================
 
@@ -838,11 +1430,33 @@ async fn main() -> anyhow::Result<()> {
 
     info!(brokers = %args.brokers, "Connected to Kafka");
 
+    // Initialize ClickHouse for analytics (optional)
+    let (analytics_state, clickhouse_batcher) = init_clickhouse().await;
+
     // Create application state
     let config = AppConfig {
         max_jobs: args.max_jobs,
     };
-    let state = Arc::new(AppState::new(producer, config));
+    let state = Arc::new(AppState::new(producer, config, clickhouse_batcher.clone()));
+
+    // Start event consumer for real-time job tracking
+    start_event_consumer(&args.brokers, state.clone()).await?;
+    info!("Event consumer started for centralized job tracking");
+
+    // Start periodic ClickHouse flush task if enabled
+    if let Some(ref batcher) = clickhouse_batcher {
+        let batcher_clone = batcher.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(5));
+            loop {
+                interval.tick().await;
+                if let Err(e) = batcher_clone.flush().await {
+                    warn!(error = %e, "Failed to flush ClickHouse batcher");
+                }
+            }
+        });
+        info!("ClickHouse event persistence enabled (batch size: 100, flush interval: 5s)");
+    }
 
     // Build router
     let mut app = Router::new()
@@ -853,11 +1467,23 @@ async fn main() -> anyhow::Result<()> {
         .route("/job/{id}/status", get(job_status))
         .route("/job/{id}/events", get(job_events))
         .route("/job/{id}", delete(cancel_job))
+        // Diagnostic endpoints
+        .route("/stats", get(handle_stats))
+        .route("/errors", get(handle_errors))
+        .route("/domains", get(handle_domains))
         // WebSocket endpoints
         .route("/ws", get(ws_handler))
         .route("/ws/job/{id}", get(ws_job_handler))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
+
+    // Add analytics routes if ClickHouse is available
+    if let Some(analytics) = analytics_state {
+        app = app.nest("/analytics/v0", analytics::create_analytics_router(analytics));
+        info!("Analytics API enabled at /analytics/v0/pipes");
+    } else {
+        info!("Analytics API disabled (CLICKHOUSE_URL not set)");
+    }
 
     // Add CORS if enabled
     if args.enable_cors {

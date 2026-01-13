@@ -205,17 +205,19 @@ impl MeilisearchStorage {
     }
 
     /// Flush pending documents to the index
-    pub async fn flush(&self) -> Result<()> {
+    /// Returns the number of documents flushed
+    pub async fn flush(&self) -> Result<usize> {
         let docs = {
             let mut pending = self.pending_docs.lock();
             std::mem::take(&mut *pending)
         };
 
+        let count = docs.len();
         if !docs.is_empty() {
             self.index_documents(docs).await?;
         }
 
-        Ok(())
+        Ok(count)
     }
 
     /// Index documents (internal)
@@ -236,6 +238,84 @@ impl MeilisearchStorage {
         self.wait_for_task(task).await?;
 
         info!(count, "Documents indexed successfully");
+
+        Ok(())
+    }
+
+    /// Add a document directly to a specific index (bypasses batching)
+    /// This is used when messages specify their own index_uid
+    #[instrument(skip(self, doc), fields(url = %doc.url, index = %index_uid))]
+    pub async fn add_document_to_index(&self, doc: Document, index_uid: &str) -> Result<()> {
+        // Use the default index if the index_uid matches
+        if index_uid == self.config.index_uid {
+            return self.add_document(doc).await;
+        }
+
+        // Get or create the target index
+        let index = self.client.index(index_uid);
+
+        // Create the index if it doesn't exist (fire and forget, might already exist)
+        let _ = self
+            .client
+            .create_index(index_uid, Some(&self.config.primary_key))
+            .await;
+
+        // Configure index settings (same as default index)
+        let mut settings = Settings::new();
+        settings = settings
+            .with_searchable_attributes(&self.config.searchable_attributes)
+            .with_filterable_attributes(&self.config.filterable_attributes)
+            .with_sortable_attributes(&self.config.sortable_attributes)
+            .with_pagination(PaginationSetting {
+                max_total_hits: self.config.max_total_hits,
+            });
+
+        let _ = index.set_settings(&settings).await;
+
+        // Index the document
+        let task = index
+            .add_documents(&[doc], Some(&self.config.primary_key))
+            .await
+            .map_err(|e| ScrapixError::Storage(format!("Failed to add document to {}: {}", index_uid, e)))?;
+
+        self.wait_for_task(task).await?;
+
+        debug!(index = %index_uid, "Document indexed to specific index");
+
+        Ok(())
+    }
+
+    /// Add multiple documents directly to a specific index (bypasses batching)
+    pub async fn add_documents_to_index(&self, docs: Vec<Document>, index_uid: &str) -> Result<()> {
+        if docs.is_empty() {
+            return Ok(());
+        }
+
+        // Use the default index if the index_uid matches
+        if index_uid == self.config.index_uid {
+            return self.add_documents(docs).await;
+        }
+
+        let count = docs.len();
+
+        // Get or create the target index
+        let index = self.client.index(index_uid);
+
+        // Create the index if it doesn't exist
+        let _ = self
+            .client
+            .create_index(index_uid, Some(&self.config.primary_key))
+            .await;
+
+        // Index the documents
+        let task = index
+            .add_documents(&docs, Some(&self.config.primary_key))
+            .await
+            .map_err(|e| ScrapixError::Storage(format!("Failed to add documents to {}: {}", index_uid, e)))?;
+
+        self.wait_for_task(task).await?;
+
+        info!(count, index = %index_uid, "Documents indexed to specific index");
 
         Ok(())
     }
@@ -348,7 +428,7 @@ impl scrapix_core::traits::Storage for MeilisearchStorage {
         self.add_documents(docs).await
     }
 
-    async fn flush(&self) -> Result<()> {
+    async fn flush(&self) -> Result<usize> {
         MeilisearchStorage::flush(self).await
     }
 

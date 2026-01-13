@@ -94,6 +94,31 @@ services:
       timeout: 3s
       retries: 5
 
+  # ClickHouse - Analytics database for crawl metrics
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    container_name: scrapix-clickhouse
+    ports:
+      - "8123:8123"  # HTTP interface
+      - "9000:9000"  # Native TCP
+    environment:
+      CLICKHOUSE_DB: scrapix
+      CLICKHOUSE_USER: scrapix
+      CLICKHOUSE_PASSWORD: scrapix
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - clickhouse_logs:/var/log/clickhouse-server
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   # ---------------------------------------------------------------------------
   # Topic Initialization
   # ---------------------------------------------------------------------------
@@ -136,6 +161,8 @@ services:
         condition: service_healthy
       meilisearch:
         condition: service_healthy
+      clickhouse:
+        condition: service_healthy
       init-topics:
         condition: service_completed_successfully
     ports:
@@ -148,6 +175,10 @@ services:
       REDIS_URL: redis://dragonfly:6379
       MEILISEARCH_URL: http://meilisearch:7700
       MEILISEARCH_API_KEY: masterKey
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_DATABASE: scrapix
+      CLICKHOUSE_USER: scrapix
+      CLICKHOUSE_PASSWORD: scrapix
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
@@ -236,6 +267,10 @@ volumes:
   dragonfly_data:
     driver: local
   meilisearch_data:
+    driver: local
+  clickhouse_data:
+    driver: local
+  clickhouse_logs:
     driver: local
 
 # -----------------------------------------------------------------------------

@@ -24,6 +24,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use scrapix_ai::{AiClient, AiClientConfig, AiService};
 use scrapix_core::{Document, RawPage, ScrapixError};
+use scrapix_extractor::{BlockConfig, BlockSplitter, ContentBlock};
 use scrapix_frontier::{NearDuplicateConfig, NearDuplicateDetector};
 use scrapix_parser::{HtmlParser, HtmlParserConfig};
 use scrapix_queue::{
@@ -46,7 +47,8 @@ struct Args {
     group_id: String,
 
     /// Number of concurrent processors
-    #[arg(short, long, env = "CONCURRENCY", default_value = "5")]
+    /// Higher concurrency enables faster document processing
+    #[arg(short, long, env = "CONCURRENCY", default_value = "20")]
     concurrency: usize,
 
     /// Meilisearch URL
@@ -94,7 +96,8 @@ struct Args {
     skip_meilisearch: bool,
 
     /// Batch size for Meilisearch indexing
-    #[arg(long, env = "BATCH_SIZE", default_value = "100")]
+    /// Larger batches reduce Meilisearch API call overhead
+    #[arg(long, env = "BATCH_SIZE", default_value = "500")]
     batch_size: usize,
 
     /// Worker ID (for logging/metrics)
@@ -154,6 +157,23 @@ struct Args {
     /// Maximum concurrent AI requests
     #[arg(long, env = "AI_CONCURRENCY", default_value = "5")]
     ai_concurrency: usize,
+
+    // === BLOCK SPLITTING OPTIONS ===
+    /// Enable block splitting (creates multiple documents per page, split by headings)
+    #[arg(long, env = "ENABLE_BLOCK_SPLIT", default_value = "false")]
+    enable_block_split: bool,
+
+    /// Minimum heading level to split on (1-6, default: 2 = H2)
+    #[arg(long, env = "BLOCK_SPLIT_MIN_LEVEL", default_value = "2")]
+    block_split_min_level: u8,
+
+    /// Maximum heading level to split on (1-6, default: 4 = H4)
+    #[arg(long, env = "BLOCK_SPLIT_MAX_LEVEL", default_value = "4")]
+    block_split_max_level: u8,
+
+    /// Minimum content length for a block (characters)
+    #[arg(long, env = "BLOCK_SPLIT_MIN_LENGTH", default_value = "50")]
+    block_split_min_length: usize,
 
     // === NEAR-DUPLICATE DETECTION OPTIONS ===
     /// Enable near-duplicate detection to skip similar content
@@ -282,6 +302,7 @@ struct ContentWorker {
     ai_service: Option<Arc<AiService>>,
     ai_config: AiConfig,
     dedup_detector: Option<Arc<NearDuplicateDetector>>,
+    block_splitter: Option<BlockSplitter>,
     semaphore: Arc<Semaphore>,
     metrics: Arc<WorkerMetrics>,
     shutdown: Arc<AtomicBool>,
@@ -444,6 +465,27 @@ impl ContentWorker {
             None
         };
 
+        // Create block splitter if enabled
+        let block_splitter = if args.enable_block_split {
+            let config = BlockConfig {
+                min_level: args.block_split_min_level,
+                max_level: args.block_split_max_level,
+                min_content_length: args.block_split_min_length,
+                include_hierarchy: true,
+                extract_anchors: true,
+                ..Default::default()
+            };
+            info!(
+                min_level = args.block_split_min_level,
+                max_level = args.block_split_max_level,
+                min_content_length = args.block_split_min_length,
+                "Block splitting enabled - will create multiple documents per page"
+            );
+            Some(BlockSplitter::new(config))
+        } else {
+            None
+        };
+
         Ok(Self {
             consumer,
             producer,
@@ -452,6 +494,7 @@ impl ContentWorker {
             ai_service,
             ai_config,
             dedup_detector,
+            block_splitter,
             semaphore,
             metrics: Arc::new(WorkerMetrics::new()),
             shutdown: Arc::new(AtomicBool::new(false)),
@@ -489,19 +532,56 @@ impl ContentWorker {
             }
         });
 
+        // Start periodic flush task for Meilisearch
+        // This ensures documents are indexed even when batch_size isn't reached
+        let flush_handle = if let Some(ref storage) = self.storage {
+            let storage = storage.clone();
+            let shutdown = self.shutdown.clone();
+            let metrics = self.metrics.clone();
+            Some(tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(5));
+                while !shutdown.load(Ordering::Relaxed) {
+                    interval.tick().await;
+                    match storage.flush().await {
+                        Ok(count) => {
+                            if count > 0 {
+                                metrics.record_indexed(count as u64);
+                                info!(count, "Periodic flush indexed documents");
+                            }
+                        }
+                        Err(e) => {
+                            warn!(error = %e, "Periodic flush failed");
+                        }
+                    }
+                }
+            }))
+        } else {
+            None
+        };
+
         // Process messages
         let result = self.process_messages().await;
-
-        // Flush any pending documents to Meilisearch
-        if let Some(ref storage) = self.storage {
-            if let Err(e) = storage.flush().await {
-                warn!(error = %e, "Failed to flush pending documents");
-            }
-        }
 
         // Cleanup
         self.shutdown.store(true, Ordering::Relaxed);
         metrics_handle.abort();
+        if let Some(handle) = flush_handle {
+            handle.abort();
+        }
+
+        // Final flush of any pending documents to Meilisearch
+        if let Some(ref storage) = self.storage {
+            match storage.flush().await {
+                Ok(count) if count > 0 => {
+                    self.metrics.record_indexed(count as u64);
+                    info!(count, "Final flush indexed documents");
+                }
+                Err(e) => {
+                    warn!(error = %e, "Failed to flush pending documents");
+                }
+                _ => {}
+            }
+        }
 
         result
     }
@@ -651,48 +731,99 @@ impl ContentWorker {
             "Page parsed successfully"
         );
 
-        // Apply AI enrichment if enabled
-        let document = self.enrich_with_ai(document).await;
+        // Apply AI enrichment if enabled (only for non-block-split mode)
+        let document = if self.block_splitter.is_none() {
+            self.enrich_with_ai(document).await
+        } else {
+            document
+        };
 
         let _process_duration = start.elapsed();
-        self.metrics.record_success(page_size, 1);
 
-        // Index document to Meilisearch
-        if let Some(ref storage) = self.storage {
-            if let Err(e) = storage.add_document(document.clone()).await {
-                warn!(
-                    url = %msg.url,
-                    error = %e,
-                    "Failed to index document to Meilisearch"
-                );
-            } else {
-                self.metrics.record_indexed(1);
+        // Check if block splitting is enabled
+        if let Some(ref splitter) = self.block_splitter {
+            // Split HTML into content blocks
+            match splitter.split(&msg.html) {
+                Ok(extracted_blocks) => {
+                    let block_count = extracted_blocks.count;
+
+                    if block_count == 0 {
+                        // No blocks extracted, fall back to indexing full document
+                        debug!(
+                            url = %msg.url,
+                            "No blocks extracted, indexing full document"
+                        );
+                        self.metrics.record_success(page_size, 1);
+                        self.index_single_document(&document, msg).await?;
+                    } else {
+                        info!(
+                            url = %msg.url,
+                            block_count = block_count,
+                            "Split page into content blocks"
+                        );
+
+                        self.metrics.record_success(page_size, block_count as u64);
+
+                        // Create and index a document for each block
+                        for block in &extracted_blocks.blocks {
+                            let block_doc = self.create_block_document(&document, block, msg);
+
+                            // Index block document
+                            if let Some(ref storage) = self.storage {
+                                if let Err(e) = storage
+                                    .add_document_to_index(block_doc.clone(), &msg.index_uid)
+                                    .await
+                                {
+                                    warn!(
+                                        url = %msg.url,
+                                        block_index = block.index,
+                                        error = %e,
+                                        "Failed to add block document to Meilisearch"
+                                    );
+                                } else {
+                                    self.metrics.record_indexed(1);
+                                }
+                            }
+
+                            // Publish block document to Kafka if enabled
+                            if self.publish_to_kafka {
+                                let doc_msg = DocumentMessage::new(
+                                    block_doc.clone(),
+                                    &msg.job_id,
+                                    &msg.index_uid,
+                                );
+                                let _ = self
+                                    .producer
+                                    .send(topic_names::DOCUMENTS, Some(&msg.job_id), &doc_msg)
+                                    .await;
+                            }
+                        }
+
+                        // Send success event for the page
+                        let event = CrawlEvent::DocumentIndexed {
+                            job_id: msg.job_id.clone(),
+                            url: msg.url.clone(),
+                            document_id: format!("{}-blocks", document.uid),
+                            timestamp: chrono::Utc::now().timestamp_millis(),
+                        };
+                        self.publish_event(&msg.job_id, &event).await?;
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        url = %msg.url,
+                        error = %e,
+                        "Block splitting failed, indexing full document"
+                    );
+                    self.metrics.record_success(page_size, 1);
+                    self.index_single_document(&document, msg).await?;
+                }
             }
+        } else {
+            // No block splitting, index single document
+            self.metrics.record_success(page_size, 1);
+            self.index_single_document(&document, msg).await?;
         }
-
-        // Publish document to Kafka topic
-        if self.publish_to_kafka {
-            let doc_msg = DocumentMessage::new(document.clone(), &msg.job_id, &msg.index_uid);
-
-            self.producer
-                .send(topic_names::DOCUMENTS, Some(&msg.job_id), &doc_msg)
-                .await?;
-
-            debug!(
-                url = %msg.url,
-                topic = topic_names::DOCUMENTS,
-                "Published document to Kafka"
-            );
-        }
-
-        // Send success event
-        let event = CrawlEvent::DocumentIndexed {
-            job_id: msg.job_id.clone(),
-            url: msg.url.clone(),
-            document_id: document.uid,
-            timestamp: chrono::Utc::now().timestamp_millis(),
-        };
-        self.publish_event(&msg.job_id, &event).await?;
 
         // Publish crawl history for recrawl scheduling if enabled
         if self.publish_history {
@@ -740,6 +871,129 @@ impl ContentWorker {
             .send(topic_names::EVENTS, Some(job_id), event)
             .await?;
         Ok(())
+    }
+
+    /// Index a single document (non-block-split mode)
+    async fn index_single_document(
+        &self,
+        document: &Document,
+        msg: &RawPageMessage,
+    ) -> scrapix_core::Result<()> {
+        // Add document to Meilisearch
+        if let Some(ref storage) = self.storage {
+            if let Err(e) = storage
+                .add_document_to_index(document.clone(), &msg.index_uid)
+                .await
+            {
+                warn!(
+                    url = %msg.url,
+                    index_uid = %msg.index_uid,
+                    error = %e,
+                    "Failed to add document to Meilisearch"
+                );
+            } else {
+                self.metrics.record_indexed(1);
+            }
+        }
+
+        // Publish document to Kafka topic
+        if self.publish_to_kafka {
+            let doc_msg = DocumentMessage::new(document.clone(), &msg.job_id, &msg.index_uid);
+            self.producer
+                .send(topic_names::DOCUMENTS, Some(&msg.job_id), &doc_msg)
+                .await?;
+
+            debug!(
+                url = %msg.url,
+                topic = topic_names::DOCUMENTS,
+                "Published document to Kafka"
+            );
+        }
+
+        // Send success event
+        let event = CrawlEvent::DocumentIndexed {
+            job_id: msg.job_id.clone(),
+            url: msg.url.clone(),
+            document_id: document.uid.clone(),
+            timestamp: chrono::Utc::now().timestamp_millis(),
+        };
+        self.publish_event(&msg.job_id, &event).await?;
+
+        Ok(())
+    }
+
+    /// Create a document from a content block
+    fn create_block_document(
+        &self,
+        parent_doc: &Document,
+        block: &ContentBlock,
+        _msg: &RawPageMessage,
+    ) -> Document {
+        // Build URL with anchor if available
+        let block_url = if let Some(ref anchor) = block.anchor {
+            format!("{}#{}", parent_doc.url, anchor)
+        } else {
+            format!("{}#block-{}", parent_doc.url, block.index)
+        };
+
+        // Build title from heading hierarchy
+        let block_title = if let Some(ref heading) = block.heading {
+            // Use parent page title + block heading
+            match &parent_doc.title {
+                Some(page_title) => Some(format!("{} - {}", page_title, heading)),
+                None => Some(heading.clone()),
+            }
+        } else {
+            parent_doc.title.clone()
+        };
+
+        // Build URL tags from heading hierarchy
+        let mut urls_tags: Vec<String> = Vec::new();
+        if let Some(ref h1) = block.h1 {
+            urls_tags.push(h1.clone());
+        }
+        if let Some(ref h2) = block.h2 {
+            urls_tags.push(h2.clone());
+        }
+        if let Some(ref h3) = block.h3 {
+            urls_tags.push(h3.clone());
+        }
+        if let Some(ref h4) = block.h4 {
+            urls_tags.push(h4.clone());
+        }
+
+        Document {
+            uid: format!("{}-block-{}", parent_doc.uid, block.index),
+            url: block_url,
+            domain: parent_doc.domain.clone(),
+            title: block_title,
+            urls_tags: if urls_tags.is_empty() {
+                parent_doc.urls_tags.clone()
+            } else {
+                Some(urls_tags)
+            },
+            content: Some(block.content.clone()),
+            markdown: block.markdown.clone(),
+            metadata: parent_doc.metadata.clone(),
+            language: parent_doc.language.clone(),
+            crawled_at: parent_doc.crawled_at,
+            // Block-specific fields
+            parent_document_id: Some(parent_doc.uid.clone()),
+            page_block: Some(block.index),
+            h1: block.h1.clone(),
+            h2: block.h2.clone(),
+            h3: block.h3.clone(),
+            h4: block.h4.clone(),
+            h5: block.h5.clone(),
+            h6: block.h6.clone(),
+            anchor: block.anchor.clone(),
+            // Fields not used for blocks
+            schema: None,
+            custom: None,
+            ai_summary: None,
+            ai_extraction: None,
+            embeddings: None,
+        }
     }
 
     /// Enrich document with AI-generated content (summary, extraction)

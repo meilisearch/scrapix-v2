@@ -193,6 +193,10 @@ pub struct CrawlEvent {
     #[serde(default)]
     pub job_id: String,
 
+    /// Account ID for billing attribution.
+    #[serde(default)]
+    pub account_id: String,
+
     /// When the crawl occurred.
     #[serde(with = "clickhouse::serde::time::datetime")]
     pub crawled_at: time::OffsetDateTime,
@@ -222,6 +226,7 @@ impl Default for CrawlEvent {
             depth: 0,
             worker_id: String::new(),
             job_id: String::new(),
+            account_id: String::new(),
             crawled_at: time::OffsetDateTime::now_utc(),
             error: String::new(),
             links_extracted: 0,
@@ -462,15 +467,17 @@ impl ClickHouseStorage {
                     depth UInt32,
                     worker_id LowCardinality(String),
                     job_id String,
+                    account_id LowCardinality(String),
                     crawled_at DateTime64(3),
                     error String,
                     links_extracted UInt32,
                     content_changed Bool,
                     INDEX idx_domain domain TYPE bloom_filter GRANULARITY 1,
-                    INDEX idx_job_id job_id TYPE bloom_filter GRANULARITY 1
+                    INDEX idx_job_id job_id TYPE bloom_filter GRANULARITY 1,
+                    INDEX idx_account_id account_id TYPE bloom_filter GRANULARITY 1
                 ) ENGINE = MergeTree()
                 PARTITION BY toYYYYMM(crawled_at)
-                ORDER BY (domain, crawled_at, url)
+                ORDER BY (account_id, domain, crawled_at, url)
                 TTL crawled_at + INTERVAL 90 DAY
                 "#,
                 crawl_events_table
@@ -821,6 +828,130 @@ impl ClickHouseStorage {
         Ok(result.count)
     }
 
+    // ========================================================================
+    // Billing Analytics
+    // ========================================================================
+
+    /// Get usage statistics for a specific account.
+    #[instrument(skip(self))]
+    pub async fn get_account_usage(
+        &self,
+        account_id: &str,
+        hours: u32,
+    ) -> Result<AccountUsageStats, ClickHouseError> {
+        let table = self.table_name("crawl_events");
+
+        let result = self
+            .client
+            .query(&format!(
+                r#"
+                SELECT
+                    account_id,
+                    count() as total_requests,
+                    countIf(status_code >= 200 AND status_code < 400) as successful_requests,
+                    countIf(status_code >= 400 OR error != '') as failed_requests,
+                    sum(content_length) as total_bytes,
+                    avg(response_time_ms) as avg_response_time_ms,
+                    uniqExact(domain) as unique_domains,
+                    uniqExact(job_id) as total_jobs,
+                    countIf(js_rendered) as js_renders
+                FROM {}
+                WHERE account_id = ? AND crawled_at >= now() - INTERVAL ? HOUR
+                GROUP BY account_id
+                "#,
+                table
+            ))
+            .bind(account_id)
+            .bind(hours)
+            .fetch_optional::<AccountUsageStats>()
+            .await?;
+
+        Ok(result.unwrap_or_else(|| AccountUsageStats {
+            account_id: account_id.to_string(),
+            total_requests: 0,
+            successful_requests: 0,
+            failed_requests: 0,
+            total_bytes: 0,
+            avg_response_time_ms: 0.0,
+            unique_domains: 0,
+            total_jobs: 0,
+            js_renders: 0,
+        }))
+    }
+
+    /// Get top accounts by usage.
+    #[instrument(skip(self))]
+    pub async fn get_top_accounts(
+        &self,
+        hours: u32,
+        limit: u32,
+    ) -> Result<Vec<AccountUsageStats>, ClickHouseError> {
+        let table = self.table_name("crawl_events");
+
+        let stats = self
+            .client
+            .query(&format!(
+                r#"
+                SELECT
+                    account_id,
+                    count() as total_requests,
+                    countIf(status_code >= 200 AND status_code < 400) as successful_requests,
+                    countIf(status_code >= 400 OR error != '') as failed_requests,
+                    sum(content_length) as total_bytes,
+                    avg(response_time_ms) as avg_response_time_ms,
+                    uniqExact(domain) as unique_domains,
+                    uniqExact(job_id) as total_jobs,
+                    countIf(js_rendered) as js_renders
+                FROM {}
+                WHERE account_id != '' AND crawled_at >= now() - INTERVAL ? HOUR
+                GROUP BY account_id
+                ORDER BY total_requests DESC
+                LIMIT ?
+                "#,
+                table
+            ))
+            .bind(hours)
+            .bind(limit)
+            .fetch_all::<AccountUsageStats>()
+            .await?;
+
+        Ok(stats)
+    }
+
+    /// Get daily usage breakdown for an account.
+    #[instrument(skip(self))]
+    pub async fn get_account_daily_usage(
+        &self,
+        account_id: &str,
+        days: u32,
+    ) -> Result<Vec<DailyUsageStats>, ClickHouseError> {
+        let table = self.table_name("crawl_events");
+
+        let stats = self
+            .client
+            .query(&format!(
+                r#"
+                SELECT
+                    toDate(crawled_at) as date,
+                    count() as requests,
+                    sum(content_length) as bytes,
+                    uniqExact(job_id) as jobs,
+                    countIf(js_rendered) as js_renders
+                FROM {}
+                WHERE account_id = ? AND crawled_at >= now() - INTERVAL ? DAY
+                GROUP BY date
+                ORDER BY date
+                "#,
+                table
+            ))
+            .bind(account_id)
+            .bind(days)
+            .fetch_all::<DailyUsageStats>()
+            .await?;
+
+        Ok(stats)
+    }
+
     /// Get AI token usage statistics.
     #[instrument(skip(self))]
     pub async fn get_ai_token_stats(&self, hours: u32) -> Result<AiTokenStats, ClickHouseError> {
@@ -879,6 +1010,45 @@ pub struct AiTokenStats {
     pub ai_extractions: u64,
     /// Average tokens per extraction.
     pub avg_tokens_per_extraction: f64,
+}
+
+/// Account usage statistics for billing.
+#[derive(Debug, Clone, Serialize, Deserialize, Row)]
+pub struct AccountUsageStats {
+    /// Account ID.
+    pub account_id: String,
+    /// Total requests made.
+    pub total_requests: u64,
+    /// Successful requests (2xx, 3xx).
+    pub successful_requests: u64,
+    /// Failed requests (4xx, 5xx, errors).
+    pub failed_requests: u64,
+    /// Total bytes downloaded.
+    pub total_bytes: u64,
+    /// Average response time in milliseconds.
+    pub avg_response_time_ms: f64,
+    /// Unique domains crawled.
+    pub unique_domains: u64,
+    /// Total jobs created.
+    pub total_jobs: u64,
+    /// JavaScript renders performed.
+    pub js_renders: u64,
+}
+
+/// Daily usage statistics for billing breakdown.
+#[derive(Debug, Clone, Serialize, Deserialize, Row)]
+pub struct DailyUsageStats {
+    /// Date of usage.
+    #[serde(with = "clickhouse::serde::time::date")]
+    pub date: time::Date,
+    /// Requests on this day.
+    pub requests: u64,
+    /// Bytes downloaded on this day.
+    pub bytes: u64,
+    /// Jobs on this day.
+    pub jobs: u64,
+    /// JS renders on this day.
+    pub js_renders: u64,
 }
 
 // ============================================================================

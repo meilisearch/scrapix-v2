@@ -1,0 +1,59 @@
+{
+  "start_urls": [
+    "https://en.wikipedia.org/wiki/Main_Page",
+    "https://en.wikipedia.org/wiki/Portal:Featured_content",
+    "https://en.wikipedia.org/wiki/Portal:Current_events",
+    "https://en.wikipedia.org/wiki/Wikipedia:Contents/Portals"
+  ],
+  "index_uid": "wikipedia-10k",
+  "crawler_type": "http",
+  "max_depth": 4,
+  "max_pages": 10000,
+  "url_patterns": {
+    "include": [
+      "https://en.wikipedia.org/wiki/**"
+    ],
+    "exclude": [
+      "**/Special:**",
+      "**/Talk:**",
+      "**/Wikipedia:**",
+      "**/Help:**",
+      "**/Category:**",
+      "**/Portal:**",
+      "**/File:**",
+      "**/Template:**",
+      "**/User:**",
+      "**/MediaWiki:**",
+      "**?oldid=**",
+      "**?action=**",
+      "**?diff=**",
+      "**#**"
+    ]
+  },
+  "concurrency": {
+    "max_concurrent_requests": 100
+  },
+  "rate_limit": {
+    "requests_per_second": 50,
+    "per_domain_delay_ms": 100,
+    "respect_robots_txt": true
+  },
+  "features": {
+    "metadata": {
+      "enabled": true
+    },
+    "markdown": {
+      "enabled": true
+    }
+  },
+  "meilisearch": {
+    "url": "http://localhost:7700",
+    "api_key": "masterKey",
+    "batch_size": 500,
+    "settings": {
+      "searchable_attributes": ["title", "content", "markdown"],
+      "filterable_attributes": ["url", "language", "depth"],
+      "sortable_attributes": ["depth"]
+    }
+  }
+}

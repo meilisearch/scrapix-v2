@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use scrapix_core::{CrawlUrl, Document};
+use scrapix_core::{CrawlUrl, Document, UrlPatterns};
 
 /// Predefined topic names
 pub mod names {
@@ -35,10 +35,16 @@ pub struct UrlMessage {
     pub job_id: String,
     /// Index UID for the destination
     pub index_uid: String,
+    /// Account ID for billing attribution
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
     /// Message ID for tracking
     pub message_id: String,
     /// Timestamp when the message was created
     pub created_at: i64,
+    /// URL patterns for filtering discovered URLs (optional, inherited from job config)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url_patterns: Option<UrlPatterns>,
 }
 
 impl UrlMessage {
@@ -47,9 +53,53 @@ impl UrlMessage {
             url,
             job_id: job_id.into(),
             index_uid: index_uid.into(),
+            account_id: None,
             message_id: uuid::Uuid::new_v4().to_string(),
             created_at: chrono::Utc::now().timestamp_millis(),
+            url_patterns: None,
         }
+    }
+
+    /// Create a new URL message with account ID
+    pub fn with_account(
+        url: CrawlUrl,
+        job_id: impl Into<String>,
+        index_uid: impl Into<String>,
+        account_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            url,
+            job_id: job_id.into(),
+            index_uid: index_uid.into(),
+            account_id: Some(account_id.into()),
+            message_id: uuid::Uuid::new_v4().to_string(),
+            created_at: chrono::Utc::now().timestamp_millis(),
+            url_patterns: None,
+        }
+    }
+
+    /// Create a new URL message with URL patterns
+    pub fn with_patterns(
+        url: CrawlUrl,
+        job_id: impl Into<String>,
+        index_uid: impl Into<String>,
+        patterns: UrlPatterns,
+    ) -> Self {
+        Self {
+            url,
+            job_id: job_id.into(),
+            index_uid: index_uid.into(),
+            account_id: None,
+            message_id: uuid::Uuid::new_v4().to_string(),
+            created_at: chrono::Utc::now().timestamp_millis(),
+            url_patterns: Some(patterns),
+        }
+    }
+
+    /// Set account ID (builder pattern)
+    pub fn account(mut self, account_id: impl Into<String>) -> Self {
+        self.account_id = Some(account_id.into());
+        self
     }
 
     /// Get the partition key (domain for locality)
@@ -75,6 +125,9 @@ pub struct RawPageMessage {
     pub html: String,
     /// Content type
     pub content_type: Option<String>,
+    /// Content length in bytes (for billing)
+    #[serde(default)]
+    pub content_length: u64,
     /// Whether JS was rendered
     pub js_rendered: bool,
     /// Fetch timestamp (millis)
@@ -85,6 +138,9 @@ pub struct RawPageMessage {
     pub job_id: String,
     /// Index UID
     pub index_uid: String,
+    /// Account ID for billing attribution
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
     /// Message ID
     pub message_id: String,
     /// ETag from response (for incremental crawling)
@@ -131,35 +187,51 @@ pub enum CrawlEvent {
     JobStarted {
         job_id: String,
         index_uid: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        account_id: Option<String>,
         start_urls: Vec<String>,
         timestamp: i64,
     },
     /// Job completed
     JobCompleted {
         job_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        account_id: Option<String>,
         pages_crawled: u64,
         documents_indexed: u64,
         errors: u64,
+        /// Total bytes downloaded during the job
+        #[serde(default)]
+        bytes_downloaded: u64,
         duration_secs: u64,
         timestamp: i64,
     },
     /// Job failed
     JobFailed {
         job_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        account_id: Option<String>,
         error: String,
         timestamp: i64,
     },
     /// Page crawled successfully
     PageCrawled {
         job_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        account_id: Option<String>,
         url: String,
         status: u16,
+        /// Content length in bytes (for billing)
+        #[serde(default)]
+        content_length: u64,
         duration_ms: u64,
         timestamp: i64,
     },
     /// Page crawl failed
     PageFailed {
         job_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        account_id: Option<String>,
         url: String,
         error: String,
         retry_count: u32,
@@ -168,6 +240,8 @@ pub enum CrawlEvent {
     /// Document indexed
     DocumentIndexed {
         job_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        account_id: Option<String>,
         url: String,
         document_id: String,
         timestamp: i64,
@@ -204,6 +278,23 @@ impl CrawlEvent {
         Self::JobStarted {
             job_id: job_id.into(),
             index_uid: index_uid.into(),
+            account_id: None,
+            start_urls,
+            timestamp: chrono::Utc::now().timestamp_millis(),
+        }
+    }
+
+    /// Create job started event with account ID
+    pub fn job_started_with_account(
+        job_id: impl Into<String>,
+        index_uid: impl Into<String>,
+        account_id: impl Into<String>,
+        start_urls: Vec<String>,
+    ) -> Self {
+        Self::JobStarted {
+            job_id: job_id.into(),
+            index_uid: index_uid.into(),
+            account_id: Some(account_id.into()),
             start_urls,
             timestamp: chrono::Utc::now().timestamp_millis(),
         }
@@ -217,8 +308,30 @@ impl CrawlEvent {
     ) -> Self {
         Self::PageCrawled {
             job_id: job_id.into(),
+            account_id: None,
             url: url.into(),
             status,
+            content_length: 0,
+            duration_ms,
+            timestamp: chrono::Utc::now().timestamp_millis(),
+        }
+    }
+
+    /// Create page crawled event with content length for billing
+    pub fn page_crawled_with_billing(
+        job_id: impl Into<String>,
+        account_id: Option<String>,
+        url: impl Into<String>,
+        status: u16,
+        content_length: u64,
+        duration_ms: u64,
+    ) -> Self {
+        Self::PageCrawled {
+            job_id: job_id.into(),
+            account_id,
+            url: url.into(),
+            status,
+            content_length,
             duration_ms,
             timestamp: chrono::Utc::now().timestamp_millis(),
         }
@@ -232,6 +345,7 @@ impl CrawlEvent {
     ) -> Self {
         Self::PageFailed {
             job_id: job_id.into(),
+            account_id: None,
             url: url.into(),
             error: error.into(),
             retry_count,

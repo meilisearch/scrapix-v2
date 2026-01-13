@@ -31,6 +31,9 @@ tower-http = { workspace = true }
 # Utilities
 uuid = { workspace = true }
 chrono = { workspace = true }
+regex = { workspace = true }
+url = { workspace = true }
+time = { workspace = true }
 
 # CLI
 clap = { workspace = true }
