@@ -27,7 +27,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use scrapix_core::{CrawlUrl, ScrapixError};
+use scrapix_core::{CrawlUrl, ScrapixError, UrlPatterns};
 use scrapix_frontier::{
     extract_domain, CrawlRecord, DedupConfig, LinkGraph, LinkGraphConfig, PolitenessConfig,
     PolitenessScheduler, PriorityConfig, PriorityQueue, RecrawlConfig, RecrawlDecision,
@@ -68,15 +68,18 @@ struct Args {
     bloom_fp_rate: f64,
 
     /// Default delay between requests to the same domain (ms)
-    #[arg(long, env = "DOMAIN_DELAY_MS", default_value = "1000")]
+    /// Lower values = faster crawling for same domain, but may trigger rate limits
+    #[arg(long, env = "DOMAIN_DELAY_MS", default_value = "100")]
     domain_delay_ms: u64,
 
     /// Maximum concurrent requests per domain
-    #[arg(long, env = "CONCURRENT_PER_DOMAIN", default_value = "2")]
+    /// Higher values enable faster single-domain crawls like Wikipedia
+    #[arg(long, env = "CONCURRENT_PER_DOMAIN", default_value = "20")]
     concurrent_per_domain: usize,
 
     /// URL dispatch batch size
-    #[arg(long, env = "DISPATCH_BATCH_SIZE", default_value = "100")]
+    /// Larger batches reduce overhead for high-throughput crawls
+    #[arg(long, env = "DISPATCH_BATCH_SIZE", default_value = "500")]
     dispatch_batch_size: usize,
 
     /// Dispatch interval (ms)
@@ -145,6 +148,8 @@ struct JobFrontier {
     urls_received: AtomicU64,
     urls_deduplicated: AtomicU64,
     urls_dispatched: AtomicU64,
+    /// URL patterns for filtering - stored per job, propagated to all URLs
+    url_patterns: Option<UrlPatterns>,
 }
 
 impl JobFrontier {
@@ -153,6 +158,7 @@ impl JobFrontier {
         index_uid: &str,
         dedup_config: &DedupConfig,
         priority_config: &PriorityConfig,
+        url_patterns: Option<UrlPatterns>,
     ) -> Self {
         Self {
             job_id: job_id.to_string(),
@@ -163,6 +169,7 @@ impl JobFrontier {
             urls_received: AtomicU64::new(0),
             urls_deduplicated: AtomicU64::new(0),
             urls_dispatched: AtomicU64::new(0),
+            url_patterns,
         }
     }
 
@@ -276,6 +283,7 @@ struct ReadyUrl {
     job_id: String,
     index_uid: String,
     domain: String,
+    url_patterns: Option<UrlPatterns>,
 }
 
 /// The frontier service
@@ -441,7 +449,12 @@ impl FrontierService {
     }
 
     /// Get or create a job frontier
-    fn get_or_create_job(&self, job_id: &str, index_uid: &str) -> Arc<JobFrontier> {
+    fn get_or_create_job(
+        &self,
+        job_id: &str,
+        index_uid: &str,
+        url_patterns: Option<UrlPatterns>,
+    ) -> Arc<JobFrontier> {
         // Fast path: check if job exists
         {
             let jobs = self.jobs.read();
@@ -461,6 +474,7 @@ impl FrontierService {
                     index_uid,
                     &self.dedup_config,
                     &self.priority_config,
+                    url_patterns,
                 ))
             })
             .clone()
@@ -620,8 +634,8 @@ impl FrontierService {
                     }
                 }
 
-                // Get or create job frontier
-                let job = self.get_or_create_job(&msg.job_id, &msg.index_uid);
+                // Get or create job frontier (patterns are stored per-job from first message)
+                let job = self.get_or_create_job(&msg.job_id, &msg.index_uid, msg.url_patterns.clone());
 
                 // Try to add URL (deduplication happens here)
                 if job.try_add(url.clone()) {
@@ -677,6 +691,7 @@ impl FrontierService {
                                 job_id: job.job_id.clone(),
                                 index_uid: job.index_uid.clone(),
                                 domain,
+                                url_patterns: job.url_patterns.clone(),
                             };
 
                             if dispatch_tx.send(ready).await.is_err() {
@@ -714,7 +729,17 @@ impl FrontierService {
             while !shutdown.load(Ordering::Relaxed) {
                 match dispatch_rx.recv().await {
                     Some(ready) => {
-                        let msg = UrlMessage::new(ready.url, &ready.job_id, &ready.index_uid);
+                        // Create message with patterns if available for URL filtering
+                        let msg = if let Some(patterns) = ready.url_patterns {
+                            UrlMessage::with_patterns(
+                                ready.url,
+                                &ready.job_id,
+                                &ready.index_uid,
+                                patterns,
+                            )
+                        } else {
+                            UrlMessage::new(ready.url, &ready.job_id, &ready.index_uid)
+                        };
 
                         // Publish to processing topic
                         match producer

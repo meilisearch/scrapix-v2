@@ -302,6 +302,10 @@ pub struct JobState {
     /// Index UID being populated
     pub index_uid: String,
 
+    /// Account ID for billing attribution
+    #[serde(default)]
+    pub account_id: Option<String>,
+
     /// Pages crawled
     pub pages_crawled: u64,
 
@@ -313,6 +317,10 @@ pub struct JobState {
 
     /// Errors encountered
     pub errors: u64,
+
+    /// Total bytes downloaded (for bandwidth billing)
+    #[serde(default)]
+    pub bytes_downloaded: u64,
 
     /// Start timestamp
     pub started_at: Option<DateTime<Utc>>,
@@ -336,15 +344,29 @@ impl JobState {
             job_id: job_id.into(),
             status: JobStatus::Pending,
             index_uid: index_uid.into(),
+            account_id: None,
             pages_crawled: 0,
             pages_indexed: 0,
             documents_sent: 0,
             errors: 0,
+            bytes_downloaded: 0,
             started_at: None,
             completed_at: None,
             error_message: None,
             crawl_rate: 0.0,
             eta_seconds: None,
+        }
+    }
+
+    /// Create a new job with account attribution
+    pub fn with_account(
+        job_id: impl Into<String>,
+        index_uid: impl Into<String>,
+        account_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            account_id: Some(account_id.into()),
+            ..Self::new(job_id, index_uid)
         }
     }
 

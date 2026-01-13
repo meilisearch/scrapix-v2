@@ -118,6 +118,7 @@ impl KafkaConsumer {
     }
 
     /// Process messages with a handler function
+    /// Note: This processes messages sequentially. For concurrent processing, use process_concurrent.
     pub async fn process<T, F, Fut>(&self, mut handler: F) -> Result<()>
     where
         T: DeserializeOwned,
@@ -166,6 +167,115 @@ impl KafkaConsumer {
                 }
             }
         }
+
+        Ok(())
+    }
+
+    /// Process messages concurrently by spawning tasks for each message.
+    /// This ensures the consumer keeps polling (maintaining heartbeats) while handlers run.
+    pub async fn process_concurrent<T, F, Fut>(
+        &self,
+        handler: F,
+        concurrency: usize,
+        shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<()>
+    where
+        T: DeserializeOwned + Send + 'static,
+        F: Fn(T, MessageMetadata) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Result<()>> + Send + 'static,
+    {
+        use std::sync::atomic::Ordering;
+        use tokio::sync::Semaphore;
+        use tracing::info;
+
+        info!(concurrency = concurrency, "Starting concurrent message processing");
+
+        let handler = std::sync::Arc::new(handler);
+        let semaphore = std::sync::Arc::new(Semaphore::new(concurrency));
+        let mut stream = self.consumer.stream();
+
+        let mut poll_count = 0u64;
+        loop {
+            if shutdown.load(Ordering::Relaxed) {
+                info!("Shutdown requested, exiting consumer loop");
+                break;
+            }
+
+            poll_count += 1;
+            if poll_count % 100 == 0 {
+                info!(poll_count = poll_count, "Consumer polling...");
+            }
+
+            // Poll with a short timeout to allow checking shutdown flag and maintain heartbeats
+            match tokio::time::timeout(Duration::from_millis(100), stream.next()).await {
+                Ok(Some(Ok(msg))) => {
+                    let metadata = MessageMetadata::from_message(&msg);
+                    info!(
+                        topic = %metadata.topic,
+                        partition = metadata.partition,
+                        offset = metadata.offset,
+                        "Received message from Kafka"
+                    );
+
+                    match self.deserialize_message::<T>(&msg) {
+                        Ok(payload) => {
+                            // Commit immediately to avoid reprocessing on restart
+                            // The semaphore ensures we don't get too far ahead
+                            if let Err(e) = self.commit_message(&msg) {
+                                warn!(error = %e, "Failed to commit offset");
+                            }
+
+                            // Acquire permit (wait if at max concurrency)
+                            let permit = semaphore.clone().acquire_owned().await;
+                            if permit.is_err() {
+                                break; // Semaphore closed
+                            }
+                            let permit = permit.unwrap();
+
+                            let handler = handler.clone();
+
+                            // Spawn handler in background
+                            tokio::spawn(async move {
+                                if let Err(e) = handler(payload, metadata.clone()).await {
+                                    error!(
+                                        topic = %metadata.topic,
+                                        partition = metadata.partition,
+                                        offset = metadata.offset,
+                                        error = %e,
+                                        "Handler error"
+                                    );
+                                }
+                                drop(permit); // Release semaphore
+                            });
+                        }
+                        Err(e) => {
+                            error!(
+                                topic = %metadata.topic,
+                                partition = metadata.partition,
+                                offset = metadata.offset,
+                                error = %e,
+                                "Deserialization error"
+                            );
+                            // Commit to skip bad message
+                            let _ = self.commit_message(&msg);
+                        }
+                    }
+                }
+                Ok(Some(Err(e))) => {
+                    error!(error = %e, "Kafka error");
+                }
+                Ok(None) => {
+                    // Stream ended
+                    break;
+                }
+                Err(_) => {
+                    // Timeout - this is fine, allows us to check shutdown and maintain heartbeat
+                }
+            }
+        }
+
+        // Wait for all in-flight tasks to complete
+        let _ = semaphore.acquire_many(concurrency as u32).await;
 
         Ok(())
     }

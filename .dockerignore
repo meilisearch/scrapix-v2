@@ -22,7 +22,6 @@ release/
 docs/
 
 # Test and development files
-tests/
 misc/tests/
 *.test.*
 coverage/

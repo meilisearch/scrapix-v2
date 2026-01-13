@@ -26,7 +26,7 @@ use tokio::sync::Semaphore;
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use scrapix_core::{CrawlUrl, ScrapixError};
+use scrapix_core::{CrawlUrl, ScrapixError, UrlPatterns};
 use scrapix_crawler::{
     ConditionalRequestHeaders, ExtractorConfig, HttpFetcher, HttpFetcherBuilder,
     PersistentRobotsCache, RobotsCache, RobotsConfig, RobotsPersistence, SitemapParser,
@@ -350,6 +350,7 @@ struct CrawlerWorker {
     browser_patterns: Vec<regex::Regex>,
     extractor: UrlExtractor,
     semaphore: Arc<Semaphore>,
+    concurrency: usize,
     metrics: Arc<WorkerMetrics>,
     shutdown: Arc<AtomicBool>,
     worker_id: String,
@@ -561,6 +562,7 @@ impl CrawlerWorker {
             browser_patterns,
             extractor,
             semaphore,
+            concurrency: args.concurrency,
             metrics: Arc::new(WorkerMetrics::new()),
             shutdown: Arc::new(AtomicBool::new(false)),
             worker_id,
@@ -574,7 +576,7 @@ impl CrawlerWorker {
     }
 
     /// Run the crawler worker
-    async fn run(&self) -> anyhow::Result<()> {
+    async fn run(self: Arc<Self>) -> anyhow::Result<()> {
         info!(worker_id = %self.worker_id, "Starting crawler worker main loop");
 
         // Start metrics reporter
@@ -614,8 +616,8 @@ impl CrawlerWorker {
             }
         });
 
-        // Process messages
-        let result = self.process_messages().await;
+        // Process messages using concurrent processing to maintain heartbeats
+        let result = self.clone().process_messages().await;
 
         // Cleanup
         self.shutdown.store(true, Ordering::Relaxed);
@@ -625,42 +627,51 @@ impl CrawlerWorker {
     }
 
     /// Process messages from the frontier queue
-    async fn process_messages(&self) -> anyhow::Result<()> {
-        // Use the consumer's process method with our handler
+    /// Uses concurrent processing to keep the consumer polling and maintain heartbeats
+    async fn process_messages(self: Arc<Self>) -> anyhow::Result<()> {
+        let concurrency = self.concurrency;
+        let shutdown = self.shutdown.clone();
+        let worker = self.clone();
+
+        info!(
+            concurrency = concurrency,
+            worker_id = %self.worker_id,
+            "Starting message processing loop"
+        );
+
+        // Use concurrent processing to maintain heartbeats while handlers run
         self.consumer
-            .process::<UrlMessage, _, _>(|msg, metadata| async move {
-                if self.shutdown.load(Ordering::Relaxed) {
-                    return Err(ScrapixError::Crawl("Worker shutting down".into()));
-                }
+            .process_concurrent::<UrlMessage, _, _>(
+                move |msg, metadata| {
+                    let worker = worker.clone();
+                    async move {
+                        info!(
+                            url = %msg.url.url,
+                            job_id = %msg.job_id,
+                            partition = metadata.partition,
+                            offset = metadata.offset,
+                            "Received URL from frontier"
+                        );
 
-                debug!(
-                    url = %msg.url.url,
-                    job_id = %msg.job_id,
-                    partition = metadata.partition,
-                    offset = metadata.offset,
-                    "Received URL from frontier"
-                );
+                        worker.metrics.fetch_started();
+                        let result = worker.process_url(&msg).await;
+                        worker.metrics.fetch_completed();
 
-                // Acquire semaphore permit for concurrency limiting
-                let _permit = self.semaphore.acquire().await.map_err(|e| {
-                    ScrapixError::Crawl(format!("Failed to acquire semaphore: {}", e))
-                })?;
+                        if let Err(ref e) = result {
+                            warn!(
+                                url = %msg.url.url,
+                                job_id = %msg.job_id,
+                                error = %e,
+                                "Failed to process URL"
+                            );
+                        }
 
-                self.metrics.fetch_started();
-                let result = self.process_url(&msg).await;
-                self.metrics.fetch_completed();
-
-                if let Err(ref e) = result {
-                    warn!(
-                        url = %msg.url.url,
-                        job_id = %msg.job_id,
-                        error = %e,
-                        "Failed to process URL"
-                    );
-                }
-
-                result
-            })
+                        result
+                    }
+                },
+                concurrency,
+                shutdown,
+            )
             .await?;
 
         Ok(())
@@ -709,6 +720,7 @@ impl CrawlerWorker {
         domain: &str,
         job_id: &str,
         index_uid: &str,
+        url_patterns: Option<UrlPatterns>,
     ) -> scrapix_core::Result<usize> {
         // Check if we've already discovered sitemaps for this domain
         {
@@ -770,6 +782,34 @@ impl CrawlerWorker {
             let urls_to_publish = urls.into_iter().take(self.max_sitemap_urls - discovered_count);
 
             for sitemap_entry in urls_to_publish {
+                // Filter sitemap URLs using patterns if available
+                if let Some(ref patterns) = url_patterns {
+                    let matches_include = patterns.include.is_empty()
+                        || patterns.include.iter().any(|p| {
+                            if p.contains("**") {
+                                let parts: Vec<&str> = p.split("**").collect();
+                                parts.len() == 2
+                                    && sitemap_entry.loc.starts_with(parts[0])
+                                    && (parts[1].is_empty() || sitemap_entry.loc.ends_with(parts[1]))
+                            } else {
+                                sitemap_entry.loc == *p
+                            }
+                        });
+                    let matches_exclude = patterns.exclude.iter().any(|p| {
+                        if p.contains("**") {
+                            let parts: Vec<&str> = p.split("**").collect();
+                            parts.len() == 2
+                                && sitemap_entry.loc.starts_with(parts[0])
+                                && (parts[1].is_empty() || sitemap_entry.loc.ends_with(parts[1]))
+                        } else {
+                            sitemap_entry.loc == *p
+                        }
+                    });
+                    if !matches_include || matches_exclude {
+                        continue; // Skip URLs that don't match patterns
+                    }
+                }
+
                 // Create a CrawlUrl from the sitemap entry
                 let mut crawl_url = CrawlUrl::seed(&sitemap_entry.loc);
                 // Mark as discovered from sitemap via parent_url
@@ -780,7 +820,13 @@ impl CrawlerWorker {
                     crawl_url.priority = (priority * 100.0) as i32;
                 }
 
-                let url_msg = UrlMessage::new(crawl_url, job_id, index_uid);
+                // Include patterns when publishing sitemap URLs
+                let url_msg = match &url_patterns {
+                    Some(patterns) => {
+                        UrlMessage::with_patterns(crawl_url, job_id, index_uid, patterns.clone())
+                    }
+                    None => UrlMessage::new(crawl_url, job_id, index_uid),
+                };
 
                 if let Err(e) = self
                     .producer
@@ -832,7 +878,12 @@ impl CrawlerWorker {
         if let Ok(parsed_url) = url::Url::parse(&url.url) {
             if let Some(domain) = parsed_url.host_str() {
                 if let Err(e) = self
-                    .maybe_discover_sitemaps(domain, &msg.job_id, &msg.index_uid)
+                    .maybe_discover_sitemaps(
+                        domain,
+                        &msg.job_id,
+                        &msg.index_uid,
+                        msg.url_patterns.clone(),
+                    )
                     .await
                 {
                     debug!(domain, error = %e, "Sitemap discovery failed");
@@ -941,8 +992,22 @@ impl CrawlerWorker {
             "Page fetched successfully"
         );
 
-        // Extract URLs from the page
-        let discovered_urls = self.extractor.extract(&page, url.depth);
+        // Extract URLs from the page using patterns from the message if available
+        let discovered_urls = if let Some(ref patterns) = msg.url_patterns {
+            // Create extractor with patterns from job config
+            let extractor_config = ExtractorConfig {
+                patterns: Some(patterns.clone()),
+                max_depth: self.concurrency as u32, // Use existing max_depth
+                follow_external: false,
+                follow_subdomains: true,
+                extract_from_data_attrs: false,
+            };
+            let extractor = UrlExtractor::new(extractor_config);
+            extractor.extract(&page, url.depth)
+        } else {
+            // Use default extractor without patterns
+            self.extractor.extract(&page, url.depth)
+        };
         let discovered_count = discovered_urls.len();
 
         self.metrics.record_discovered(discovered_count as u64);
@@ -993,11 +1058,13 @@ impl CrawlerWorker {
             status: page.status,
             html: page.html,
             content_type: page.content_type,
+            content_length: page_size,
             js_rendered: page.js_rendered,
             fetched_at: page.fetched_at.timestamp_millis(),
             fetch_duration_ms: page.fetch_duration_ms,
             job_id: msg.job_id.clone(),
             index_uid: msg.index_uid.clone(),
+            account_id: msg.account_id.clone(),
             message_id: uuid::Uuid::new_v4().to_string(),
             etag,
             last_modified,
@@ -1021,7 +1088,19 @@ impl CrawlerWorker {
                 discovered_url.priority += boost as i32;
             }
 
-            let url_msg = UrlMessage::new(discovered_url, &msg.job_id, &msg.index_uid);
+            // Propagate URL patterns and account_id from parent message so child URLs are filtered correctly
+            let mut url_msg = if let Some(ref patterns) = msg.url_patterns {
+                UrlMessage::with_patterns(
+                    discovered_url,
+                    &msg.job_id,
+                    &msg.index_uid,
+                    patterns.clone(),
+                )
+            } else {
+                UrlMessage::new(discovered_url, &msg.job_id, &msg.index_uid)
+            };
+            // Propagate account_id for billing attribution
+            url_msg.account_id = msg.account_id.clone();
 
             self.producer
                 .send(
@@ -1050,11 +1129,13 @@ impl CrawlerWorker {
             self.publish_event(&msg.job_id, &event).await?;
         }
 
-        // Send success event
-        let event = CrawlEvent::page_crawled(
+        // Send success event with billing data
+        let event = CrawlEvent::page_crawled_with_billing(
             &msg.job_id,
+            msg.account_id.clone(),
             &url.url,
             page.status,
+            page_size,
             fetch_duration.as_millis() as u64,
         );
         self.publish_event(&msg.job_id, &event).await?;
@@ -1115,14 +1196,17 @@ async fn main() -> anyhow::Result<()> {
         worker_shutdown.shutdown();
     });
 
-    // Run the worker
+    // Clone for metrics access after run completes
+    let worker_for_metrics = worker.clone();
+
+    // Run the worker (consumes the Arc)
     let result = worker.run().await;
 
     // Cleanup
     shutdown_handle.abort();
 
     // Print final metrics
-    let metrics = worker.metrics.snapshot();
+    let metrics = worker_for_metrics.metrics.snapshot();
     info!(
         processed = metrics.urls_processed,
         succeeded = metrics.urls_succeeded,
@@ -1138,7 +1222,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     // Print link graph stats if enabled
-    if let Some(ref graph) = worker.link_graph {
+    if let Some(ref graph) = worker_for_metrics.link_graph {
         let stats = graph.stats();
         info!(
             pages = stats.page_count,

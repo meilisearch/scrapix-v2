@@ -173,6 +173,95 @@ enum Commands {
         #[arg(short, long)]
         verbose: bool,
     },
+
+    /// Show system-wide statistics
+    Stats {
+        /// Include verbose details
+        #[arg(short, long)]
+        verbose: bool,
+    },
+
+    /// Show recent errors
+    Errors {
+        /// Number of recent errors to show
+        #[arg(long, default_value = "20")]
+        last: usize,
+
+        /// Filter by job ID
+        #[arg(long)]
+        job: Option<String>,
+    },
+
+    /// Show per-domain statistics
+    Domains {
+        /// Number of top domains to show
+        #[arg(long, default_value = "20")]
+        top: usize,
+
+        /// Filter by domain pattern
+        #[arg(long)]
+        filter: Option<String>,
+    },
+
+    /// Analytics commands (requires ClickHouse)
+    #[command(subcommand)]
+    Analytics(AnalyticsCommands),
+}
+
+#[derive(Subcommand, Debug)]
+enum AnalyticsCommands {
+    /// List available analytics pipes
+    Pipes,
+
+    /// Key performance indicators summary
+    Kpis {
+        /// Time window in hours
+        #[arg(long, default_value = "24")]
+        hours: u32,
+    },
+
+    /// Top domains by request count
+    TopDomains {
+        /// Time window in hours
+        #[arg(long, default_value = "24")]
+        hours: u32,
+
+        /// Number of domains to show
+        #[arg(long, default_value = "20")]
+        limit: u32,
+    },
+
+    /// Statistics for a specific domain
+    DomainStats {
+        /// Domain to query
+        #[arg(long)]
+        domain: String,
+
+        /// Time window in hours
+        #[arg(long, default_value = "24")]
+        hours: u32,
+    },
+
+    /// Hourly crawl statistics
+    Hourly {
+        /// Time window in hours
+        #[arg(long, default_value = "24")]
+        hours: u32,
+    },
+
+    /// Error distribution by status code
+    ErrorDist {
+        /// Time window in hours
+        #[arg(long, default_value = "24")]
+        hours: u32,
+    },
+
+    /// Statistics for a specific job
+    JobStats {
+        /// Job ID to query
+        #[arg(long)]
+        job_id: String,
+    },
 }
 
 // ============================================================================
@@ -254,6 +343,222 @@ impl From<JobStatusResponse> for JobRow {
             errors: job.errors,
         }
     }
+}
+
+// ============================================================================
+// Diagnostic Response Types
+// ============================================================================
+
+#[derive(Debug, Deserialize, Serialize)]
+struct SystemStatsResponse {
+    meilisearch: Option<MeilisearchStats>,
+    jobs: JobSummary,
+    diagnostics: DiagnosticsStats,
+    collected_at: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct MeilisearchStats {
+    available: bool,
+    url: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct JobSummary {
+    total: usize,
+    running: usize,
+    completed: usize,
+    failed: usize,
+    pending: usize,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct DiagnosticsStats {
+    recent_errors_count: usize,
+    tracked_domains: usize,
+    total_requests: u64,
+    total_successes: u64,
+    total_failures: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct ErrorsResponse {
+    errors: Vec<ErrorRecord>,
+    total_count: usize,
+    by_status: std::collections::HashMap<String, u64>,
+    by_domain: Vec<(String, u64)>,
+    source: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct ErrorRecord {
+    url: String,
+    domain: String,
+    error: String,
+    status_code: Option<u16>,
+    job_id: String,
+    timestamp: String,
+    retry_count: u32,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct DomainsResponse {
+    domains: Vec<DomainInfo>,
+    total_domains: usize,
+    source: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct DomainInfo {
+    domain: String,
+    total_requests: u64,
+    successful_requests: u64,
+    failed_requests: u64,
+    avg_response_time_ms: Option<f64>,
+}
+
+// For table display
+#[derive(Tabled)]
+struct DomainRow {
+    #[tabled(rename = "Domain")]
+    domain: String,
+    #[tabled(rename = "Requests")]
+    requests: u64,
+    #[tabled(rename = "Success")]
+    success: String,
+    #[tabled(rename = "Failed")]
+    failed: u64,
+    #[tabled(rename = "Avg Time")]
+    avg_time: String,
+}
+
+// ============================================================================
+// Analytics Response Types (Tinybird-style)
+// ============================================================================
+
+#[derive(Debug, Deserialize, Serialize)]
+struct AnalyticsResponse<T> {
+    meta: Vec<ColumnMeta>,
+    data: Vec<T>,
+    rows: usize,
+    statistics: QueryStats,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct ColumnMeta {
+    name: String,
+    #[serde(rename = "type")]
+    col_type: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct QueryStats {
+    elapsed: f64,
+    rows_read: usize,
+    bytes_read: usize,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct PipeInfo {
+    name: String,
+    description: String,
+    endpoint: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct KpisData {
+    total_crawls: u64,
+    total_bytes: u64,
+    unique_domains: u64,
+    success_rate: f64,
+    avg_response_time_ms: f64,
+    errors_count: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct TopDomainData {
+    domain: String,
+    total_requests: u64,
+    successful_requests: u64,
+    failed_requests: u64,
+    success_rate: f64,
+    avg_response_time_ms: f64,
+    total_bytes: u64,
+    unique_urls: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct HourlyStatsData {
+    hour: String,
+    requests: u64,
+    successes: u64,
+    failures: u64,
+    success_rate: f64,
+    avg_response_time_ms: f64,
+    total_bytes: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct ErrorDistData {
+    status_code: u16,
+    count: u64,
+    percentage: f64,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct JobStatsData {
+    job_id: String,
+    total_urls: u64,
+    successful_urls: u64,
+    failed_urls: u64,
+    success_rate: f64,
+    total_bytes: u64,
+    avg_response_time_ms: f64,
+    unique_domains: u64,
+    started_at: String,
+    last_activity_at: String,
+    duration_seconds: i64,
+}
+
+// Table display for analytics
+#[derive(Tabled)]
+struct TopDomainAnalyticsRow {
+    #[tabled(rename = "Domain")]
+    domain: String,
+    #[tabled(rename = "Requests")]
+    requests: u64,
+    #[tabled(rename = "Success")]
+    success: String,
+    #[tabled(rename = "Failed")]
+    failed: u64,
+    #[tabled(rename = "Avg Time")]
+    avg_time: String,
+    #[tabled(rename = "Bytes")]
+    bytes: String,
+}
+
+#[derive(Tabled)]
+struct HourlyRow {
+    #[tabled(rename = "Hour")]
+    hour: String,
+    #[tabled(rename = "Requests")]
+    requests: u64,
+    #[tabled(rename = "Success")]
+    success: String,
+    #[tabled(rename = "Failed")]
+    failed: u64,
+    #[tabled(rename = "Avg Time")]
+    avg_time: String,
+}
+
+#[derive(Tabled)]
+struct ErrorDistRow {
+    #[tabled(rename = "Status")]
+    status: u16,
+    #[tabled(rename = "Count")]
+    count: u64,
+    #[tabled(rename = "Percentage")]
+    percentage: String,
 }
 
 // ============================================================================
@@ -401,6 +706,153 @@ impl ApiClient {
                 }
             },
         ))
+    }
+
+    async fn get_stats(&self) -> Result<SystemStatsResponse> {
+        let url = format!("{}/stats", self.base_url);
+
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .context("Failed to connect to API server")?;
+
+        if response.status().is_success() {
+            response.json().await.context("Failed to parse response")
+        } else {
+            let error: ApiError = response.json().await.context("Failed to parse error")?;
+            anyhow::bail!("{}: {}", error.code, error.error)
+        }
+    }
+
+    async fn get_errors(&self, last: usize, job_id: Option<&str>) -> Result<ErrorsResponse> {
+        let mut url = format!("{}/errors?last={}", self.base_url, last);
+        if let Some(job) = job_id {
+            url.push_str(&format!("&job_id={}", job));
+        }
+
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .context("Failed to connect to API server")?;
+
+        if response.status().is_success() {
+            response.json().await.context("Failed to parse response")
+        } else {
+            let error: ApiError = response.json().await.context("Failed to parse error")?;
+            anyhow::bail!("{}: {}", error.code, error.error)
+        }
+    }
+
+    async fn get_domains(&self, top: usize, filter: Option<&str>) -> Result<DomainsResponse> {
+        let mut url = format!("{}/domains?top={}", self.base_url, top);
+        if let Some(f) = filter {
+            url.push_str(&format!("&filter={}", urlencoding::encode(f)));
+        }
+
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .context("Failed to connect to API server")?;
+
+        if response.status().is_success() {
+            response.json().await.context("Failed to parse response")
+        } else {
+            let error: ApiError = response.json().await.context("Failed to parse error")?;
+            anyhow::bail!("{}: {}", error.code, error.error)
+        }
+    }
+
+    // Analytics API methods
+
+    async fn analytics_pipes(&self) -> Result<Vec<PipeInfo>> {
+        let url = format!("{}/analytics/v0/pipes", self.base_url);
+        let response = self.client.get(&url).send().await
+            .context("Failed to connect to API server (is ClickHouse enabled?)")?;
+
+        if response.status().is_success() {
+            response.json().await.context("Failed to parse response")
+        } else {
+            anyhow::bail!("Analytics API not available (ClickHouse may not be configured)")
+        }
+    }
+
+    async fn analytics_kpis(&self, hours: u32) -> Result<AnalyticsResponse<KpisData>> {
+        let url = format!("{}/analytics/v0/pipes/kpis.json?hours={}", self.base_url, hours);
+        let response = self.client.get(&url).send().await
+            .context("Failed to connect to API server")?;
+
+        if response.status().is_success() {
+            response.json().await.context("Failed to parse response")
+        } else {
+            anyhow::bail!("Analytics query failed")
+        }
+    }
+
+    async fn analytics_top_domains(&self, hours: u32, limit: u32) -> Result<AnalyticsResponse<TopDomainData>> {
+        let url = format!("{}/analytics/v0/pipes/top_domains.json?hours={}&limit={}", self.base_url, hours, limit);
+        let response = self.client.get(&url).send().await
+            .context("Failed to connect to API server")?;
+
+        if response.status().is_success() {
+            response.json().await.context("Failed to parse response")
+        } else {
+            anyhow::bail!("Analytics query failed")
+        }
+    }
+
+    async fn analytics_domain_stats(&self, domain: &str, hours: u32) -> Result<AnalyticsResponse<TopDomainData>> {
+        let url = format!("{}/analytics/v0/pipes/domain_stats.json?domain={}&hours={}",
+            self.base_url, urlencoding::encode(domain), hours);
+        let response = self.client.get(&url).send().await
+            .context("Failed to connect to API server")?;
+
+        if response.status().is_success() {
+            response.json().await.context("Failed to parse response")
+        } else {
+            anyhow::bail!("Analytics query failed")
+        }
+    }
+
+    async fn analytics_hourly(&self, hours: u32) -> Result<AnalyticsResponse<HourlyStatsData>> {
+        let url = format!("{}/analytics/v0/pipes/hourly_stats.json?hours={}", self.base_url, hours);
+        let response = self.client.get(&url).send().await
+            .context("Failed to connect to API server")?;
+
+        if response.status().is_success() {
+            response.json().await.context("Failed to parse response")
+        } else {
+            anyhow::bail!("Analytics query failed")
+        }
+    }
+
+    async fn analytics_error_dist(&self, hours: u32) -> Result<AnalyticsResponse<ErrorDistData>> {
+        let url = format!("{}/analytics/v0/pipes/error_distribution.json?hours={}", self.base_url, hours);
+        let response = self.client.get(&url).send().await
+            .context("Failed to connect to API server")?;
+
+        if response.status().is_success() {
+            response.json().await.context("Failed to parse response")
+        } else {
+            anyhow::bail!("Analytics query failed")
+        }
+    }
+
+    async fn analytics_job_stats(&self, job_id: &str) -> Result<AnalyticsResponse<JobStatsData>> {
+        let url = format!("{}/analytics/v0/pipes/job_stats.json?job_id={}", self.base_url, job_id);
+        let response = self.client.get(&url).send().await
+            .context("Failed to connect to API server")?;
+
+        if response.status().is_success() {
+            response.json().await.context("Failed to parse response")
+        } else {
+            anyhow::bail!("Analytics query failed")
+        }
     }
 }
 
@@ -1286,6 +1738,635 @@ async fn queue_urls(
 }
 
 // ============================================================================
+// Diagnostic Command Handlers
+// ============================================================================
+
+async fn handle_stats(
+    client: &ApiClient,
+    _verbose: bool,
+    format: OutputFormat,
+) -> Result<()> {
+    let stats = client.get_stats().await?;
+
+    match format {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&stats).unwrap());
+        }
+        OutputFormat::Text => {
+            println!();
+            println!("{}", "System Statistics".bold().underline());
+            println!();
+
+            // Meilisearch section
+            println!("{}", "Meilisearch".bold());
+            if let Some(ms) = &stats.meilisearch {
+                println!(
+                    "  {} {}",
+                    "Status:".dimmed(),
+                    if ms.available { "connected".green() } else { "unavailable".red() }
+                );
+                println!("  {} {}", "URL:".dimmed(), ms.url);
+            } else {
+                println!("  {} {}", "Status:".dimmed(), "not configured".yellow());
+            }
+
+            // Jobs section
+            println!();
+            println!("{}", "Jobs".bold());
+            println!(
+                "  {} {} total ({} running, {} completed, {} failed, {} pending)",
+                "Summary:".dimmed(),
+                stats.jobs.total,
+                stats.jobs.running.to_string().yellow(),
+                stats.jobs.completed.to_string().green(),
+                stats.jobs.failed.to_string().red(),
+                stats.jobs.pending
+            );
+
+            // Diagnostics section
+            println!();
+            println!("{}", "Diagnostics".bold());
+            println!(
+                "  {} {}",
+                "Tracked Domains:".dimmed(),
+                stats.diagnostics.tracked_domains
+            );
+            println!(
+                "  {} {}",
+                "Total Requests:".dimmed(),
+                stats.diagnostics.total_requests
+            );
+            let success_rate = if stats.diagnostics.total_requests > 0 {
+                (stats.diagnostics.total_successes as f64 / stats.diagnostics.total_requests as f64 * 100.0) as u32
+            } else {
+                0
+            };
+            println!(
+                "  {} {}% ({} successes, {} failures)",
+                "Success Rate:".dimmed(),
+                success_rate,
+                stats.diagnostics.total_successes.to_string().green(),
+                stats.diagnostics.total_failures.to_string().red()
+            );
+            println!(
+                "  {} {}",
+                "Recent Errors:".dimmed(),
+                stats.diagnostics.recent_errors_count
+            );
+            println!();
+            println!("{}", format!("Collected at: {}", stats.collected_at).dimmed());
+            println!();
+        }
+    }
+    Ok(())
+}
+
+async fn handle_errors_cmd(
+    client: &ApiClient,
+    last: usize,
+    job_id: Option<String>,
+    format: OutputFormat,
+) -> Result<()> {
+    let errors = client.get_errors(last, job_id.as_deref()).await?;
+
+    match format {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&errors).unwrap());
+        }
+        OutputFormat::Text => {
+            if errors.errors.is_empty() {
+                print_info("No errors found");
+                return Ok(());
+            }
+
+            println!();
+            println!(
+                "{} ({} total)",
+                "Recent Errors".bold().underline(),
+                errors.total_count
+            );
+            println!();
+
+            // Status code distribution
+            if !errors.by_status.is_empty() {
+                println!("{}", "By Status Code:".bold());
+                let mut codes: Vec<_> = errors.by_status.iter().collect();
+                codes.sort_by_key(|(k, _)| k.parse::<u16>().unwrap_or(0));
+                for (code, count) in codes {
+                    let color = if code.starts_with('5') { "red" } else { "yellow" };
+                    println!("  {} {}", code.color(color), count);
+                }
+                println!();
+            }
+
+            // Domain distribution
+            if !errors.by_domain.is_empty() {
+                println!("{}", "Top Domains:".bold());
+                for (domain, count) in errors.by_domain.iter().take(5) {
+                    println!("  {} {}", domain.cyan(), count);
+                }
+                println!();
+            }
+
+            // Error list
+            println!("{}", "Errors:".bold());
+            for err in &errors.errors {
+                let timestamp = if err.timestamp.len() > 19 {
+                    &err.timestamp[11..19]
+                } else {
+                    &err.timestamp
+                };
+                let status = err
+                    .status_code
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "---".to_string());
+
+                println!(
+                    "{} {} {} {}",
+                    timestamp.dimmed(),
+                    status.red(),
+                    err.domain.cyan(),
+                    truncate_url(&err.url, 50)
+                );
+                println!("  {} {}", "Error:".dimmed(), err.error);
+            }
+
+            println!();
+            println!("{}", format!("Source: {} (recent only)", errors.source).dimmed());
+            println!();
+        }
+    }
+    Ok(())
+}
+
+async fn handle_domains_cmd(
+    client: &ApiClient,
+    top: usize,
+    filter: Option<String>,
+    format: OutputFormat,
+) -> Result<()> {
+    let domains = client.get_domains(top, filter.as_deref()).await?;
+
+    match format {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&domains).unwrap());
+        }
+        OutputFormat::Text => {
+            if domains.domains.is_empty() {
+                print_info("No domain data found");
+                return Ok(());
+            }
+
+            println!();
+            println!(
+                "{} (top {} of {})",
+                "Domain Statistics".bold().underline(),
+                domains.domains.len(),
+                domains.total_domains
+            );
+            println!();
+
+            let rows: Vec<DomainRow> = domains
+                .domains
+                .iter()
+                .map(|d| {
+                    let success_rate = if d.total_requests > 0 {
+                        (d.successful_requests as f64 / d.total_requests as f64 * 100.0) as u32
+                    } else {
+                        0
+                    };
+
+                    DomainRow {
+                        domain: if d.domain.len() > 30 {
+                            format!("{}...", &d.domain[..27])
+                        } else {
+                            d.domain.clone()
+                        },
+                        requests: d.total_requests,
+                        success: format!("{}%", success_rate),
+                        failed: d.failed_requests,
+                        avg_time: d
+                            .avg_response_time_ms
+                            .map(|t| format!("{:.0}ms", t))
+                            .unwrap_or_else(|| "-".to_string()),
+                    }
+                })
+                .collect();
+
+            let table = Table::new(rows).to_string();
+            println!("{}", table);
+
+            println!();
+            println!("{}", format!("Source: {}", domains.source).dimmed());
+            println!();
+        }
+    }
+    Ok(())
+}
+
+fn truncate_url(url: &str, max_len: usize) -> String {
+    if url.len() <= max_len {
+        url.to_string()
+    } else {
+        format!("{}...", &url[..max_len - 3])
+    }
+}
+
+fn format_bytes(bytes: u64) -> String {
+    if bytes >= 1_000_000_000 {
+        format!("{:.1}GB", bytes as f64 / 1_000_000_000.0)
+    } else if bytes >= 1_000_000 {
+        format!("{:.1}MB", bytes as f64 / 1_000_000.0)
+    } else if bytes >= 1_000 {
+        format!("{:.1}KB", bytes as f64 / 1_000.0)
+    } else {
+        format!("{}B", bytes)
+    }
+}
+
+// ============================================================================
+// Analytics Command Handlers
+// ============================================================================
+
+async fn handle_analytics(
+    client: &ApiClient,
+    cmd: AnalyticsCommands,
+    format: OutputFormat,
+) -> Result<()> {
+    match cmd {
+        AnalyticsCommands::Pipes => handle_analytics_pipes(client, format).await,
+        AnalyticsCommands::Kpis { hours } => handle_analytics_kpis(client, hours, format).await,
+        AnalyticsCommands::TopDomains { hours, limit } => {
+            handle_analytics_top_domains(client, hours, limit, format).await
+        }
+        AnalyticsCommands::DomainStats { domain, hours } => {
+            handle_analytics_domain_stats(client, &domain, hours, format).await
+        }
+        AnalyticsCommands::Hourly { hours } => handle_analytics_hourly(client, hours, format).await,
+        AnalyticsCommands::ErrorDist { hours } => {
+            handle_analytics_error_dist(client, hours, format).await
+        }
+        AnalyticsCommands::JobStats { job_id } => {
+            handle_analytics_job_stats(client, &job_id, format).await
+        }
+    }
+}
+
+async fn handle_analytics_pipes(client: &ApiClient, format: OutputFormat) -> Result<()> {
+    let pipes = client.analytics_pipes().await?;
+
+    match format {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&pipes)?);
+        }
+        OutputFormat::Text => {
+            println!();
+            println!("{}", "Available Analytics Pipes".bold().underline());
+            println!();
+            for pipe in &pipes {
+                println!("  {} - {}", pipe.name.cyan(), pipe.description);
+                println!("    {}", pipe.endpoint.dimmed());
+            }
+            println!();
+        }
+    }
+    Ok(())
+}
+
+async fn handle_analytics_kpis(client: &ApiClient, hours: u32, format: OutputFormat) -> Result<()> {
+    let response = client.analytics_kpis(hours).await?;
+
+    match format {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&response)?);
+        }
+        OutputFormat::Text => {
+            if response.data.is_empty() {
+                print_info("No data available");
+                return Ok(());
+            }
+
+            let kpis = &response.data[0];
+
+            println!();
+            println!(
+                "{} (last {} hours)",
+                "Key Performance Indicators".bold().underline(),
+                hours
+            );
+            println!();
+            println!("  {} {}", "Total Crawls:".dimmed(), kpis.total_crawls);
+            println!("  {} {}", "Total Bytes:".dimmed(), format_bytes(kpis.total_bytes));
+            println!("  {} {}", "Unique Domains:".dimmed(), kpis.unique_domains);
+            println!(
+                "  {} {:.1}%",
+                "Success Rate:".dimmed(),
+                kpis.success_rate
+            );
+            println!(
+                "  {} {:.0}ms",
+                "Avg Response Time:".dimmed(),
+                kpis.avg_response_time_ms
+            );
+            println!(
+                "  {} {}",
+                "Errors:".dimmed(),
+                kpis.errors_count.to_string().red()
+            );
+            println!();
+            println!(
+                "{}",
+                format!("Query time: {:.3}s", response.statistics.elapsed).dimmed()
+            );
+            println!();
+        }
+    }
+    Ok(())
+}
+
+async fn handle_analytics_top_domains(
+    client: &ApiClient,
+    hours: u32,
+    limit: u32,
+    format: OutputFormat,
+) -> Result<()> {
+    let response = client.analytics_top_domains(hours, limit).await?;
+
+    match format {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&response)?);
+        }
+        OutputFormat::Text => {
+            if response.data.is_empty() {
+                print_info("No data available");
+                return Ok(());
+            }
+
+            println!();
+            println!(
+                "{} (last {} hours)",
+                "Top Domains".bold().underline(),
+                hours
+            );
+            println!();
+
+            let rows: Vec<TopDomainAnalyticsRow> = response
+                .data
+                .iter()
+                .map(|d| TopDomainAnalyticsRow {
+                    domain: if d.domain.len() > 35 {
+                        format!("{}...", &d.domain[..32])
+                    } else {
+                        d.domain.clone()
+                    },
+                    requests: d.total_requests,
+                    success: format!("{:.1}%", d.success_rate),
+                    failed: d.failed_requests,
+                    avg_time: format!("{:.0}ms", d.avg_response_time_ms),
+                    bytes: format_bytes(d.total_bytes),
+                })
+                .collect();
+
+            let table = Table::new(rows).to_string();
+            println!("{}", table);
+
+            println!();
+            println!(
+                "{}",
+                format!("Query time: {:.3}s", response.statistics.elapsed).dimmed()
+            );
+            println!();
+        }
+    }
+    Ok(())
+}
+
+async fn handle_analytics_domain_stats(
+    client: &ApiClient,
+    domain: &str,
+    hours: u32,
+    format: OutputFormat,
+) -> Result<()> {
+    let response = client.analytics_domain_stats(domain, hours).await?;
+
+    match format {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&response)?);
+        }
+        OutputFormat::Text => {
+            if response.data.is_empty() {
+                print_info(&format!("No data for domain: {}", domain));
+                return Ok(());
+            }
+
+            let d = &response.data[0];
+
+            println!();
+            println!(
+                "{}: {} (last {} hours)",
+                "Domain Statistics".bold().underline(),
+                d.domain.cyan(),
+                hours
+            );
+            println!();
+            println!("  {} {}", "Total Requests:".dimmed(), d.total_requests);
+            println!(
+                "  {} {}",
+                "Successful:".dimmed(),
+                d.successful_requests.to_string().green()
+            );
+            println!(
+                "  {} {}",
+                "Failed:".dimmed(),
+                d.failed_requests.to_string().red()
+            );
+            println!("  {} {:.1}%", "Success Rate:".dimmed(), d.success_rate);
+            println!(
+                "  {} {:.0}ms",
+                "Avg Response Time:".dimmed(),
+                d.avg_response_time_ms
+            );
+            println!("  {} {}", "Total Bytes:".dimmed(), format_bytes(d.total_bytes));
+            println!("  {} {}", "Unique URLs:".dimmed(), d.unique_urls);
+            println!();
+            println!(
+                "{}",
+                format!("Query time: {:.3}s", response.statistics.elapsed).dimmed()
+            );
+            println!();
+        }
+    }
+    Ok(())
+}
+
+async fn handle_analytics_hourly(
+    client: &ApiClient,
+    hours: u32,
+    format: OutputFormat,
+) -> Result<()> {
+    let response = client.analytics_hourly(hours).await?;
+
+    match format {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&response)?);
+        }
+        OutputFormat::Text => {
+            if response.data.is_empty() {
+                print_info("No data available");
+                return Ok(());
+            }
+
+            println!();
+            println!(
+                "{} (last {} hours)",
+                "Hourly Statistics".bold().underline(),
+                hours
+            );
+            println!();
+
+            let rows: Vec<HourlyRow> = response
+                .data
+                .iter()
+                .map(|h| {
+                    // Extract just the time portion if it's a full datetime
+                    let hour_display = if h.hour.len() > 16 {
+                        h.hour[11..16].to_string()
+                    } else {
+                        h.hour.clone()
+                    };
+                    HourlyRow {
+                        hour: hour_display,
+                        requests: h.requests,
+                        success: format!("{:.1}%", h.success_rate),
+                        failed: h.failures,
+                        avg_time: format!("{:.0}ms", h.avg_response_time_ms),
+                    }
+                })
+                .collect();
+
+            let table = Table::new(rows).to_string();
+            println!("{}", table);
+
+            println!();
+            println!(
+                "{}",
+                format!("Query time: {:.3}s", response.statistics.elapsed).dimmed()
+            );
+            println!();
+        }
+    }
+    Ok(())
+}
+
+async fn handle_analytics_error_dist(
+    client: &ApiClient,
+    hours: u32,
+    format: OutputFormat,
+) -> Result<()> {
+    let response = client.analytics_error_dist(hours).await?;
+
+    match format {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&response)?);
+        }
+        OutputFormat::Text => {
+            if response.data.is_empty() {
+                print_info("No errors found");
+                return Ok(());
+            }
+
+            println!();
+            println!(
+                "{} (last {} hours)",
+                "Error Distribution".bold().underline(),
+                hours
+            );
+            println!();
+
+            let rows: Vec<ErrorDistRow> = response
+                .data
+                .iter()
+                .map(|e| ErrorDistRow {
+                    status: e.status_code,
+                    count: e.count,
+                    percentage: format!("{:.1}%", e.percentage),
+                })
+                .collect();
+
+            let table = Table::new(rows).to_string();
+            println!("{}", table);
+
+            println!();
+            println!(
+                "{}",
+                format!("Query time: {:.3}s", response.statistics.elapsed).dimmed()
+            );
+            println!();
+        }
+    }
+    Ok(())
+}
+
+async fn handle_analytics_job_stats(
+    client: &ApiClient,
+    job_id: &str,
+    format: OutputFormat,
+) -> Result<()> {
+    let response = client.analytics_job_stats(job_id).await?;
+
+    match format {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&response)?);
+        }
+        OutputFormat::Text => {
+            if response.data.is_empty() {
+                print_info(&format!("No data for job: {}", job_id));
+                return Ok(());
+            }
+
+            let j = &response.data[0];
+
+            println!();
+            println!(
+                "{}: {}",
+                "Job Statistics".bold().underline(),
+                j.job_id.cyan()
+            );
+            println!();
+            println!("  {} {}", "Total URLs:".dimmed(), j.total_urls);
+            println!(
+                "  {} {}",
+                "Successful:".dimmed(),
+                j.successful_urls.to_string().green()
+            );
+            println!(
+                "  {} {}",
+                "Failed:".dimmed(),
+                j.failed_urls.to_string().red()
+            );
+            println!("  {} {:.1}%", "Success Rate:".dimmed(), j.success_rate);
+            println!("  {} {}", "Total Bytes:".dimmed(), format_bytes(j.total_bytes));
+            println!(
+                "  {} {:.0}ms",
+                "Avg Response Time:".dimmed(),
+                j.avg_response_time_ms
+            );
+            println!("  {} {}", "Unique Domains:".dimmed(), j.unique_domains);
+            println!("  {} {}", "Started At:".dimmed(), j.started_at);
+            println!("  {} {}", "Last Activity:".dimmed(), j.last_activity_at);
+            println!("  {} {}s", "Duration:".dimmed(), j.duration_seconds);
+            println!();
+            println!(
+                "{}",
+                format!("Query time: {:.3}s", response.statistics.elapsed).dimmed()
+            );
+            println!();
+        }
+    }
+    Ok(())
+}
+
+// ============================================================================
 // Main
 // ============================================================================
 
@@ -1328,6 +2409,14 @@ async fn main() -> Result<()> {
             concurrency,
             verbose,
         } => handle_local(config_path, config, output, concurrency, verbose, cli.output).await,
+
+        Commands::Stats { verbose } => handle_stats(&client, verbose, cli.output).await,
+
+        Commands::Errors { last, job } => handle_errors_cmd(&client, last, job, cli.output).await,
+
+        Commands::Domains { top, filter } => handle_domains_cmd(&client, top, filter, cli.output).await,
+
+        Commands::Analytics(cmd) => handle_analytics(&client, cmd, cli.output).await,
     };
 
     if let Err(e) = result {

@@ -74,8 +74,8 @@ pub trait Storage: Send + Sync {
     /// Add multiple documents to the index
     async fn add_batch(&self, docs: Vec<Document>) -> Result<()>;
 
-    /// Flush pending documents
-    async fn flush(&self) -> Result<()>;
+    /// Flush pending documents, returns number flushed
+    async fn flush(&self) -> Result<usize>;
 
     /// Get document count
     async fn count(&self) -> Result<u64>;

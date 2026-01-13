@@ -1,27 +1,15 @@
 # =============================================================================
 # Scrapix Multi-Stage Dockerfile
 # =============================================================================
-# Builds all Rust binaries using cargo-chef for efficient layer caching
+# Builds all Rust binaries
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# Stage 1: Chef - Prepare recipe for dependency caching
+# Stage 1: Builder - Build all binaries
 # -----------------------------------------------------------------------------
-FROM rust:1.92-bullseye AS chef
-RUN cargo install cargo-chef
+FROM rust:1.92-bookworm AS builder
+
 WORKDIR /app
-
-# -----------------------------------------------------------------------------
-# Stage 2: Planner - Generate the recipe.json
-# -----------------------------------------------------------------------------
-FROM chef AS planner
-COPY . .
-RUN cargo chef prepare --recipe-path recipe.json
-
-# -----------------------------------------------------------------------------
-# Stage 3: Builder - Build dependencies and application
-# -----------------------------------------------------------------------------
-FROM chef AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -32,16 +20,12 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-# Build dependencies (cached layer)
-COPY --from=planner /app/recipe.json recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json
-
-# Build application
+# Copy source and build
 COPY . .
 RUN cargo build --release --workspace
 
 # -----------------------------------------------------------------------------
-# Stage 4: Runtime base - Minimal runtime image
+# Stage 2: Runtime base - Minimal runtime image
 # -----------------------------------------------------------------------------
 FROM debian:bookworm-slim AS runtime-base
 
@@ -58,7 +42,7 @@ USER scrapix
 WORKDIR /app
 
 # -----------------------------------------------------------------------------
-# Stage 5a: API Service
+# Stage 3a: API Service
 # -----------------------------------------------------------------------------
 FROM runtime-base AS scrapix-api
 COPY --from=builder --chown=scrapix:scrapix /app/target/release/scrapix-api /app/scrapix-api
@@ -67,7 +51,7 @@ ENV RUST_LOG=info
 ENTRYPOINT ["/app/scrapix-api"]
 
 # -----------------------------------------------------------------------------
-# Stage 5b: Frontier Service
+# Stage 3b: Frontier Service
 # -----------------------------------------------------------------------------
 FROM runtime-base AS scrapix-frontier-service
 COPY --from=builder --chown=scrapix:scrapix /app/target/release/scrapix-frontier-service /app/scrapix-frontier-service
@@ -75,7 +59,7 @@ ENV RUST_LOG=info
 ENTRYPOINT ["/app/scrapix-frontier-service"]
 
 # -----------------------------------------------------------------------------
-# Stage 5c: Crawler Worker
+# Stage 3c: Crawler Worker
 # -----------------------------------------------------------------------------
 FROM runtime-base AS scrapix-worker-crawler
 COPY --from=builder --chown=scrapix:scrapix /app/target/release/scrapix-worker-crawler /app/scrapix-worker-crawler
@@ -83,7 +67,7 @@ ENV RUST_LOG=info
 ENTRYPOINT ["/app/scrapix-worker-crawler"]
 
 # -----------------------------------------------------------------------------
-# Stage 5d: Content Worker
+# Stage 3d: Content Worker
 # -----------------------------------------------------------------------------
 FROM runtime-base AS scrapix-worker-content
 COPY --from=builder --chown=scrapix:scrapix /app/target/release/scrapix-worker-content /app/scrapix-worker-content
@@ -91,7 +75,7 @@ ENV RUST_LOG=info
 ENTRYPOINT ["/app/scrapix-worker-content"]
 
 # -----------------------------------------------------------------------------
-# Stage 5e: CLI
+# Stage 3e: CLI
 # -----------------------------------------------------------------------------
 FROM runtime-base AS scrapix-cli
 COPY --from=builder --chown=scrapix:scrapix /app/target/release/scrapix /app/scrapix
