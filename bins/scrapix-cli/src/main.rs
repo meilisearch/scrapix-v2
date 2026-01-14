@@ -206,6 +206,18 @@ enum Commands {
     /// Analytics commands (requires ClickHouse)
     #[command(subcommand)]
     Analytics(AnalyticsCommands),
+
+    /// Run benchmarks
+    #[command(subcommand)]
+    Bench(BenchCommands),
+
+    /// Kubernetes deployment management
+    #[command(subcommand)]
+    K8s(K8sCommands),
+
+    /// Local infrastructure management (Docker Compose)
+    #[command(subcommand)]
+    Infra(InfraCommands),
 }
 
 #[derive(Subcommand, Debug)]
@@ -261,6 +273,184 @@ enum AnalyticsCommands {
         /// Job ID to query
         #[arg(long)]
         job_id: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum BenchCommands {
+    /// Run all benchmarks
+    All {
+        /// Output directory for results
+        #[arg(short, long, default_value = "./bench-results")]
+        output: String,
+
+        /// Number of iterations
+        #[arg(short, long, default_value = "1")]
+        iterations: u32,
+
+        /// Verbose output
+        #[arg(short, long)]
+        verbose: bool,
+    },
+
+    /// Run Wikipedia end-to-end benchmark
+    Wikipedia {
+        /// Output directory for results
+        #[arg(short, long, default_value = "./bench-results")]
+        output: String,
+
+        /// Number of iterations
+        #[arg(short, long, default_value = "1")]
+        iterations: u32,
+
+        /// Verbose output
+        #[arg(short, long)]
+        verbose: bool,
+    },
+
+    /// Run integrated component benchmarks
+    Integrated {
+        /// Output directory for results
+        #[arg(short, long, default_value = "./bench-results")]
+        output: String,
+
+        /// Number of iterations
+        #[arg(short, long, default_value = "1")]
+        iterations: u32,
+
+        /// Verbose output
+        #[arg(short, long)]
+        verbose: bool,
+    },
+
+    /// Run parser benchmarks
+    Parser {
+        /// Output directory for results
+        #[arg(short, long, default_value = "./bench-results")]
+        output: String,
+
+        /// Verbose output
+        #[arg(short, long)]
+        verbose: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum K8sCommands {
+    /// Deploy all services to Kubernetes
+    Deploy {
+        /// Kubernetes namespace
+        #[arg(short, long, default_value = "scrapix")]
+        namespace: String,
+
+        /// Kustomize overlay (local, staging, prod)
+        #[arg(short, long, default_value = "local")]
+        overlay: String,
+    },
+
+    /// Remove all services from Kubernetes
+    Destroy {
+        /// Kubernetes namespace
+        #[arg(short, long, default_value = "scrapix")]
+        namespace: String,
+
+        /// Kustomize overlay (local, staging, prod)
+        #[arg(short, long, default_value = "local")]
+        overlay: String,
+
+        /// Skip confirmation prompt
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+
+    /// Show deployment status
+    Status {
+        /// Kubernetes namespace
+        #[arg(short, long, default_value = "scrapix")]
+        namespace: String,
+
+        /// Watch status continuously
+        #[arg(short, long)]
+        watch: bool,
+    },
+
+    /// Show logs for a component
+    Logs {
+        /// Component to show logs for (api, frontier, crawler, content, all)
+        #[arg(default_value = "all")]
+        component: String,
+
+        /// Kubernetes namespace
+        #[arg(short, long, default_value = "scrapix")]
+        namespace: String,
+
+        /// Follow logs
+        #[arg(short, long)]
+        follow: bool,
+    },
+
+    /// Scale a component
+    Scale {
+        /// Component to scale (api, frontier, crawler, content)
+        component: String,
+
+        /// Number of replicas
+        #[arg(short, long)]
+        replicas: u32,
+
+        /// Kubernetes namespace
+        #[arg(short, long, default_value = "scrapix")]
+        namespace: String,
+    },
+
+    /// Restart a component
+    Restart {
+        /// Component to restart (api, frontier, crawler, content, all)
+        #[arg(default_value = "all")]
+        component: String,
+
+        /// Kubernetes namespace
+        #[arg(short, long, default_value = "scrapix")]
+        namespace: String,
+    },
+
+    /// Forward ports for local access
+    PortForward {
+        /// Kubernetes namespace
+        #[arg(short, long, default_value = "scrapix")]
+        namespace: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum InfraCommands {
+    /// Start infrastructure services (Redpanda, Meilisearch, DragonflyDB)
+    Up,
+
+    /// Stop infrastructure services
+    Down,
+
+    /// Restart infrastructure services
+    Restart,
+
+    /// Show status of infrastructure services
+    Status,
+
+    /// Show logs for infrastructure services
+    Logs {
+        /// Service to show logs for (optional)
+        service: Option<String>,
+
+        /// Follow logs
+        #[arg(short, long)]
+        follow: bool,
+    },
+
+    /// Stop and remove all data volumes
+    Reset {
+        /// Skip confirmation prompt
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
 }
 
@@ -2367,6 +2557,620 @@ async fn handle_analytics_job_stats(
 }
 
 // ============================================================================
+// Benchmark Command Handlers
+// ============================================================================
+
+fn handle_bench(cmd: BenchCommands, format: OutputFormat) -> Result<()> {
+    use std::process::Command;
+
+    match cmd {
+        BenchCommands::All { output, iterations, verbose } => {
+            run_benchmarks(&["wikipedia_e2e", "integrated_benchmarks"], &output, iterations, verbose, format)
+        }
+        BenchCommands::Wikipedia { output, iterations, verbose } => {
+            run_benchmarks(&["wikipedia_e2e"], &output, iterations, verbose, format)
+        }
+        BenchCommands::Integrated { output, iterations, verbose } => {
+            run_benchmarks(&["integrated_benchmarks"], &output, iterations, verbose, format)
+        }
+        BenchCommands::Parser { output, verbose } => {
+            run_benchmarks(&["integrated_benchmarks"], &output, 1, verbose, format)
+        }
+    }
+}
+
+fn run_benchmarks(
+    benches: &[&str],
+    output_dir: &str,
+    iterations: u32,
+    verbose: bool,
+    format: OutputFormat,
+) -> Result<()> {
+    use std::process::Command;
+
+    if format == OutputFormat::Text {
+        println!();
+        println!("{}", "Scrapix Benchmarking".bold().underline());
+        println!();
+        print_info(&format!("Benchmarks: {}", benches.join(", ")));
+        print_info(&format!("Output directory: {}", output_dir));
+        print_info(&format!("Iterations: {}", iterations));
+        println!();
+    }
+
+    // Create output directory
+    std::fs::create_dir_all(output_dir)?;
+
+    // Ensure release build
+    if format == OutputFormat::Text {
+        print_info("Ensuring release build is up to date...");
+    }
+
+    let build_status = Command::new("cargo")
+        .args(["build", "--release"])
+        .status()
+        .context("Failed to run cargo build")?;
+
+    if !build_status.success() {
+        anyhow::bail!("Build failed");
+    }
+
+    let total_start = std::time::Instant::now();
+    let mut results: Vec<serde_json::Value> = Vec::new();
+
+    for iteration in 1..=iterations {
+        if iterations > 1 && format == OutputFormat::Text {
+            println!();
+            print_info(&format!("=== Iteration {} of {} ===", iteration, iterations));
+        }
+
+        for bench in benches {
+            let start = std::time::Instant::now();
+
+            if format == OutputFormat::Text {
+                print_info(&format!("Running benchmark: {}", bench));
+            }
+
+            let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string();
+            let output_file = format!("{}/{}-{}.txt", output_dir, bench, timestamp);
+
+            let output = Command::new("cargo")
+                .args(["bench", "--bench", bench])
+                .output()
+                .context("Failed to run cargo bench")?;
+
+            let duration = start.elapsed();
+
+            // Save output to file
+            std::fs::write(&output_file, &output.stdout)?;
+
+            if format == OutputFormat::Text {
+                if verbose {
+                    println!("{}", String::from_utf8_lossy(&output.stdout));
+                }
+
+                print_success(&format!(
+                    "Benchmark '{}' completed in {:.2}s",
+                    bench,
+                    duration.as_secs_f64()
+                ));
+                print_info(&format!("Results saved to: {}", output_file));
+
+                // Extract and show key results
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                println!();
+                println!("{}", "Key Results:".bold());
+                for line in stdout.lines() {
+                    if line.contains("time:") || line.contains("thrpt:") {
+                        println!("  {}", line);
+                    }
+                }
+            }
+
+            results.push(serde_json::json!({
+                "benchmark": bench,
+                "iteration": iteration,
+                "duration_seconds": duration.as_secs_f64(),
+                "output_file": output_file,
+                "success": output.status.success(),
+            }));
+        }
+    }
+
+    let total_duration = total_start.elapsed();
+
+    match format {
+        OutputFormat::Json => {
+            let result = serde_json::json!({
+                "benchmarks": benches,
+                "iterations": iterations,
+                "total_duration_seconds": total_duration.as_secs_f64(),
+                "results": results,
+            });
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        OutputFormat::Text => {
+            println!();
+            print_success(&format!(
+                "All benchmarks completed in {:.2}s",
+                total_duration.as_secs_f64()
+            ));
+            println!();
+        }
+    }
+
+    Ok(())
+}
+
+// ============================================================================
+// Kubernetes Command Handlers
+// ============================================================================
+
+fn handle_k8s(cmd: K8sCommands, format: OutputFormat) -> Result<()> {
+    use std::process::Command;
+
+    // Check kubectl is available
+    let kubectl_check = Command::new("kubectl")
+        .args(["cluster-info"])
+        .output();
+
+    if kubectl_check.is_err() || !kubectl_check.as_ref().unwrap().status.success() {
+        anyhow::bail!("Cannot connect to Kubernetes cluster. Check your kubeconfig.");
+    }
+
+    match cmd {
+        K8sCommands::Deploy { namespace, overlay } => {
+            k8s_deploy(&namespace, &overlay, format)
+        }
+        K8sCommands::Destroy { namespace, overlay, yes } => {
+            k8s_destroy(&namespace, &overlay, yes, format)
+        }
+        K8sCommands::Status { namespace, watch } => {
+            k8s_status(&namespace, watch, format)
+        }
+        K8sCommands::Logs { component, namespace, follow } => {
+            k8s_logs(&component, &namespace, follow)
+        }
+        K8sCommands::Scale { component, replicas, namespace } => {
+            k8s_scale(&component, replicas, &namespace, format)
+        }
+        K8sCommands::Restart { component, namespace } => {
+            k8s_restart(&component, &namespace, format)
+        }
+        K8sCommands::PortForward { namespace } => {
+            k8s_port_forward(&namespace, format)
+        }
+    }
+}
+
+fn k8s_deploy(namespace: &str, overlay: &str, format: OutputFormat) -> Result<()> {
+    use std::process::Command;
+
+    let overlay_path = format!("deploy/kubernetes/overlays/{}", overlay);
+    if !std::path::Path::new(&overlay_path).exists() {
+        anyhow::bail!("Overlay not found: {}", overlay_path);
+    }
+
+    if format == OutputFormat::Text {
+        println!();
+        println!("{}", "Kubernetes Deployment".bold().underline());
+        println!();
+        print_info(&format!("Namespace: {}", namespace));
+        print_info(&format!("Overlay: {}", overlay));
+        println!();
+    }
+
+    // Create namespace
+    print_info("Creating namespace...");
+    let _ = Command::new("kubectl")
+        .args(["create", "namespace", namespace, "--dry-run=client", "-o", "yaml"])
+        .stdout(std::process::Stdio::piped())
+        .spawn()?
+        .wait_with_output()
+        .and_then(|output| {
+            Command::new("kubectl")
+                .args(["apply", "-f", "-"])
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+                .and_then(|mut child| {
+                    use std::io::Write;
+                    child.stdin.as_mut().unwrap().write_all(&output.stdout)?;
+                    child.wait()
+                })
+        });
+
+    // Apply kustomize
+    print_info("Applying kustomize overlay...");
+    let status = Command::new("kubectl")
+        .args(["apply", "-k", &overlay_path, "-n", namespace])
+        .status()
+        .context("Failed to apply kustomize")?;
+
+    if !status.success() {
+        anyhow::bail!("kubectl apply failed");
+    }
+
+    // Wait for rollout
+    print_info("Waiting for deployments to be ready...");
+    let _ = Command::new("kubectl")
+        .args(["rollout", "status", "deployment", "-n", namespace, "--timeout=300s"])
+        .status();
+
+    print_success("Deployment complete!");
+    println!();
+
+    // Show status
+    k8s_status(namespace, false, format)?;
+
+    Ok(())
+}
+
+fn k8s_destroy(namespace: &str, overlay: &str, yes: bool, format: OutputFormat) -> Result<()> {
+    use std::process::Command;
+
+    if !yes {
+        println!();
+        println!(
+            "{} This will delete all Scrapix resources in namespace '{}'",
+            "WARNING:".yellow().bold(),
+            namespace
+        );
+        print!("Are you sure? (y/N) ");
+        use std::io::Write;
+        std::io::stdout().flush()?;
+
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+
+        if !input.trim().eq_ignore_ascii_case("y") {
+            print_info("Cancelled");
+            return Ok(());
+        }
+    }
+
+    let overlay_path = format!("deploy/kubernetes/overlays/{}", overlay);
+
+    if format == OutputFormat::Text {
+        print_info("Destroying Scrapix deployment...");
+    }
+
+    let status = Command::new("kubectl")
+        .args(["delete", "-k", &overlay_path, "-n", namespace, "--ignore-not-found"])
+        .status()
+        .context("Failed to delete resources")?;
+
+    if status.success() {
+        print_success("Resources deleted");
+    } else {
+        print_error("Some resources may not have been deleted");
+    }
+
+    Ok(())
+}
+
+fn k8s_status(namespace: &str, watch: bool, format: OutputFormat) -> Result<()> {
+    use std::process::Command;
+
+    if watch {
+        // Use watch command
+        let _ = Command::new("watch")
+            .args(["-n", "2", "kubectl", "get", "pods,svc,deployments", "-n", namespace, "-o", "wide"])
+            .status();
+        return Ok(());
+    }
+
+    match format {
+        OutputFormat::Json => {
+            let output = Command::new("kubectl")
+                .args(["get", "pods,svc,deployments", "-n", namespace, "-o", "json"])
+                .output()
+                .context("Failed to get status")?;
+            println!("{}", String::from_utf8_lossy(&output.stdout));
+        }
+        OutputFormat::Text => {
+            println!();
+            println!("{}", "Scrapix Deployment Status".bold().underline());
+            println!();
+
+            println!("{}", "Deployments:".bold());
+            let _ = Command::new("kubectl")
+                .args(["get", "deployments", "-n", namespace, "-o", "wide"])
+                .status();
+            println!();
+
+            println!("{}", "Pods:".bold());
+            let _ = Command::new("kubectl")
+                .args(["get", "pods", "-n", namespace, "-o", "wide"])
+                .status();
+            println!();
+
+            println!("{}", "Services:".bold());
+            let _ = Command::new("kubectl")
+                .args(["get", "svc", "-n", namespace])
+                .status();
+            println!();
+
+            println!("{}", "Resource Usage:".bold());
+            let _ = Command::new("kubectl")
+                .args(["top", "pods", "-n", namespace])
+                .status();
+            println!();
+        }
+    }
+
+    Ok(())
+}
+
+fn k8s_logs(component: &str, namespace: &str, follow: bool) -> Result<()> {
+    use std::process::Command;
+
+    let mut args = vec!["logs", "-n", namespace];
+
+    if component == "all" {
+        args.extend(["-l", "app.kubernetes.io/name=scrapix", "--all-containers", "--prefix"]);
+    } else {
+        let deployment = match component {
+            "api" => "deployment/scrapix-api",
+            "frontier" => "deployment/scrapix-frontier",
+            "crawler" => "deployment/scrapix-crawler",
+            "content" => "deployment/scrapix-content",
+            _ => return Err(anyhow::anyhow!("Unknown component: {}", component)),
+        };
+        args.push(deployment);
+        args.push("--all-containers");
+    }
+
+    if follow {
+        args.push("-f");
+    }
+
+    print_info(&format!("Streaming logs from {}...", component));
+
+    let _ = Command::new("kubectl")
+        .args(&args)
+        .status();
+
+    Ok(())
+}
+
+fn k8s_scale(component: &str, replicas: u32, namespace: &str, format: OutputFormat) -> Result<()> {
+    use std::process::Command;
+
+    let deployment = match component {
+        "api" => "scrapix-api",
+        "frontier" => "scrapix-frontier",
+        "crawler" => "scrapix-crawler",
+        "content" => "scrapix-content",
+        _ => return Err(anyhow::anyhow!("Unknown component: {}", component)),
+    };
+
+    if format == OutputFormat::Text {
+        print_info(&format!("Scaling {} to {} replicas...", deployment, replicas));
+    }
+
+    let status = Command::new("kubectl")
+        .args([
+            "scale", "deployment", deployment,
+            "-n", namespace,
+            &format!("--replicas={}", replicas),
+        ])
+        .status()
+        .context("Failed to scale deployment")?;
+
+    if !status.success() {
+        anyhow::bail!("Scale command failed");
+    }
+
+    // Wait for rollout
+    let _ = Command::new("kubectl")
+        .args(["rollout", "status", "deployment", deployment, "-n", namespace, "--timeout=120s"])
+        .status();
+
+    print_success(&format!("Scaled {} to {} replicas", deployment, replicas));
+
+    Ok(())
+}
+
+fn k8s_restart(component: &str, namespace: &str, format: OutputFormat) -> Result<()> {
+    use std::process::Command;
+
+    if format == OutputFormat::Text {
+        print_info(&format!("Restarting {}...", component));
+    }
+
+    let status = if component == "all" {
+        Command::new("kubectl")
+            .args([
+                "rollout", "restart", "deployment",
+                "-n", namespace,
+                "-l", "app.kubernetes.io/name=scrapix",
+            ])
+            .status()
+    } else {
+        let deployment = match component {
+            "api" => "scrapix-api",
+            "frontier" => "scrapix-frontier",
+            "crawler" => "scrapix-crawler",
+            "content" => "scrapix-content",
+            _ => return Err(anyhow::anyhow!("Unknown component: {}", component)),
+        };
+        Command::new("kubectl")
+            .args(["rollout", "restart", "deployment", deployment, "-n", namespace])
+            .status()
+    };
+
+    status.context("Failed to restart")?;
+
+    // Wait for rollout
+    let _ = Command::new("kubectl")
+        .args(["rollout", "status", "deployment", "-n", namespace, "--timeout=120s"])
+        .status();
+
+    print_success("Restart complete");
+
+    Ok(())
+}
+
+fn k8s_port_forward(namespace: &str, format: OutputFormat) -> Result<()> {
+    use std::process::Command;
+
+    if format == OutputFormat::Text {
+        print_info("Setting up port forwarding...");
+        println!();
+    }
+
+    // Kill existing port forwards
+    let _ = Command::new("pkill")
+        .args(["-f", "kubectl port-forward.*scrapix"])
+        .status();
+
+    // Start port forwards in background
+    let _ = Command::new("kubectl")
+        .args(["port-forward", "-n", namespace, "svc/scrapix-api", "8080:8080"])
+        .spawn();
+
+    print_success("API Server: http://localhost:8080");
+
+    let _ = Command::new("kubectl")
+        .args(["port-forward", "-n", namespace, "svc/meilisearch", "7700:7700"])
+        .spawn();
+
+    print_success("Meilisearch: http://localhost:7700");
+
+    let _ = Command::new("kubectl")
+        .args(["port-forward", "-n", namespace, "svc/redpanda-console", "8090:8080"])
+        .spawn();
+
+    print_success("Redpanda Console: http://localhost:8090");
+
+    println!();
+    print_info("Port forwards active. Press Ctrl+C to stop.");
+
+    // Wait forever
+    loop {
+        std::thread::sleep(Duration::from_secs(3600));
+    }
+}
+
+// ============================================================================
+// Infrastructure Command Handlers
+// ============================================================================
+
+fn handle_infra(cmd: InfraCommands, format: OutputFormat) -> Result<()> {
+    use std::process::Command;
+
+    match cmd {
+        InfraCommands::Up => {
+            if format == OutputFormat::Text {
+                print_info("Starting infrastructure...");
+            }
+
+            let status = Command::new("docker")
+                .args(["compose", "-f", "docker-compose.yml", "-f", "docker-compose.dev.yml", "up", "-d"])
+                .status()
+                .context("Failed to start infrastructure")?;
+
+            if status.success() {
+                print_success("Infrastructure started");
+                println!();
+                println!("{}", "Services:".bold());
+                println!("  - Redpanda (Kafka):    localhost:19092");
+                println!("  - Meilisearch:         localhost:7700");
+                println!("  - DragonflyDB (Redis): localhost:6380");
+                println!("  - Redpanda Console:    localhost:8090");
+                println!();
+            } else {
+                print_error("Failed to start infrastructure");
+            }
+        }
+
+        InfraCommands::Down => {
+            if format == OutputFormat::Text {
+                print_info("Stopping infrastructure...");
+            }
+
+            let status = Command::new("docker")
+                .args(["compose", "-f", "docker-compose.yml", "-f", "docker-compose.dev.yml", "down"])
+                .status()
+                .context("Failed to stop infrastructure")?;
+
+            if status.success() {
+                print_success("Infrastructure stopped");
+            }
+        }
+
+        InfraCommands::Restart => {
+            if format == OutputFormat::Text {
+                print_info("Restarting infrastructure...");
+            }
+
+            let status = Command::new("docker")
+                .args(["compose", "-f", "docker-compose.yml", "-f", "docker-compose.dev.yml", "restart"])
+                .status()
+                .context("Failed to restart infrastructure")?;
+
+            if status.success() {
+                print_success("Infrastructure restarted");
+            }
+        }
+
+        InfraCommands::Status => {
+            let _ = Command::new("docker")
+                .args(["compose", "ps"])
+                .status();
+        }
+
+        InfraCommands::Logs { service, follow } => {
+            let mut args = vec!["compose", "logs"];
+
+            if follow {
+                args.push("-f");
+            }
+
+            if let Some(ref svc) = service {
+                args.push(svc);
+            }
+
+            let _ = Command::new("docker")
+                .args(&args)
+                .status();
+        }
+
+        InfraCommands::Reset { yes } => {
+            if !yes {
+                println!();
+                println!(
+                    "{} This will delete all data volumes",
+                    "WARNING:".yellow().bold()
+                );
+                print!("Are you sure? (y/N) ");
+                use std::io::Write;
+                std::io::stdout().flush()?;
+
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input)?;
+
+                if !input.trim().eq_ignore_ascii_case("y") {
+                    print_info("Cancelled");
+                    return Ok(());
+                }
+            }
+
+            let status = Command::new("docker")
+                .args(["compose", "-f", "docker-compose.yml", "-f", "docker-compose.dev.yml", "down", "-v"])
+                .status()
+                .context("Failed to reset infrastructure")?;
+
+            if status.success() {
+                print_success("Infrastructure reset");
+            }
+        }
+    }
+
+    Ok(())
+}
+
+// ============================================================================
 // Main
 // ============================================================================
 
@@ -2417,6 +3221,12 @@ async fn main() -> Result<()> {
         Commands::Domains { top, filter } => handle_domains_cmd(&client, top, filter, cli.output).await,
 
         Commands::Analytics(cmd) => handle_analytics(&client, cmd, cli.output).await,
+
+        Commands::Bench(cmd) => handle_bench(cmd, cli.output),
+
+        Commands::K8s(cmd) => handle_k8s(cmd, cli.output),
+
+        Commands::Infra(cmd) => handle_infra(cmd, cli.output),
     };
 
     if let Err(e) = result {

@@ -61,7 +61,8 @@ cargo bench --bench wikipedia_e2e
 
 Start infrastructure first:
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+scrapix infra up
+# Or manually: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 ```
 
 Then run services (each in separate terminal):
@@ -81,12 +82,12 @@ KAFKA_BROKERS=localhost:19092 MEILISEARCH_URL=http://localhost:7700 MEILISEARCH_
 
 Start a crawl:
 ```bash
-cargo run --bin scrapix -- crawl -f examples/simple-crawl.json
+scrapix crawl -p examples/simple-crawl.json
 ```
 
 ## Diagnostic CLI Commands
 
-Use these commands to quickly analyze system state during debugging:
+Use these commands to quickly analyze system state during debugging (requires API server running):
 
 ```bash
 # System-wide stats (jobs, domains tracked, success rate)
@@ -102,6 +103,9 @@ scrapix errors -o json
 scrapix domains --top 20
 scrapix domains --filter wikipedia
 scrapix domains -o json
+
+# Check API health
+scrapix health
 ```
 
 **API endpoints (for programmatic access):**
@@ -294,9 +298,240 @@ GROUP BY date ORDER BY date;
 
 ```bash
 # Local development (Docker Desktop)
-kubectl apply -k deploy/kubernetes/overlays/local
-kubectl port-forward -n scrapix svc/scrapix-api 8080:8080
+scrapix k8s deploy
+scrapix k8s port-forward
 
 # Production
-kubectl apply -k deploy/kubernetes/overlays/prod
+scrapix k8s deploy -o prod
+
+# Or manually with kubectl:
+kubectl apply -k deploy/kubernetes/overlays/local
+kubectl port-forward -n scrapix svc/scrapix-api 8080:8080
+```
+
+## CLI Usage Guide (for Testing, Benchmarking, and Review)
+
+This section is a guide for using the Scrapix CLI to test, benchmark, and review crawling operations.
+
+### Quick Reference
+
+| Task | Command |
+|------|---------|
+| Start infrastructure | `scrapix infra up` |
+| Stop infrastructure | `scrapix infra down` |
+| Run distributed crawl | `scrapix crawl -p config.json` |
+| Run standalone crawl | `scrapix local -p config.json` |
+| Check system status | `scrapix stats` |
+| View errors | `scrapix errors --last 20` |
+| View domain stats | `scrapix domains --top 10` |
+| Run benchmarks | `scrapix bench all` |
+| Deploy to Kubernetes | `scrapix k8s deploy` |
+| Show K8s status | `scrapix k8s status` |
+
+### Infrastructure Commands
+
+```bash
+# Start infrastructure (Redpanda, Meilisearch, DragonflyDB)
+scrapix infra up
+
+# Stop infrastructure
+scrapix infra down
+
+# Restart infrastructure
+scrapix infra restart
+
+# Show status
+scrapix infra status
+
+# View logs (optionally for specific service)
+scrapix infra logs
+scrapix infra logs redpanda -f
+
+# Full reset (removes all data volumes)
+scrapix infra reset
+scrapix infra reset -y  # Skip confirmation
+```
+
+### Test Workflows
+
+#### 1. Quick Single-Page Test (No Infrastructure)
+
+For testing parser/extractor changes without starting Kafka/Meilisearch:
+
+```bash
+# Standalone crawl - fetches, parses, outputs result directly
+scrapix local -c '{"start_urls":["https://example.com"],"index_uid":"test"}'
+scrapix local -p config.json --output results.json
+```
+
+This bypasses the distributed system entirely. Useful for:
+- Testing HTML parsing changes
+- Debugging content extraction
+- Quick validation without infrastructure overhead
+
+#### 2. Full Distributed Test
+
+For testing the complete pipeline (API → Kafka → Workers → Meilisearch):
+
+```bash
+# 1. Start infrastructure
+scrapix infra up
+
+# 2. Start all services (in separate terminals, or use screen/tmux)
+KAFKA_BROKERS=localhost:19092 MEILISEARCH_URL=http://localhost:7700 MEILISEARCH_API_KEY=masterKey cargo run --release --bin scrapix-api &
+KAFKA_BROKERS=localhost:19092 cargo run --release --bin scrapix-frontier-service &
+KAFKA_BROKERS=localhost:19092 cargo run --release --bin scrapix-worker-crawler &
+KAFKA_BROKERS=localhost:19092 MEILISEARCH_URL=http://localhost:7700 MEILISEARCH_API_KEY=masterKey cargo run --release --bin scrapix-worker-content &
+
+# 3. Submit a crawl job
+scrapix crawl -p examples/simple-crawl.json
+
+# 4. Monitor progress
+scrapix status <job_id>
+scrapix stats
+scrapix errors --last 10
+scrapix domains --top 5
+```
+
+#### 3. Crawl Configuration Examples
+
+**Simple single-site crawl:**
+```json
+{
+  "start_urls": ["https://docs.example.com"],
+  "max_depth": 3,
+  "max_pages": 100,
+  "index_uid": "test-crawl"
+}
+```
+
+**Multi-site crawl with domain restrictions:**
+```json
+{
+  "start_urls": ["https://site1.com", "https://site2.com"],
+  "max_depth": 2,
+  "max_pages": 500,
+  "allowed_domains": ["site1.com", "site2.com"],
+  "index_uid": "multi-site-test"
+}
+```
+
+### Reviewing Crawl Results
+
+#### Check Indexed Documents in Meilisearch
+
+```bash
+# Search indexed documents
+curl "http://localhost:7700/indexes/test-crawl/search" \
+  -H "Authorization: Bearer masterKey" \
+  -H "Content-Type: application/json" \
+  -d '{"q": "search term", "limit": 10}'
+
+# Get document count
+curl "http://localhost:7700/indexes/test-crawl/stats" \
+  -H "Authorization: Bearer masterKey"
+
+# Get specific document by ID
+curl "http://localhost:7700/indexes/test-crawl/documents/doc_id" \
+  -H "Authorization: Bearer masterKey"
+```
+
+#### Check Analytics (if ClickHouse enabled)
+
+```bash
+# Key metrics
+scrapix analytics kpis --hours 24
+
+# Domain performance
+scrapix analytics top-domains --limit 10
+
+# Error analysis
+scrapix analytics error-dist --hours 24
+
+# Job-specific stats
+scrapix analytics job-stats --job-id <job_id>
+```
+
+### Benchmarking
+
+```bash
+# Run all benchmarks
+scrapix bench all
+
+# Run Wikipedia E2E benchmark
+scrapix bench wikipedia
+
+# Run integrated component benchmarks
+scrapix bench integrated
+
+# Run parser benchmarks
+scrapix bench parser
+
+# Run with multiple iterations and verbose output
+scrapix bench all -i 3 -v
+
+# Save results to custom directory
+scrapix bench wikipedia -o ./my-bench-results
+```
+
+**Key benchmark targets:**
+- `all` - Both wikipedia_e2e and integrated_benchmarks
+- `wikipedia` - Real-world Wikipedia crawling
+- `integrated` - Full pipeline performance
+- `parser` - Parser/extractor microbenchmarks
+
+### Kubernetes Commands
+
+```bash
+# Deploy to Kubernetes (local overlay)
+scrapix k8s deploy
+
+# Deploy to production
+scrapix k8s deploy -o prod
+
+# Show deployment status
+scrapix k8s status
+scrapix k8s status -w  # Watch mode
+
+# View logs
+scrapix k8s logs           # All components
+scrapix k8s logs crawler   # Specific component
+scrapix k8s logs -f        # Follow logs
+
+# Scale components
+scrapix k8s scale crawler -r 5
+
+# Restart components
+scrapix k8s restart        # All
+scrapix k8s restart api    # Specific
+
+# Port forward for local access
+scrapix k8s port-forward
+
+# Destroy deployment
+scrapix k8s destroy
+scrapix k8s destroy -y  # Skip confirmation
+```
+
+### Troubleshooting
+
+| Issue | Check |
+|-------|-------|
+| Crawl not progressing | `scrapix stats` - check queue sizes, error counts |
+| High error rate | `scrapix errors --last 50` - identify patterns |
+| Slow domain | `scrapix domains --filter domain.com` - check avg latency |
+| Service not connecting | Check env vars (KAFKA_BROKERS, MEILISEARCH_URL) |
+| Kafka issues | `scrapix infra logs redpanda` |
+
+### Clean Up
+
+```bash
+# Stop infrastructure
+scrapix infra down
+
+# Full reset (removes all data volumes)
+scrapix infra reset
+
+# Clean local data directories
+rm -rf ./data ./bench-results ./crawl-results
 ```
