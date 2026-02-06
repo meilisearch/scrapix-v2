@@ -1,16 +1,27 @@
 // From GET /stats
 export interface SystemStats {
-  total_jobs: number;
-  active_jobs: number;
-  completed_jobs: number;
-  failed_jobs: number;
-  total_pages_crawled: number;
-  total_pages_failed: number;
-  domains_tracked: number;
-  success_rate: number;
+  meilisearch: {
+    available: boolean;
+    url: string;
+  };
+  jobs: {
+    total: number;
+    running: number;
+    completed: number;
+    failed: number;
+    pending: number;
+  };
+  diagnostics: {
+    recent_errors_count: number;
+    tracked_domains: number;
+    total_requests: number;
+    total_successes: number;
+    total_failures: number;
+  };
+  collected_at: string;
 }
 
-// From GET /jobs
+// From GET /jobs — array of Job
 export interface Job {
   id: string;
   status: "pending" | "running" | "completed" | "failed" | "cancelled";
@@ -60,9 +71,10 @@ export type WsMessage =
 // From GET /errors
 export interface RecentErrors {
   errors: ErrorEntry[];
-  total: number;
+  total_count: number;
   by_status: Record<string, number>;
-  by_domain: Record<string, number>;
+  by_domain: Array<{ domain: string; count: number }>;
+  source: string;
 }
 
 export interface ErrorEntry {
