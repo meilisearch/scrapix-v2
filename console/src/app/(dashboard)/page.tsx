@@ -81,26 +81,35 @@ export default function DashboardPage() {
     return () => clearInterval(interval);
   }, [refreshData]);
 
+  const successRate =
+    stats && stats.diagnostics.total_requests > 0
+      ? (
+          (stats.diagnostics.total_successes /
+            stats.diagnostics.total_requests) *
+          100
+        ).toFixed(1)
+      : "0.0";
+
   const statCards = stats
     ? [
         {
-          name: "Pages Crawled",
-          value: stats.total_pages_crawled.toLocaleString(),
+          name: "Total Requests",
+          value: stats.diagnostics.total_requests.toLocaleString(),
           icon: Globe,
         },
         {
           name: "Active Jobs",
-          value: stats.active_jobs.toLocaleString(),
+          value: stats.jobs.running.toLocaleString(),
           icon: Zap,
         },
         {
           name: "Domains Tracked",
-          value: stats.domains_tracked.toLocaleString(),
+          value: stats.diagnostics.tracked_domains.toLocaleString(),
           icon: Database,
         },
         {
           name: "Success Rate",
-          value: `${stats.success_rate.toFixed(1)}%`,
+          value: `${successRate}%`,
           icon: TrendingUp,
         },
       ]
@@ -161,7 +170,7 @@ export default function DashboardPage() {
           <CardTitle>Recent Errors</CardTitle>
           <CardDescription>
             {errors
-              ? `${errors.total} total errors tracked`
+              ? `${errors.total_count} total errors tracked`
               : "Loading error data..."}
           </CardDescription>
         </CardHeader>
@@ -249,7 +258,7 @@ export default function DashboardPage() {
                   Total Jobs
                 </span>
                 <span className="text-sm font-medium">
-                  {stats?.total_jobs.toLocaleString() ?? "-"}
+                  {stats?.jobs.total.toLocaleString() ?? "-"}
                 </span>
               </div>
               <div className="flex items-center justify-between">
@@ -258,7 +267,7 @@ export default function DashboardPage() {
                 </span>
                 <span className="text-sm font-medium">
                   {stats
-                    ? `${stats.completed_jobs} / ${stats.failed_jobs}`
+                    ? `${stats.jobs.completed} / ${stats.jobs.failed}`
                     : "-"}
                 </span>
               </div>
