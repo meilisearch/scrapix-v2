@@ -464,6 +464,7 @@ impl CrawlerWorker {
             follow_external: args.follow_external,
             follow_subdomains: true,
             extract_from_data_attrs: false,
+            allowed_domains: vec![],
         };
         let extractor = UrlExtractor::new(extractor_config);
 
@@ -782,7 +783,25 @@ impl CrawlerWorker {
             let urls_to_publish = urls.into_iter().take(self.max_sitemap_urls - discovered_count);
 
             for sitemap_entry in urls_to_publish {
-                // Filter sitemap URLs using patterns if available
+                // Filter sitemap URLs using allowed_domains whitelist first (strictest check)
+                if let Some(ref patterns) = url_patterns {
+                    if !patterns.allowed_domains.is_empty() {
+                        // Extract domain from sitemap URL
+                        if let Ok(parsed_url) = url::Url::parse(&sitemap_entry.loc) {
+                            if let Some(url_domain) = parsed_url.host_str() {
+                                let domain_allowed = patterns
+                                    .allowed_domains
+                                    .iter()
+                                    .any(|d| d.eq_ignore_ascii_case(url_domain));
+                                if !domain_allowed {
+                                    continue; // Skip URLs from non-whitelisted domains
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Filter sitemap URLs using glob patterns if available
                 if let Some(ref patterns) = url_patterns {
                     let matches_include = patterns.include.is_empty()
                         || patterns.include.iter().any(|p| {
@@ -944,7 +963,7 @@ impl CrawlerWorker {
                 Ok(result) => match result {
                     scrapix_crawler::FetchResult::Fetched(page) => page,
                     scrapix_crawler::FetchResult::NotModified {
-                        url: _,
+                        url: not_modified_url,
                         fetch_duration_ms: _,
                     } => {
                         // Page hasn't changed since last crawl
@@ -953,6 +972,16 @@ impl CrawlerWorker {
                             url = %url.url,
                             "Page not modified (304), skipping processing"
                         );
+
+                        // Publish skip event so the API can track job progress
+                        let event = CrawlEvent::PageSkipped {
+                            job_id: msg.job_id.clone(),
+                            url: not_modified_url,
+                            reason: "304 Not Modified".to_string(),
+                            timestamp: chrono::Utc::now().timestamp_millis(),
+                        };
+                        self.publish_event(&msg.job_id, &event).await?;
+
                         return Ok(());
                     }
                 },
@@ -995,12 +1024,14 @@ impl CrawlerWorker {
         // Extract URLs from the page using patterns from the message if available
         let discovered_urls = if let Some(ref patterns) = msg.url_patterns {
             // Create extractor with patterns from job config
+            // If allowed_domains is set, use strict domain filtering
             let extractor_config = ExtractorConfig {
                 patterns: Some(patterns.clone()),
                 max_depth: self.concurrency as u32, // Use existing max_depth
                 follow_external: false,
-                follow_subdomains: true,
+                follow_subdomains: patterns.allowed_domains.is_empty(), // Disable if whitelist is set
                 extract_from_data_attrs: false,
+                allowed_domains: patterns.allowed_domains.clone(),
             };
             let extractor = UrlExtractor::new(extractor_config);
             extractor.extract(&page, url.depth)

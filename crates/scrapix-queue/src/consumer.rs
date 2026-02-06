@@ -226,11 +226,10 @@ impl KafkaConsumer {
                             }
 
                             // Acquire permit (wait if at max concurrency)
-                            let permit = semaphore.clone().acquire_owned().await;
-                            if permit.is_err() {
-                                break; // Semaphore closed
-                            }
-                            let permit = permit.unwrap();
+                            let permit = match semaphore.clone().acquire_owned().await {
+                                Ok(permit) => permit,
+                                Err(_) => break, // Semaphore closed
+                            };
 
                             let handler = handler.clone();
 

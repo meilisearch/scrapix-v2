@@ -105,21 +105,25 @@ impl PriorityQueue {
     /// Push a URL onto the queue
     pub fn push(&self, url: CrawlUrl) {
         let mut heap = self.heap.lock();
+        let score = self.calculate_score(&url);
 
-        // Check max size
+        // Enforce max size by evicting the lowest-priority element
         if self.config.max_size > 0 && heap.len() >= self.config.max_size {
-            // Check if new URL has higher priority than lowest
-            let score = self.calculate_score(&url);
-            if let Some(lowest) = heap.peek() {
-                if score <= lowest.score {
-                    return; // Reject lower priority URL
+            // Find the minimum score in the heap (O(n) scan, only when at capacity)
+            let min_score = heap.iter().map(|p| p.score).min();
+            if let Some(min_score) = min_score {
+                if score <= min_score {
+                    return; // New URL is lower priority than everything in the queue
                 }
+                // Evict the lowest-priority element to make room
+                let mut vec = std::mem::take(&mut *heap).into_vec();
+                if let Some(idx) = vec.iter().position(|p| p.score == min_score) {
+                    vec.swap_remove(idx);
+                }
+                *heap = BinaryHeap::from(vec);
             }
-            // Make room by removing lowest priority
-            // Note: BinaryHeap doesn't directly support this, so we skip for now
         }
 
-        let score = self.calculate_score(&url);
         heap.push(PrioritizedUrl { url, score });
     }
 
@@ -129,6 +133,21 @@ impl PriorityQueue {
 
         for url in urls {
             let score = self.calculate_score(&url);
+
+            if self.config.max_size > 0 && heap.len() >= self.config.max_size {
+                let min_score = heap.iter().map(|p| p.score).min();
+                if let Some(min_score) = min_score {
+                    if score <= min_score {
+                        continue; // Skip this URL, lower priority than everything
+                    }
+                    let mut vec = std::mem::take(&mut *heap).into_vec();
+                    if let Some(idx) = vec.iter().position(|p| p.score == min_score) {
+                        vec.swap_remove(idx);
+                    }
+                    *heap = BinaryHeap::from(vec);
+                }
+            }
+
             heap.push(PrioritizedUrl { url, score });
         }
     }
