@@ -562,11 +562,12 @@ impl ContentWorker {
         // Process messages
         let result = self.process_messages().await;
 
-        // Cleanup
+        // Cleanup: signal shutdown and wait for background tasks to finish
         self.shutdown.store(true, Ordering::Relaxed);
         metrics_handle.abort();
         if let Some(handle) = flush_handle {
-            handle.abort();
+            // Wait for any in-flight flush to complete instead of aborting
+            let _ = handle.await;
         }
 
         // Final flush of any pending documents to Meilisearch
@@ -668,6 +669,7 @@ impl ContentWorker {
                 // Send failure event
                 let event = CrawlEvent::PageFailed {
                     job_id: msg.job_id.clone(),
+                    account_id: msg.account_id.clone(),
                     url: msg.url.clone(),
                     error: format!("Parse error: {}", e),
                     retry_count: 0,
@@ -802,6 +804,7 @@ impl ContentWorker {
                         // Send success event for the page
                         let event = CrawlEvent::DocumentIndexed {
                             job_id: msg.job_id.clone(),
+                            account_id: msg.account_id.clone(),
                             url: msg.url.clone(),
                             document_id: format!("{}-blocks", document.uid),
                             timestamp: chrono::Utc::now().timestamp_millis(),
@@ -913,6 +916,7 @@ impl ContentWorker {
         // Send success event
         let event = CrawlEvent::DocumentIndexed {
             job_id: msg.job_id.clone(),
+            account_id: msg.account_id.clone(),
             url: msg.url.clone(),
             document_id: document.uid.clone(),
             timestamp: chrono::Utc::now().timestamp_millis(),
@@ -1015,9 +1019,14 @@ impl ContentWorker {
             return document;
         }
 
-        // Truncate content if too long (keep first ~6000 tokens worth)
+        // Truncate content if too long (keep first ~6000 tokens worth).
+        // Find a valid UTF-8 char boundary to avoid splitting multi-byte characters.
         let content_for_ai = if content.len() > 24000 {
-            content[..24000].to_string()
+            let mut end = 24000;
+            while end > 0 && !content.is_char_boundary(end) {
+                end -= 1;
+            }
+            content[..end].to_string()
         } else {
             content
         };

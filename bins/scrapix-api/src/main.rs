@@ -4,6 +4,7 @@
 //!
 //! ## REST Endpoints
 //!
+//! - `POST /scrape` - Scrape a single URL (instant, no queue)
 //! - `POST /crawl` - Create a new async crawl job
 //! - `POST /crawl/sync` - Create a sync crawl job (waits for completion)
 //! - `GET /job/:id/status` - Get job status
@@ -39,6 +40,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 mod analytics;
+mod auth;
 
 use axum::{
     extract::{
@@ -46,6 +48,7 @@ use axum::{
         Path, Query, State,
     },
     http::StatusCode,
+    middleware,
     response::{
         sse::{Event, KeepAlive, Sse},
         IntoResponse, Response,
@@ -64,6 +67,8 @@ use tracing::{debug, error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use scrapix_core::{CrawlConfig, CrawlUrl, JobState, JobStatus};
+use scrapix_extractor::{Extractor, ExtractedMetadata};
+use scrapix_parser::{extract_content, html_to_markdown, detect_language_info};
 use scrapix_queue::{topic_names, ConsumerBuilder, CrawlEvent, KafkaProducer, ProducerBuilder, UrlMessage};
 use scrapix_storage::clickhouse::{
     ClickHouseStorage, CrawlEvent as ClickHouseCrawlEvent, CrawlEventBatcher,
@@ -90,9 +95,13 @@ struct Args {
     #[arg(long, env = "ENABLE_CORS")]
     enable_cors: bool,
 
-    /// API key for authentication (optional)
+    /// API key for authentication (optional - legacy)
     #[arg(long, env = "API_KEY")]
     api_key: Option<String>,
+
+    /// Supabase database URL for API key validation
+    #[arg(long, env = "SUPABASE_DB_URL")]
+    supabase_db_url: Option<String>,
 
     /// Maximum jobs to keep in memory
     #[arg(long, env = "MAX_JOBS", default_value = "10000")]
@@ -320,19 +329,27 @@ fn extract_domain(url: &str) -> Option<String> {
 
 /// Try to extract HTTP status code from error message
 fn extract_status_code(error: &str) -> Option<u16> {
-    // Common patterns: "404 Not Found", "HTTP 500", "status: 503"
-    let patterns = [
-        r"^(\d{3})\s",
-        r"HTTP\s+(\d{3})",
-        r"status[:\s]+(\d{3})",
-    ];
-    for pattern in patterns {
-        if let Ok(re) = regex::Regex::new(pattern) {
-            if let Some(caps) = re.captures(error) {
-                if let Some(m) = caps.get(1) {
-                    if let Ok(code) = m.as_str().parse::<u16>() {
-                        return Some(code);
-                    }
+    use std::sync::OnceLock;
+
+    // Compile regexes once and cache for the lifetime of the process
+    static PATTERNS: OnceLock<Vec<regex::Regex>> = OnceLock::new();
+    let patterns = PATTERNS.get_or_init(|| {
+        // Common patterns: "404 Not Found", "HTTP 500", "status: 503"
+        [
+            r"^(\d{3})\s",
+            r"HTTP\s+(\d{3})",
+            r"status[:\s]+(\d{3})",
+        ]
+        .iter()
+        .filter_map(|p| regex::Regex::new(p).ok())
+        .collect()
+    });
+
+    for re in patterns {
+        if let Some(caps) = re.captures(error) {
+            if let Some(m) = caps.get(1) {
+                if let Ok(code) = m.as_str().parse::<u16>() {
+                    return Some(code);
                 }
             }
         }
@@ -502,6 +519,134 @@ struct HealthResponse {
 }
 
 // ============================================================================
+// Scrape Endpoint Types
+// ============================================================================
+
+/// Request body for /scrape endpoint
+#[derive(Debug, Deserialize)]
+struct ScrapeRequest {
+    /// URL to scrape
+    url: String,
+
+    /// Formats to return (default: all)
+    #[serde(default)]
+    formats: Vec<ScrapeFormat>,
+
+    /// Whether to only return the main content (excludes nav, footer, etc.)
+    #[serde(default = "default_true_bool")]
+    only_main_content: bool,
+
+    /// Include links found on the page
+    #[serde(default)]
+    include_links: bool,
+
+    /// Timeout in milliseconds (default: 30000)
+    #[serde(default = "default_timeout")]
+    timeout_ms: u64,
+
+    /// Custom headers to send with the request
+    #[serde(default)]
+    headers: std::collections::HashMap<String, String>,
+}
+
+fn default_true_bool() -> bool {
+    true
+}
+
+fn default_timeout() -> u64 {
+    30000
+}
+
+/// Output formats for scrape
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+enum ScrapeFormat {
+    Markdown,
+    Html,
+    RawHtml,
+    Content,
+    Links,
+    Metadata,
+    Screenshot,
+}
+
+/// Response for /scrape endpoint
+#[derive(Debug, Serialize)]
+struct ScrapeResponse {
+    /// Whether the scrape was successful
+    success: bool,
+
+    /// The URL that was scraped (after redirects)
+    url: String,
+
+    /// Markdown content (if requested)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    markdown: Option<String>,
+
+    /// Cleaned HTML content (if requested)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    html: Option<String>,
+
+    /// Raw HTML content (if requested)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    raw_html: Option<String>,
+
+    /// Extracted main content text (if requested)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<String>,
+
+    /// Page metadata
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metadata: Option<ScrapeMetadata>,
+
+    /// Links found on the page (if requested)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    links: Option<Vec<String>>,
+
+    /// Detected language
+    #[serde(skip_serializing_if = "Option::is_none")]
+    language: Option<String>,
+
+    /// HTTP status code
+    status_code: u16,
+
+    /// Time taken to scrape in milliseconds
+    scrape_duration_ms: u64,
+}
+
+/// Metadata from scraped page
+#[derive(Debug, Serialize)]
+struct ScrapeMetadata {
+    title: Option<String>,
+    description: Option<String>,
+    author: Option<String>,
+    keywords: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    canonical_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    published_date: Option<String>,
+    #[serde(skip_serializing_if = "std::collections::HashMap::is_empty")]
+    open_graph: std::collections::HashMap<String, String>,
+    #[serde(skip_serializing_if = "std::collections::HashMap::is_empty")]
+    twitter: std::collections::HashMap<String, String>,
+}
+
+impl From<ExtractedMetadata> for ScrapeMetadata {
+    fn from(meta: ExtractedMetadata) -> Self {
+        Self {
+            title: meta.title,
+            description: meta.description,
+            author: meta.author,
+            keywords: meta.keywords,
+            canonical_url: meta.canonical_url,
+            published_date: meta.published_date,
+            open_graph: meta.open_graph,
+            twitter: meta.twitter,
+        }
+    }
+}
+
+// ============================================================================
 // Diagnostic Response Types
 // ============================================================================
 
@@ -626,6 +771,222 @@ async fn health(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
     })
 }
 
+/// Scrape a single URL and return content immediately
+/// This bypasses the job queue for instant results
+async fn scrape_url(
+    State(_state): State<Arc<AppState>>,
+    Json(request): Json<ScrapeRequest>,
+) -> Result<Json<ScrapeResponse>, ApiError> {
+    let start_time = std::time::Instant::now();
+
+    // Validate URL
+    let parsed_url = url::Url::parse(&request.url).map_err(|e| {
+        ApiError::new(&format!("Invalid URL: {}", e), "validation_error")
+    })?;
+
+    // Only allow http/https
+    if !matches!(parsed_url.scheme(), "http" | "https") {
+        return Err(ApiError::new(
+            "Only http and https URLs are supported",
+            "validation_error",
+        ));
+    }
+
+    info!(url = %request.url, "Scraping URL");
+
+    // Build HTTP client with timeout
+    let mut client_builder = reqwest::Client::builder()
+        .user_agent("Scrapix/1.0")
+        .timeout(Duration::from_millis(request.timeout_ms))
+        .redirect(reqwest::redirect::Policy::limited(10));
+
+    // Add custom headers (block sensitive headers to prevent injection attacks)
+    const BLOCKED_HEADERS: &[&str] = &[
+        "host",
+        "transfer-encoding",
+        "content-length",
+        "connection",
+        "upgrade",
+        "proxy-authorization",
+        "proxy-connection",
+        "te",
+        "trailer",
+    ];
+    let mut headers = reqwest::header::HeaderMap::new();
+    for (key, value) in &request.headers {
+        let key_lower = key.to_lowercase();
+        if BLOCKED_HEADERS.contains(&key_lower.as_str()) {
+            warn!(header = %key, "Blocked sensitive header in scrape request");
+            continue;
+        }
+        if let (Ok(name), Ok(val)) = (
+            reqwest::header::HeaderName::from_bytes(key.as_bytes()),
+            reqwest::header::HeaderValue::from_str(value),
+        ) {
+            headers.insert(name, val);
+        }
+    }
+    client_builder = client_builder.default_headers(headers);
+
+    let client = client_builder.build().map_err(|e| {
+        ApiError::new(&format!("Failed to create HTTP client: {}", e), "internal_error")
+    })?;
+
+    // Fetch the page
+    let response = client.get(&request.url).send().await.map_err(|e| {
+        ApiError::new(&format!("Failed to fetch URL: {}", e), "fetch_error")
+    })?;
+
+    let status_code = response.status().as_u16();
+    let final_url = response.url().to_string();
+
+    // Check for success status
+    if !response.status().is_success() {
+        return Ok(Json(ScrapeResponse {
+            success: false,
+            url: final_url,
+            markdown: None,
+            html: None,
+            raw_html: None,
+            content: None,
+            metadata: None,
+            links: None,
+            language: None,
+            status_code,
+            scrape_duration_ms: start_time.elapsed().as_millis() as u64,
+        }));
+    }
+
+    // Get response body
+    let raw_html = response.text().await.map_err(|e| {
+        ApiError::new(&format!("Failed to read response body: {}", e), "fetch_error")
+    })?;
+
+    // Determine which formats to return (default: all main formats)
+    let formats = if request.formats.is_empty() {
+        vec![
+            ScrapeFormat::Markdown,
+            ScrapeFormat::Content,
+            ScrapeFormat::Metadata,
+        ]
+    } else {
+        request.formats.clone()
+    };
+
+    // Extract content based on requested formats
+    let markdown = if formats.contains(&ScrapeFormat::Markdown) {
+        Some(html_to_markdown(&raw_html))
+    } else {
+        None
+    };
+
+    let content = if formats.contains(&ScrapeFormat::Content) {
+        if request.only_main_content {
+            Some(extract_content(&raw_html))
+        } else {
+            // Return full text content without readability extraction
+            Some(html_to_markdown(&raw_html))
+        }
+    } else {
+        None
+    };
+
+    let return_raw_html = if formats.contains(&ScrapeFormat::RawHtml) {
+        Some(raw_html.clone())
+    } else {
+        None
+    };
+
+    // Extract metadata
+    let metadata = if formats.contains(&ScrapeFormat::Metadata) {
+        let extractor = Extractor::new().with_metadata();
+        extractor
+            .extract(&raw_html)
+            .ok()
+            .and_then(|r| r.metadata)
+            .map(ScrapeMetadata::from)
+    } else {
+        None
+    };
+
+    // Extract links if requested
+    let links = if formats.contains(&ScrapeFormat::Links) || request.include_links {
+        Some(extract_links_from_html(&raw_html, &final_url))
+    } else {
+        None
+    };
+
+    // Detect language from content
+    let language = content
+        .as_ref()
+        .or(markdown.as_ref())
+        .and_then(|text| detect_language_info(text))
+        .map(|info| info.code);
+
+    let scrape_duration_ms = start_time.elapsed().as_millis() as u64;
+
+    info!(
+        url = %final_url,
+        status_code,
+        duration_ms = scrape_duration_ms,
+        "Scrape completed"
+    );
+
+    Ok(Json(ScrapeResponse {
+        success: true,
+        url: final_url,
+        markdown,
+        html: None, // TODO: cleaned HTML (content only, no boilerplate)
+        raw_html: return_raw_html,
+        content,
+        metadata,
+        links,
+        language,
+        status_code,
+        scrape_duration_ms,
+    }))
+}
+
+/// Extract links from HTML
+fn extract_links_from_html(html: &str, base_url: &str) -> Vec<String> {
+    use scraper::{Html, Selector};
+
+    let Ok(base) = url::Url::parse(base_url) else {
+        return vec![];
+    };
+
+    let document = Html::parse_document(html);
+    let Ok(selector) = Selector::parse("a[href]") else {
+        return vec![];
+    };
+
+    let mut urls = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for element in document.select(&selector) {
+        if let Some(href) = element.value().attr("href") {
+            // Skip javascript:, mailto:, tel:, etc.
+            if href.starts_with("javascript:")
+                || href.starts_with("mailto:")
+                || href.starts_with("tel:")
+                || href.starts_with("#")
+            {
+                continue;
+            }
+
+            // Resolve relative URLs
+            if let Ok(resolved) = base.join(href) {
+                let url_str = resolved.to_string();
+                if seen.insert(url_str.clone()) {
+                    urls.push(url_str);
+                }
+            }
+        }
+    }
+
+    urls
+}
+
 /// Create a new async crawl job
 async fn create_crawl(
     State(state): State<Arc<AppState>>,
@@ -657,14 +1018,51 @@ async fn create_crawl(
     let mut job = state.create_job(&job_id, &config.index_uid);
     job.start();
 
+    // Build allowed_domains list:
+    // 1. If config.allowed_domains is set, use it (explicit whitelist)
+    // 2. Otherwise, if config.url_patterns.allowed_domains is set, use it
+    // 3. Otherwise, auto-infer from start_urls (strict: only exact domains from seed URLs)
+    let allowed_domains = if !config.allowed_domains.is_empty() {
+        config.allowed_domains.clone()
+    } else if !config.url_patterns.allowed_domains.is_empty() {
+        config.url_patterns.allowed_domains.clone()
+    } else {
+        // Auto-infer domains from start_urls
+        let mut domains: Vec<String> = config
+            .start_urls
+            .iter()
+            .filter_map(|u| url::Url::parse(u).ok())
+            .filter_map(|u| u.host_str().map(|h| h.to_lowercase()))
+            .collect();
+        domains.sort();
+        domains.dedup();
+        domains
+    };
+
+    info!(
+        job_id = %job_id,
+        allowed_domains = ?allowed_domains,
+        "Using domain whitelist for crawl"
+    );
+
+    // Build URL patterns with allowed_domains
+    let url_patterns = scrapix_core::UrlPatterns {
+        include: config.url_patterns.include.clone(),
+        exclude: config.url_patterns.exclude.clone(),
+        index_only: config.url_patterns.index_only.clone(),
+        allowed_domains,
+    };
+
     // Publish seed URLs to frontier with URL patterns
     let mut urls_published = 0;
-    let has_patterns = !config.url_patterns.include.is_empty() || !config.url_patterns.exclude.is_empty();
+    let has_patterns = !url_patterns.include.is_empty()
+        || !url_patterns.exclude.is_empty()
+        || !url_patterns.allowed_domains.is_empty();
 
     for url in &config.start_urls {
         let crawl_url = CrawlUrl::seed(url);
         let msg = if has_patterns {
-            UrlMessage::with_patterns(crawl_url, &job_id, &config.index_uid, config.url_patterns.clone())
+            UrlMessage::with_patterns(crawl_url, &job_id, &config.index_uid, url_patterns.clone())
         } else {
             UrlMessage::new(crawl_url, &job_id, &config.index_uid)
         };
@@ -848,6 +1246,7 @@ async fn handle_stats(State(state): State<Arc<AppState>>) -> Json<SystemStatsRes
             JobStatus::Failed => failed += 1,
             JobStatus::Pending => pending += 1,
             JobStatus::Cancelled => failed += 1,
+            JobStatus::Paused => pending += 1,
         }
     }
 
@@ -1299,8 +1698,13 @@ async fn list_jobs(
 // Event Consumer
 // ============================================================================
 
-/// Start consuming events from Kafka to update job state
-async fn start_event_consumer(brokers: &str, state: Arc<AppState>) -> anyhow::Result<()> {
+/// Start consuming events from Kafka to update job state.
+/// Returns a JoinHandle so the caller can await clean shutdown.
+fn start_event_consumer(
+    brokers: &str,
+    state: Arc<AppState>,
+    shutdown: tokio::sync::watch::Receiver<bool>,
+) -> anyhow::Result<tokio::task::JoinHandle<()>> {
     let consumer = ConsumerBuilder::new(brokers, "scrapix-api-events")
         .client_id("scrapix-api-event-consumer")
         .auto_offset_reset("latest") // Only process new events
@@ -1310,8 +1714,12 @@ async fn start_event_consumer(brokers: &str, state: Arc<AppState>) -> anyhow::Re
     info!("Event consumer subscribed to {} topic", topic_names::EVENTS);
 
     // Process events in background
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         loop {
+            if *shutdown.borrow() {
+                info!("Event consumer shutting down");
+                break;
+            }
             match consumer.poll_one::<CrawlEvent>(Duration::from_millis(100)).await {
                 Ok(Some(event)) => {
                     // Extract job_id from event
@@ -1342,7 +1750,7 @@ async fn start_event_consumer(brokers: &str, state: Arc<AppState>) -> anyhow::Re
         }
     });
 
-    Ok(())
+    Ok(handle)
 }
 
 // ============================================================================
@@ -1433,47 +1841,98 @@ async fn main() -> anyhow::Result<()> {
     // Initialize ClickHouse for analytics (optional)
     let (analytics_state, clickhouse_batcher) = init_clickhouse().await;
 
+    // Initialize auth state if Supabase DB URL is provided
+    let auth_state = if let Some(ref db_url) = args.supabase_db_url {
+        match auth::AuthState::new(db_url).await {
+            Ok(state) => {
+                info!("API key authentication enabled via Supabase");
+                Some(Arc::new(state))
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to connect to Supabase DB. API key auth disabled.");
+                None
+            }
+        }
+    } else {
+        info!("API key authentication disabled (SUPABASE_DB_URL not set)");
+        None
+    };
+
     // Create application state
     let config = AppConfig {
         max_jobs: args.max_jobs,
     };
     let state = Arc::new(AppState::new(producer, config, clickhouse_batcher.clone()));
 
+    // Shutdown coordination
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
     // Start event consumer for real-time job tracking
-    start_event_consumer(&args.brokers, state.clone()).await?;
+    let consumer_handle = start_event_consumer(&args.brokers, state.clone(), shutdown_rx.clone())?;
     info!("Event consumer started for centralized job tracking");
 
     // Start periodic ClickHouse flush task if enabled
-    if let Some(ref batcher) = clickhouse_batcher {
+    let flush_handle = if let Some(ref batcher) = clickhouse_batcher {
         let batcher_clone = batcher.clone();
-        tokio::spawn(async move {
+        let mut shutdown_rx = shutdown_rx.clone();
+        let handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(5));
             loop {
-                interval.tick().await;
-                if let Err(e) = batcher_clone.flush().await {
-                    warn!(error = %e, "Failed to flush ClickHouse batcher");
+                tokio::select! {
+                    _ = interval.tick() => {
+                        if let Err(e) = batcher_clone.flush().await {
+                            warn!(error = %e, "Failed to flush ClickHouse batcher");
+                        }
+                    }
+                    _ = shutdown_rx.changed() => {
+                        info!("ClickHouse flush task shutting down, performing final flush");
+                        if let Err(e) = batcher_clone.flush().await {
+                            warn!(error = %e, "Failed final ClickHouse flush");
+                        }
+                        break;
+                    }
                 }
             }
         });
         info!("ClickHouse event persistence enabled (batch size: 100, flush interval: 5s)");
-    }
+        Some(handle)
+    } else {
+        None
+    };
 
     // Build router
-    let mut app = Router::new()
+    // Public routes (no auth required)
+    let public_routes = Router::new()
         .route("/health", get(health))
+        .route("/stats", get(handle_stats))
+        .route("/errors", get(handle_errors))
+        .route("/domains", get(handle_domains))
+        .route("/ws", get(ws_handler))
+        .route("/ws/job/{id}", get(ws_job_handler));
+
+    // Protected routes (auth required when enabled)
+    let protected_routes = Router::new()
+        .route("/scrape", post(scrape_url))
         .route("/crawl", post(create_crawl))
         .route("/crawl/sync", post(create_crawl_sync))
         .route("/jobs", get(list_jobs))
         .route("/job/{id}/status", get(job_status))
         .route("/job/{id}/events", get(job_events))
-        .route("/job/{id}", delete(cancel_job))
-        // Diagnostic endpoints
-        .route("/stats", get(handle_stats))
-        .route("/errors", get(handle_errors))
-        .route("/domains", get(handle_domains))
-        // WebSocket endpoints
-        .route("/ws", get(ws_handler))
-        .route("/ws/job/{id}", get(ws_job_handler))
+        .route("/job/{id}", delete(cancel_job));
+
+    // Apply auth middleware if configured
+    let protected_routes = if let Some(ref auth) = auth_state {
+        protected_routes.layer(middleware::from_fn_with_state(
+            auth.clone(),
+            auth::validate_api_key,
+        ))
+    } else {
+        protected_routes
+    };
+
+    let mut app = Router::new()
+        .merge(public_routes)
+        .merge(protected_routes)
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
@@ -1491,12 +1950,28 @@ async fn main() -> anyhow::Result<()> {
         info!("CORS enabled for all origins");
     }
 
-    // Start server
+    // Start server with graceful shutdown
     let addr: SocketAddr = format!("{}:{}", args.host, args.port).parse()?;
     info!("Listening on {}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            tokio::signal::ctrl_c()
+                .await
+                .expect("failed to install ctrl+c handler");
+            info!("Shutdown signal received, draining connections...");
+            let _ = shutdown_tx.send(true);
+        })
+        .await?;
+
+    // Wait for background tasks to finish cleanly
+    info!("Waiting for background tasks to shut down...");
+    let _ = consumer_handle.await;
+    if let Some(handle) = flush_handle {
+        let _ = handle.await;
+    }
+    info!("Shutdown complete");
 
     Ok(())
 }
