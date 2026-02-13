@@ -12,16 +12,39 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Trash2, AlertCircle } from "lucide-react";
+import { Progress } from "@/components/ui/progress";
+import {
+  ArrowLeft,
+  Trash2,
+  AlertCircle,
+  Globe,
+  Clock,
+  FileText,
+  Zap,
+  ExternalLink,
+} from "lucide-react";
 import { fetchJobStatus, deleteJob, wsUrl } from "@/lib/api";
 import type { JobStatus, WsMessage } from "@/lib/api-types";
 import { toast } from "sonner";
+import { formatDistanceToNow } from "date-fns";
 
 interface LogEntry {
   time: string;
   message: string;
   variant: "default" | "error";
 }
+
+const statusVariant: Record<
+  string,
+  "default" | "secondary" | "destructive" | "outline"
+> = {
+  completed: "default",
+  running: "secondary",
+  pending: "outline",
+  failed: "destructive",
+  cancelled: "destructive",
+  paused: "outline",
+};
 
 export default function JobDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -33,28 +56,34 @@ export default function JobDetailPage() {
   const logRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
-  const addLog = useCallback((message: string, variant: "default" | "error" = "default") => {
-    setLogs((prev) => {
-      const next = [
-        ...prev,
-        { time: new Date().toLocaleTimeString(), message, variant },
-      ];
-      // Keep last 200 entries
-      return next.length > 200 ? next.slice(-200) : next;
-    });
-  }, []);
+  const addLog = useCallback(
+    (message: string, variant: "default" | "error" = "default") => {
+      setLogs((prev) => {
+        const next = [
+          ...prev,
+          { time: new Date().toLocaleTimeString(), message, variant },
+        ];
+        return next.length > 500 ? next.slice(-500) : next;
+      });
+    },
+    []
+  );
 
-  // Fetch initial status
+  // Poll status periodically (not just once)
   useEffect(() => {
     if (!id) return;
-    fetchJobStatus(id)
-      .then((data) => {
-        setStatus(data);
-        setApiError(null);
-      })
-      .catch((e) =>
-        setApiError(e instanceof Error ? e.message : "Failed to fetch job")
-      );
+    const poll = () =>
+      fetchJobStatus(id)
+        .then((data) => {
+          setStatus(data);
+          setApiError(null);
+        })
+        .catch((e) =>
+          setApiError(e instanceof Error ? e.message : "Failed to fetch job")
+        );
+    poll();
+    const interval = setInterval(poll, 3000);
+    return () => clearInterval(interval);
   }, [id]);
 
   // WebSocket connection
@@ -77,15 +106,19 @@ export default function JobDetailPage() {
           const msg: WsMessage = JSON.parse(event.data);
           switch (msg.type) {
             case "page_crawled":
-              addLog(`Crawled ${msg.url} (${msg.status}) in ${msg.elapsed_ms}ms`);
+              addLog(
+                `Crawled ${msg.url} (${msg.status}) in ${msg.elapsed_ms}ms`
+              );
               setStatus((prev) =>
-                prev ? { ...prev, pages_crawled: prev.pages_crawled + 1 } : prev
+                prev
+                  ? { ...prev, pages_crawled: prev.pages_crawled + 1 }
+                  : prev
               );
               break;
             case "page_failed":
               addLog(`Failed ${msg.url}: ${msg.error}`, "error");
               setStatus((prev) =>
-                prev ? { ...prev, pages_failed: prev.pages_failed + 1 } : prev
+                prev ? { ...prev, errors: prev.errors + 1 } : prev
               );
               break;
             case "job_progress":
@@ -94,8 +127,7 @@ export default function JobDetailPage() {
                   ? {
                       ...prev,
                       pages_crawled: msg.pages_crawled,
-                      pages_failed: msg.pages_failed,
-                      pages_total: msg.pages_total ?? prev.pages_total,
+                      errors: msg.pages_failed,
                     }
                   : prev
               );
@@ -122,7 +154,6 @@ export default function JobDetailPage() {
 
       ws.onclose = () => {
         setWsConnected(false);
-        // Reconnect after 3 seconds unless component unmounted
         reconnectTimer = setTimeout(connect, 3000);
       };
 
@@ -156,16 +187,26 @@ export default function JobDetailPage() {
     }
   };
 
-  const progress =
-    status?.pages_total && status.pages_total > 0
-      ? Math.round(
-          ((status.pages_crawled + status.pages_failed) / status.pages_total) *
-            100
+  const formatDuration = (seconds: number) => {
+    if (seconds < 60) return `${seconds}s`;
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}m ${s}s`;
+  };
+
+  const progressPercent =
+    status?.max_pages && status.max_pages > 0
+      ? Math.min(
+          100,
+          Math.round((status.pages_crawled / status.max_pages) * 100)
         )
       : null;
 
+  const isRunning = status?.status === "running";
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="icon" asChild>
@@ -174,8 +215,24 @@ export default function JobDetailPage() {
             </Link>
           </Button>
           <div>
-            <h2 className="text-2xl font-bold tracking-tight">Job Detail</h2>
-            <p className="text-muted-foreground font-mono text-sm">{id}</p>
+            <div className="flex items-center gap-3">
+              <h2 className="text-2xl font-bold tracking-tight">Job Detail</h2>
+              {status && (
+                <Badge
+                  variant={statusVariant[status.status] || "outline"}
+                  className="text-sm"
+                >
+                  {isRunning && (
+                    <span className="relative mr-1.5 flex h-2 w-2">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-current opacity-75" />
+                      <span className="relative inline-flex h-2 w-2 rounded-full bg-current" />
+                    </span>
+                  )}
+                  {status.status}
+                </Badge>
+              )}
+            </div>
+            <p className="text-muted-foreground font-mono text-xs">{id}</p>
           </div>
         </div>
         <Button variant="destructive" size="sm" onClick={handleDelete}>
@@ -195,158 +252,219 @@ export default function JobDetailPage() {
 
       {status && (
         <>
-          {/* Status Overview */}
-          <div className="grid gap-4 md:grid-cols-4">
+          {/* Start URLs - the most important context */}
+          {status.start_urls && status.start_urls.length > 0 && (
             <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium">Status</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Badge
-                  variant={
-                    status.status === "completed"
-                      ? "default"
-                      : status.status === "running"
-                      ? "secondary"
-                      : status.status === "failed"
-                      ? "destructive"
-                      : "outline"
-                  }
-                  className="text-base"
-                >
-                  {status.status}
-                </Badge>
+              <CardContent className="py-4">
+                <div className="flex items-start gap-3">
+                  <Globe className="h-5 w-5 text-muted-foreground mt-0.5 shrink-0" />
+                  <div className="space-y-1 min-w-0">
+                    <p className="text-sm font-medium text-muted-foreground">
+                      Crawling
+                    </p>
+                    {status.start_urls.map((url) => (
+                      <div key={url} className="flex items-center gap-2">
+                        <p className="font-mono text-sm truncate">{url}</p>
+                        <a
+                          href={url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-muted-foreground hover:text-foreground shrink-0"
+                        >
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </CardContent>
             </Card>
+          )}
+
+          {/* Progress bar (when max_pages is known) */}
+          {progressPercent !== null && (
             <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium">
-                  Pages Crawled
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">
+              <CardContent className="py-4 space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">Progress</span>
+                  <span className="font-medium">
+                    {status.pages_crawled}
+                    {status.max_pages ? ` / ${status.max_pages}` : ""} pages
+                    <span className="text-muted-foreground ml-2">
+                      ({progressPercent}%)
+                    </span>
+                  </span>
+                </div>
+                <Progress value={progressPercent} className="h-2" />
+                {status.eta_seconds != null && status.eta_seconds > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    ~{formatDuration(status.eta_seconds)} remaining
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Stats grid */}
+          <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
+            <Card>
+              <CardContent className="py-4">
+                <div className="flex items-center gap-2">
+                  <FileText className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm text-muted-foreground">
+                    Pages Crawled
+                  </span>
+                </div>
+                <div className="text-2xl font-bold mt-1">
                   {status.pages_crawled}
                 </div>
+                {status.pages_indexed > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    {status.pages_indexed} indexed
+                  </p>
+                )}
               </CardContent>
             </Card>
+
             <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium">
-                  Pages Failed
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-destructive">
-                  {status.pages_failed}
+              <CardContent className="py-4">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm text-muted-foreground">Errors</span>
                 </div>
+                <div
+                  className={`text-2xl font-bold mt-1 ${
+                    status.errors > 0 ? "text-destructive" : ""
+                  }`}
+                >
+                  {status.errors}
+                </div>
+                {status.error_message && (
+                  <p className="text-xs text-destructive truncate">
+                    {status.error_message}
+                  </p>
+                )}
               </CardContent>
             </Card>
+
             <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium">Elapsed</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">
-                  {status.elapsed_seconds != null
-                    ? `${status.elapsed_seconds}s`
-                    : "-"}
+              <CardContent className="py-4">
+                <div className="flex items-center gap-2">
+                  <Clock className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm text-muted-foreground">
+                    Duration
+                  </span>
                 </div>
+                <div className="text-2xl font-bold mt-1">
+                  {status.duration_seconds != null
+                    ? formatDuration(status.duration_seconds)
+                    : "—"}
+                </div>
+                {status.started_at && (
+                  <p className="text-xs text-muted-foreground">
+                    Started{" "}
+                    {formatDistanceToNow(new Date(status.started_at), {
+                      addSuffix: true,
+                    })}
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="py-4">
+                <div className="flex items-center gap-2">
+                  <Zap className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm text-muted-foreground">Speed</span>
+                </div>
+                <div className="text-2xl font-bold mt-1">
+                  {status.crawl_rate > 0
+                    ? `${status.crawl_rate.toFixed(1)}/s`
+                    : "—"}
+                </div>
+                {status.documents_sent > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    {status.documents_sent} docs sent
+                  </p>
+                )}
               </CardContent>
             </Card>
           </div>
 
-          {/* Progress Bar */}
-          {progress != null && (
+          {/* Extra info row */}
+          <div className="grid gap-3 md:grid-cols-2">
             <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium">Progress</CardTitle>
-                <CardDescription>
-                  {status.pages_crawled + status.pages_failed} /{" "}
-                  {status.pages_total} pages
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="w-full bg-muted rounded-full h-3">
-                  <div
-                    className="bg-primary h-3 rounded-full transition-all duration-300"
-                    style={{ width: `${Math.min(progress, 100)}%` }}
-                  />
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {progress}%
-                </p>
+              <CardContent className="py-4">
+                <p className="text-sm text-muted-foreground">Index</p>
+                <p className="font-mono text-sm mt-1">{status.index_uid}</p>
               </CardContent>
             </Card>
-          )}
-
-          {/* Extra info */}
-          {(status.current_depth != null || status.urls_in_queue != null) && (
-            <div className="grid gap-4 md:grid-cols-2">
-              {status.current_depth != null && (
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium">
-                      Current Depth
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-bold">
-                      {status.current_depth}
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-              {status.urls_in_queue != null && (
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium">
-                      URLs in Queue
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-bold">
-                      {status.urls_in_queue}
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-            </div>
-          )}
+            {progressPercent === null && status.max_pages == null && (
+              <Card>
+                <CardContent className="py-4">
+                  <p className="text-sm text-muted-foreground">Pages</p>
+                  <p className="text-sm mt-1">
+                    {status.pages_crawled} crawled, {status.documents_sent}{" "}
+                    sent
+                    {status.eta_seconds != null && status.eta_seconds > 0 && (
+                      <span className="text-muted-foreground">
+                        {" "}
+                        &middot; ~{formatDuration(status.eta_seconds)} remaining
+                      </span>
+                    )}
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+          </div>
         </>
       )}
 
       {/* Live Event Log */}
       <Card>
-        <CardHeader>
+        <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle>Live Events</CardTitle>
+              <CardTitle className="text-base">Live Events</CardTitle>
               <CardDescription>Real-time crawl activity</CardDescription>
             </div>
-            <Badge variant={wsConnected ? "default" : "outline"}>
-              {wsConnected ? "Connected" : "Disconnected"}
-            </Badge>
+            <div className="flex items-center gap-2">
+              {logs.length > 0 && (
+                <Badge variant="outline" className="text-xs">
+                  {logs.length} events
+                </Badge>
+              )}
+              <Badge variant={wsConnected ? "default" : "outline"}>
+                <span
+                  className={`mr-1.5 inline-block h-1.5 w-1.5 rounded-full ${
+                    wsConnected ? "bg-green-400" : "bg-gray-400"
+                  }`}
+                />
+                {wsConnected ? "Live" : "Disconnected"}
+              </Badge>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
           <div
             ref={logRef}
-            className="h-[300px] bg-muted rounded-lg p-4 overflow-auto font-mono text-xs space-y-1"
+            className="h-[350px] bg-muted rounded-lg p-4 overflow-auto font-mono text-xs space-y-0.5"
           >
             {logs.length === 0 ? (
-              <p className="text-muted-foreground">
-                Waiting for events...
-              </p>
+              <div className="flex items-center justify-center h-full text-muted-foreground">
+                <p>Waiting for events...</p>
+              </div>
             ) : (
               logs.map((log, i) => (
                 <div
                   key={i}
-                  className={
+                  className={`py-0.5 ${
                     log.variant === "error" ? "text-destructive" : ""
-                  }
+                  }`}
                 >
-                  <span className="text-muted-foreground">[{log.time}]</span>{" "}
+                  <span className="text-muted-foreground select-none">
+                    [{log.time}]
+                  </span>{" "}
                   {log.message}
                 </div>
               ))
