@@ -336,6 +336,14 @@ pub struct JobState {
 
     /// Estimated time remaining (seconds)
     pub eta_seconds: Option<u64>,
+
+    /// Original seed URLs (for display in UI)
+    #[serde(default)]
+    pub start_urls: Vec<String>,
+
+    /// Max pages limit from config (for progress display)
+    #[serde(default)]
+    pub max_pages: Option<u64>,
 }
 
 impl JobState {
@@ -355,6 +363,8 @@ impl JobState {
             error_message: None,
             crawl_rate: 0.0,
             eta_seconds: None,
+            start_urls: Vec::new(),
+            max_pages: None,
         }
     }
 

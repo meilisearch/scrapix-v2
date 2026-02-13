@@ -93,9 +93,13 @@ pub use selectors::{
     SelectorExtractor, SelectorInput, Transform,
 };
 
+use scraper::Html;
 use serde_json::Value;
 use std::collections::HashMap;
 use thiserror::Error;
+
+// Re-export scraper::Html so callers that already have a parsed DOM can use it
+pub use scraper;
 
 /// Combined error type for all extraction errors
 #[derive(Debug, Error)]
@@ -258,24 +262,33 @@ impl Extractor {
         self
     }
 
-    /// Extract all enabled features from HTML
+    /// Extract all enabled features from HTML (parses DOM once internally)
     pub fn extract(&self, html: &str) -> Result<ExtractionResult, ExtractorError> {
+        let document = Html::parse_document(html);
+        self.extract_from_dom(&document)
+    }
+
+    /// Extract all enabled features from a pre-parsed DOM, avoiding redundant parsing
+    pub fn extract_from_dom(
+        &self,
+        document: &Html,
+    ) -> Result<ExtractionResult, ExtractorError> {
         let mut result = ExtractionResult::default();
 
         if let Some(ref extractor) = self.metadata_extractor {
-            result.metadata = Some(extractor.extract(html)?);
+            result.metadata = Some(extractor.extract_from_dom(document)?);
         }
 
         if let Some(ref extractor) = self.schema_extractor {
-            result.schema = Some(extractor.extract(html)?);
+            result.schema = Some(extractor.extract_from_dom(document)?);
         }
 
         if let Some(ref extractor) = self.selector_extractor {
-            result.custom = Some(extractor.extract(html)?);
+            result.custom = Some(extractor.extract_from_dom(document)?);
         }
 
         if let Some(ref splitter) = self.block_splitter {
-            result.blocks = Some(splitter.split(html)?);
+            result.blocks = Some(splitter.split_from_dom(document)?);
         }
 
         Ok(result)

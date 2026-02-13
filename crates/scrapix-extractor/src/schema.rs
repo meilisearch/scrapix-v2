@@ -113,13 +113,18 @@ impl SchemaExtractor {
     #[instrument(skip(self, html), level = "debug")]
     pub fn extract(&self, html: &str) -> Result<ExtractedSchema, SchemaError> {
         let document = Html::parse_document(html);
+        self.extract_from_dom(&document)
+    }
+
+    /// Extract all schema data from a pre-parsed DOM, avoiding redundant parsing
+    pub fn extract_from_dom(&self, document: &Html) -> Result<ExtractedSchema, SchemaError> {
         let mut result = ExtractedSchema::default();
 
         // Extract JSON-LD
-        self.extract_json_ld(&document, &mut result)?;
+        self.extract_json_ld(document, &mut result)?;
 
         // Extract Microdata
-        self.extract_microdata(&document, &mut result);
+        self.extract_microdata(document, &mut result);
 
         debug!(
             json_ld_count = result.json_ld_count,

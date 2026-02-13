@@ -11,7 +11,7 @@ use scrapix_core::{Document, RawPage, Result, ScrapixError};
 
 use crate::language::detect_language;
 use crate::markdown::html_to_markdown;
-use crate::readability::extract_content;
+use crate::readability::{extract_content_from_dom, ReadabilityConfig};
 
 /// HTML parser configuration
 #[derive(Debug, Clone)]
@@ -98,17 +98,18 @@ impl HtmlParser {
             doc.schema = self.extract_schema(&html);
         }
 
-        // Extract main content
+        // Extract main content - reuse the already-parsed DOM
         if self.config.extract_content {
-            let content = extract_content(&page.html);
+            let content =
+                extract_content_from_dom(&html, &ReadabilityConfig::default());
             if content.len() >= self.config.min_content_length {
                 // Convert to markdown if enabled
                 if self.config.convert_to_markdown {
                     doc.markdown = Some(html_to_markdown(&content));
                 }
 
-                // Store cleaned text content
-                doc.content = Some(self.clean_text(&content));
+                // Readability output is already plain text, just normalize whitespace
+                doc.content = Some(clean_extracted_text(&content));
             }
         }
 
@@ -281,15 +282,41 @@ impl HtmlParser {
         links
     }
 
-    /// Clean text content (remove extra whitespace, etc.)
-    fn clean_text(&self, html: &str) -> String {
-        // Parse as HTML to extract text
-        let doc = Html::parse_document(html);
-        let text = doc.root_element().text().collect::<Vec<_>>().join(" ");
+    /// Extract links from a pre-parsed DOM, avoiding redundant parsing
+    pub fn extract_links_from_dom(&self, document: &Html, base_url: &str) -> Vec<String> {
+        let base = match Url::parse(base_url) {
+            Ok(url) => url,
+            Err(_) => return vec![],
+        };
 
-        // Clean whitespace
-        text.split_whitespace().collect::<Vec<_>>().join(" ")
+        let mut links = Vec::new();
+
+        for element in document.select(&self.link_selector) {
+            if let Some(href) = element.value().attr("href") {
+                if href.starts_with("javascript:")
+                    || href.starts_with("mailto:")
+                    || href.starts_with("tel:")
+                    || href.starts_with('#')
+                {
+                    continue;
+                }
+
+                if let Ok(resolved) = base.join(href) {
+                    if resolved.scheme() == "http" || resolved.scheme() == "https" {
+                        links.push(resolved.to_string());
+                    }
+                }
+            }
+        }
+
+        links
     }
+}
+
+/// Clean extracted text content (normalize whitespace only, no HTML parsing).
+/// Readability output is already plain text, so re-parsing as HTML is wasteful.
+fn clean_extracted_text(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Implementation of core Parser trait

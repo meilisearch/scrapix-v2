@@ -260,10 +260,15 @@ impl SelectorExtractor {
     #[instrument(skip(self, html), level = "debug")]
     pub fn extract(&self, html: &str) -> Result<ExtractedSelectors, SelectorError> {
         let document = Html::parse_document(html);
+        self.extract_from_dom(&document)
+    }
+
+    /// Extract values from a pre-parsed DOM, avoiding redundant parsing
+    pub fn extract_from_dom(&self, document: &Html) -> Result<ExtractedSelectors, SelectorError> {
         let mut result = ExtractedSelectors::default();
 
         for (field_name, definition) in &self.definitions {
-            match self.extract_field(&document, definition) {
+            match self.extract_field(document, definition) {
                 Ok(value) => {
                     if value != Value::Null || definition.default.is_some() {
                         let final_value = if value == Value::Null {

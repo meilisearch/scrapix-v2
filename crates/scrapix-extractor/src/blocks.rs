@@ -264,15 +264,20 @@ impl BlockSplitter {
     #[instrument(skip(self, html), level = "debug")]
     pub fn split(&self, html: &str) -> Result<ExtractedBlocks, BlockError> {
         let document = Html::parse_document(html);
+        self.split_from_dom(&document)
+    }
+
+    /// Split a pre-parsed DOM into content blocks, avoiding redundant parsing
+    pub fn split_from_dom(&self, document: &Html) -> Result<ExtractedBlocks, BlockError> {
         let mut result = ExtractedBlocks::default();
 
         // Find content container
-        let content_root = self.find_content_root(&document);
+        let content_root = self.find_content_root(document);
 
         // Extract blocks
         let blocks = match content_root {
             Some(root) => self.extract_blocks_from_element(&root),
-            None => self.extract_blocks_from_document(&document),
+            None => self.extract_blocks_from_document(document),
         };
 
         // Filter and limit blocks

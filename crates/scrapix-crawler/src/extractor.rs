@@ -21,6 +21,10 @@ pub struct ExtractorConfig {
     pub follow_subdomains: bool,
     /// Whether to extract links from specific attributes
     pub extract_from_data_attrs: bool,
+    /// Explicit allowed domains whitelist (strict, no inference)
+    /// When non-empty, ONLY these exact domains are allowed.
+    /// This overrides follow_external and follow_subdomains.
+    pub allowed_domains: Vec<String>,
 }
 
 impl Default for ExtractorConfig {
@@ -31,6 +35,7 @@ impl Default for ExtractorConfig {
             follow_external: false,
             follow_subdomains: true,
             extract_from_data_attrs: false,
+            allowed_domains: vec![],
         }
     }
 }
@@ -242,19 +247,29 @@ impl UrlExtractor {
 
     /// Check if a domain is allowed based on configuration
     fn is_allowed_domain(&self, url_domain: &str, base_domain: &str) -> bool {
+        // If explicit allowed_domains whitelist is set, use ONLY that (strict mode)
+        if !self.config.allowed_domains.is_empty() {
+            return self
+                .config
+                .allowed_domains
+                .iter()
+                .any(|d| d.eq_ignore_ascii_case(url_domain));
+        }
+
+        // Fallback to automatic domain inference (legacy behavior)
         if url_domain == base_domain {
             return true;
         }
 
         if self.config.follow_subdomains {
             // Check if url_domain is a subdomain of base_domain
+            // e.g., blog.example.com is a subdomain of example.com
             if url_domain.ends_with(&format!(".{}", base_domain)) {
                 return true;
             }
-            // Or if base_domain is a subdomain of url_domain
-            if base_domain.ends_with(&format!(".{}", url_domain)) {
-                return true;
-            }
+            // NOTE: We intentionally do NOT check if base_domain is a subdomain of url_domain
+            // That was a bug that caused domain explosion (e.g., en.wikipedia.org allowing wikipedia.org
+            // which then allows all other language subdomains)
         }
 
         self.config.follow_external
@@ -351,6 +366,11 @@ impl UrlExtractorBuilder {
 
     pub fn follow_subdomains(mut self, follow: bool) -> Self {
         self.config.follow_subdomains = follow;
+        self
+    }
+
+    pub fn allowed_domains(mut self, domains: Vec<String>) -> Self {
+        self.config.allowed_domains = domains;
         self
     }
 
@@ -454,12 +474,59 @@ mod tests {
     }
 
     #[test]
+    fn test_allowed_domains_whitelist() {
+        // When allowed_domains is set, only those exact domains are allowed
+        let extractor = UrlExtractor::new(ExtractorConfig {
+            allowed_domains: vec!["en.wikipedia.org".to_string()],
+            ..Default::default()
+        });
+        let page = make_page(
+            "https://en.wikipedia.org/wiki/Main",
+            "<html><body>\
+                <a href=\"https://en.wikipedia.org/wiki/Article\">Same domain</a>\
+                <a href=\"https://fr.wikipedia.org/wiki/Article\">French wiki</a>\
+                <a href=\"https://wikipedia.org/\">Parent domain</a>\
+                <a href=\"https://wikidata.org/\">External</a>\
+            </body></html>",
+        );
+
+        let urls = extractor.extract_urls(&page);
+        assert_eq!(urls.len(), 1);
+        assert!(urls[0].contains("en.wikipedia.org"));
+    }
+
+    #[test]
+    fn test_no_parent_domain_escape() {
+        // Verify that parent domains don't escape the filter
+        // (the old bug where en.wikipedia.org would allow wikipedia.org)
+        let extractor = UrlExtractor::new(ExtractorConfig {
+            follow_subdomains: true,
+            follow_external: false,
+            ..Default::default()
+        });
+        let page = make_page(
+            "https://en.wikipedia.org/wiki/Main",
+            "<html><body>\
+                <a href=\"https://en.wikipedia.org/wiki/Article\">Same</a>\
+                <a href=\"https://wikipedia.org/\">Parent</a>\
+            </body></html>",
+        );
+
+        let urls = extractor.extract_urls(&page);
+        // Only same domain should be allowed, NOT the parent
+        assert_eq!(urls.len(), 1);
+        assert!(urls[0].contains("en.wikipedia.org"));
+        assert!(!urls.iter().any(|u| u == "https://wikipedia.org"));
+    }
+
+    #[test]
     fn test_glob_patterns() {
         let extractor = UrlExtractor::new(ExtractorConfig {
             patterns: Some(UrlPatterns {
                 include: vec!["https://example.com/docs/**".to_string()],
                 exclude: vec!["**/_internal/**".to_string()],
                 index_only: vec![],
+                allowed_domains: vec![],
             }),
             ..Default::default()
         });

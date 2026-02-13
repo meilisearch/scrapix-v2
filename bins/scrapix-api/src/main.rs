@@ -68,7 +68,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use scrapix_core::{CrawlConfig, CrawlUrl, JobState, JobStatus};
 use scrapix_extractor::{Extractor, ExtractedMetadata};
-use scrapix_parser::{extract_content, html_to_markdown, detect_language_info};
+use scrapix_parser::{extract_content, html_to_markdown, html_to_main_content_markdown, detect_language_info};
 use scrapix_queue::{topic_names, ConsumerBuilder, CrawlEvent, KafkaProducer, ProducerBuilder, UrlMessage};
 use scrapix_storage::clickhouse::{
     ClickHouseStorage, CrawlEvent as ClickHouseCrawlEvent, CrawlEventBatcher,
@@ -474,6 +474,10 @@ struct JobStatusResponse {
     crawl_rate: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     eta_seconds: Option<u64>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    start_urls: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_pages: Option<u64>,
 }
 
 impl From<JobState> for JobStatusResponse {
@@ -493,6 +497,8 @@ impl From<JobState> for JobStatusResponse {
             error_message: job.error_message,
             crawl_rate: job.crawl_rate,
             eta_seconds: job.eta_seconds,
+            start_urls: job.start_urls,
+            max_pages: job.max_pages,
         }
     }
 }
@@ -875,7 +881,11 @@ async fn scrape_url(
 
     // Extract content based on requested formats
     let markdown = if formats.contains(&ScrapeFormat::Markdown) {
-        Some(html_to_markdown(&raw_html))
+        if request.only_main_content {
+            Some(html_to_main_content_markdown(&raw_html))
+        } else {
+            Some(html_to_markdown(&raw_html))
+        }
     } else {
         None
     };
@@ -1016,6 +1026,8 @@ async fn create_crawl(
 
     // Create job state
     let mut job = state.create_job(&job_id, &config.index_uid);
+    job.start_urls = config.start_urls.clone();
+    job.max_pages = config.max_pages;
     job.start();
 
     // Build allowed_domains list:
@@ -1952,9 +1964,23 @@ async fn main() -> anyhow::Result<()> {
 
     // Start server with graceful shutdown
     let addr: SocketAddr = format!("{}:{}", args.host, args.port).parse()?;
-    info!("Listening on {}", addr);
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    // Retry binding in case the previous process hasn't released the port yet (hot-reload)
+    let listener = {
+        let mut retries = 0u32;
+        loop {
+            match tokio::net::TcpListener::bind(addr).await {
+                Ok(l) => break l,
+                Err(e) if retries < 10 => {
+                    retries += 1;
+                    warn!("Port {} busy, retrying in 500ms ({}/10): {}", args.port, retries, e);
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+    };
+    info!("Listening on {}", addr);
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
             tokio::signal::ctrl_c()
