@@ -1,350 +1,340 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { createClient } from "@/lib/supabase/client";
-import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Loader2, Play, Copy, ExternalLink } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
 import { submitScrape, createCrawl } from "@/lib/api";
-
-interface ApiKey {
-  id: string;
-  name: string;
-  prefix: string;
-}
+import type { ScrapeResult } from "@/lib/api-types";
+import { UrlBar } from "./url-bar";
+import { ScrapeOptions, type ScrapeState } from "./scrape-options";
+import { CrawlOptions, type CrawlState, defaultCrawlState } from "./crawl-options";
+import { ResultPanel } from "./result-panel";
+import { RecentRuns, loadRuns, saveRun, type RunEntry } from "./recent-runs";
 
 export default function PlaygroundPage() {
-  const router = useRouter();
-  const [keys, setKeys] = useState<ApiKey[]>([]);
-  const [selectedKey, setSelectedKey] = useState<string>("");
+  const [mode, setMode] = useState<"scrape" | "crawl">("scrape");
+  const [url, setUrl] = useState("https://example.com");
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<string>("");
-  const [activeTab, setActiveTab] = useState("scrape");
-  const [lastJobId, setLastJobId] = useState<string | null>(null);
+  const [result, setResult] = useState<ScrapeResult | null>(null);
+  const [crawlResult, setCrawlResult] = useState<{
+    job_id: string;
+    status: string;
+    message?: string;
+  } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [runs, setRuns] = useState<RunEntry[]>([]);
 
-  // Scrape form state
-  const [scrapeUrl, setScrapeUrl] = useState("https://example.com");
-  const [scrapeFormat, setScrapeFormat] = useState("markdown");
+  const [scrapeState, setScrapeState] = useState<ScrapeState>({
+    formats: ["markdown", "metadata"],
+    only_main_content: true,
+    include_links: false,
+    timeout_ms: "30000",
+  });
 
-  // Crawl form state
-  const [crawlUrls, setCrawlUrls] = useState("https://example.com");
-  const [crawlDepth, setCrawlDepth] = useState("2");
-  const [crawlMaxPages, setCrawlMaxPages] = useState("100");
-
-  const supabase = createClient();
+  const [crawlState, setCrawlState] = useState<CrawlState>(defaultCrawlState);
 
   useEffect(() => {
-    fetchKeys();
+    setRuns(loadRuns());
   }, []);
 
-  const fetchKeys = async () => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return;
-
-    const { data: membership } = await supabase
-      .from("account_members")
-      .select("account_id")
-      .eq("user_id", user.id)
-      .single();
-
-    if (membership) {
-      const { data: keysData } = await supabase
-        .from("api_keys")
-        .select("id, name, prefix")
-        .eq("account_id", membership.account_id)
-        .eq("active", true)
-        .order("created_at", { ascending: false });
-
-      if (keysData && keysData.length > 0) {
-        setKeys(keysData);
-        setSelectedKey(keysData[0].id);
-      }
+  const handleScrape = useCallback(async () => {
+    if (!url.trim()) {
+      toast.error("Please enter a URL");
+      return;
     }
-  };
+    if (scrapeState.formats.length === 0) {
+      toast.error("Select at least one output format");
+      return;
+    }
 
-  const handleScrape = async () => {
-    if (!scrapeUrl.trim()) {
+    setLoading(true);
+    setResult(null);
+    setCrawlResult(null);
+    setError(null);
+
+    try {
+      const data = await submitScrape({
+        url,
+        formats: scrapeState.formats,
+        only_main_content: scrapeState.only_main_content,
+        include_links: scrapeState.include_links,
+        timeout_ms: parseInt(scrapeState.timeout_ms) || 30000,
+      });
+      setResult(data);
+      const newRuns = saveRun({
+        id: crypto.randomUUID(),
+        type: "scrape",
+        url,
+        status_code: data.status_code,
+        duration_ms: data.scrape_duration_ms,
+        timestamp: new Date().toISOString(),
+      });
+      setRuns(newRuns);
+    } catch (err) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : "Failed to fetch. Is the API running?";
+      setError(msg);
+    }
+
+    setLoading(false);
+  }, [url, scrapeState]);
+
+  const handleCrawl = useCallback(async () => {
+    if (!url.trim()) {
       toast.error("Please enter a URL");
       return;
     }
 
-    setLoading(true);
-    setResult("");
-    setLastJobId(null);
-
-    try {
-      const data = await submitScrape(scrapeUrl, scrapeFormat);
-      setResult(JSON.stringify(data, null, 2));
-    } catch (error) {
-      setResult(
-        JSON.stringify(
-          {
-            error:
-              error instanceof Error
-                ? error.message
-                : "Failed to fetch. Is the API running?",
-          },
-          null,
-          2
-        )
-      );
-    }
-
-    setLoading(false);
-  };
-
-  const handleCrawl = async () => {
-    const urls = crawlUrls
+    const urls = url
       .split("\n")
       .map((u) => u.trim())
       .filter((u) => u);
-    if (urls.length === 0) {
-      toast.error("Please enter at least one URL");
-      return;
-    }
+
+    const indexUid =
+      crawlState.index_uid.trim() || `playground-${Date.now()}`;
 
     setLoading(true);
-    setResult("");
-    setLastJobId(null);
+    setResult(null);
+    setCrawlResult(null);
+    setError(null);
+
+    // Helper to split newline-separated text into a filtered array
+    const lines = (s: string) =>
+      s.split("\n").map((l) => l.trim()).filter((l) => l);
+
+    // Helper to parse an optional int
+    const optInt = (s: string) => {
+      const n = parseInt(s);
+      return isNaN(n) ? undefined : n;
+    };
+
+    // Helper to parse an optional float
+    const optFloat = (s: string) => {
+      const n = parseFloat(s);
+      return isNaN(n) ? undefined : n;
+    };
+
+    // Helper to parse optional JSON
+    const optJson = (s: string) => {
+      if (!s.trim()) return undefined;
+      try {
+        return JSON.parse(s);
+      } catch {
+        return undefined;
+      }
+    };
+
+    // ── Build config ──
+    const config: Record<string, unknown> = {
+      start_urls: urls,
+      index_uid: indexUid,
+      crawler_type: crawlState.crawler_type,
+      max_depth: optInt(crawlState.max_depth),
+      max_pages: optInt(crawlState.max_pages),
+    };
+
+    // Meilisearch
+    const ms: Record<string, unknown> = {
+      url: crawlState.meilisearch_url,
+      api_key: crawlState.meilisearch_api_key,
+    };
+    if (crawlState.meilisearch_primary_key.trim())
+      ms.primary_key = crawlState.meilisearch_primary_key;
+    const batchSize = optInt(crawlState.meilisearch_batch_size);
+    if (batchSize && batchSize !== 1000) ms.batch_size = batchSize;
+    if (crawlState.meilisearch_keep_settings) ms.keep_settings = true;
+    config.meilisearch = ms;
+
+    // Allowed domains
+    const domains = lines(crawlState.allowed_domains);
+    if (domains.length > 0) config.allowed_domains = domains;
+
+    // URL patterns
+    const incl = lines(crawlState.include_patterns);
+    const excl = lines(crawlState.exclude_patterns);
+    const indexOnly = lines(crawlState.index_only_patterns);
+    if (incl.length > 0 || excl.length > 0 || indexOnly.length > 0) {
+      const patterns: Record<string, string[]> = {};
+      if (incl.length > 0) patterns.include = incl;
+      if (excl.length > 0) patterns.exclude = excl;
+      if (indexOnly.length > 0) patterns.index_only = indexOnly;
+      config.url_patterns = patterns;
+    }
+
+    // Sitemap
+    if (crawlState.sitemap_enabled) {
+      const sitemapUrls = lines(crawlState.sitemap_urls);
+      config.sitemap = {
+        enabled: true,
+        ...(sitemapUrls.length > 0 ? { urls: sitemapUrls } : {}),
+      };
+    }
+
+    // Concurrency
+    const maxConcurrent = optInt(crawlState.max_concurrent_requests);
+    const browserPool = optInt(crawlState.browser_pool_size);
+    const dnsConcurrency = optInt(crawlState.dns_concurrency);
+    if (
+      (maxConcurrent && maxConcurrent !== 50) ||
+      (browserPool && browserPool !== 5) ||
+      (dnsConcurrency && dnsConcurrency !== 100)
+    ) {
+      config.concurrency = {
+        ...(maxConcurrent ? { max_concurrent_requests: maxConcurrent } : {}),
+        ...(browserPool ? { browser_pool_size: browserPool } : {}),
+        ...(dnsConcurrency ? { dns_concurrency: dnsConcurrency } : {}),
+      };
+    }
+
+    // Rate limiting
+    const rateLimit: Record<string, unknown> = {
+      respect_robots_txt: crawlState.respect_robots,
+    };
+    const rps = optFloat(crawlState.requests_per_second);
+    const rpm = optInt(crawlState.requests_per_minute);
+    const domainDelay = optInt(crawlState.per_domain_delay_ms);
+    const crawlDelay = optInt(crawlState.default_crawl_delay_ms);
+    if (rps) rateLimit.requests_per_second = rps;
+    if (rpm) rateLimit.requests_per_minute = rpm;
+    if (domainDelay && domainDelay !== 100)
+      rateLimit.per_domain_delay_ms = domainDelay;
+    if (crawlDelay && crawlDelay !== 1000)
+      rateLimit.default_crawl_delay_ms = crawlDelay;
+    config.rate_limit = rateLimit;
+
+    // Features
+    const features: Record<string, unknown> = {};
+    if (!crawlState.feat_metadata) features.metadata = { enabled: false };
+    if (!crawlState.feat_markdown) features.markdown = { enabled: false };
+    if (crawlState.feat_block_split) features.block_split = { enabled: true };
+    if (crawlState.feat_schema) {
+      const schema: Record<string, unknown> = { enabled: true };
+      const types = crawlState.schema_only_types
+        .split(",")
+        .map((t) => t.trim())
+        .filter((t) => t);
+      if (types.length > 0) schema.only_types = types;
+      schema.convert_dates = crawlState.schema_convert_dates;
+      features.schema = schema;
+    }
+    if (crawlState.feat_custom_selectors) {
+      const selectors = optJson(crawlState.custom_selectors);
+      if (selectors) {
+        features.custom_selectors = { enabled: true, selectors };
+      }
+    }
+    if (crawlState.feat_ai_extraction) {
+      const ai: Record<string, unknown> = {
+        enabled: true,
+        prompt: crawlState.ai_extraction_prompt,
+        model: crawlState.ai_extraction_model,
+      };
+      const maxTokens = optInt(crawlState.ai_extraction_max_tokens);
+      if (maxTokens) ai.max_tokens = maxTokens;
+      features.ai_extraction = ai;
+    }
+    if (crawlState.feat_ai_summary) features.ai_summary = { enabled: true };
+    if (crawlState.feat_embeddings) {
+      const emb: Record<string, unknown> = {
+        enabled: true,
+        model: crawlState.embeddings_model,
+      };
+      const dims = optInt(crawlState.embeddings_dimensions);
+      if (dims) emb.dimensions = dims;
+      features.embeddings = emb;
+    }
+    if (Object.keys(features).length > 0) config.features = features;
+
+    // Headers
+    const headers = optJson(crawlState.headers);
+    if (headers) config.headers = headers;
+
+    // User agents
+    const uas = lines(crawlState.user_agents);
+    if (uas.length > 0) config.user_agents = uas;
+
+    // Proxy
+    const proxyUrls = lines(crawlState.proxy_urls);
+    if (proxyUrls.length > 0) {
+      config.proxy = {
+        urls: proxyUrls,
+        rotation: crawlState.proxy_rotation,
+      };
+    }
 
     try {
-      const data = await createCrawl({
-        start_urls: urls,
-        max_depth: parseInt(crawlDepth),
-        max_pages: parseInt(crawlMaxPages),
-        index_uid: `playground-${Date.now()}`,
+      const data = await createCrawl(config);
+      setCrawlResult({
+        job_id: data.job_id,
+        status: "created",
+        message: `Crawl job submitted for ${urls.length} URL(s)`,
       });
-      setResult(JSON.stringify(data, null, 2));
-      if (data.job_id) {
-        setLastJobId(data.job_id);
-      }
-    } catch (error) {
-      setResult(
-        JSON.stringify(
-          {
-            error:
-              error instanceof Error
-                ? error.message
-                : "Failed to fetch. Is the API running?",
-          },
-          null,
-          2
-        )
-      );
+      const newRuns = saveRun({
+        id: crypto.randomUUID(),
+        type: "crawl",
+        url: urls[0],
+        timestamp: new Date().toISOString(),
+      });
+      setRuns(newRuns);
+    } catch (err) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : "Failed to fetch. Is the API running?";
+      setError(msg);
     }
 
     setLoading(false);
-  };
+  }, [url, crawlState]);
 
-  const copyResult = () => {
-    navigator.clipboard.writeText(result);
-    toast.success("Copied to clipboard");
+  const handleSubmit = mode === "scrape" ? handleScrape : handleCrawl;
+
+  const handleReplay = (run: RunEntry) => {
+    setMode(run.type);
+    setUrl(run.url);
   };
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold tracking-tight">Playground</h2>
-        <p className="text-muted-foreground">
-          Test the Scrapix API directly from your browser
-        </p>
-      </div>
+    <div className="flex flex-col gap-4 h-[calc(100vh-6rem)]">
+      {/* URL Bar */}
+      <UrlBar
+        mode={mode}
+        onModeChange={setMode}
+        url={url}
+        onUrlChange={setUrl}
+        onSubmit={handleSubmit}
+        loading={loading}
+      />
 
-      {keys.length === 0 ? (
-        <Card>
-          <CardContent className="py-8 text-center">
-            <p className="text-muted-foreground">
-              You need an API key to use the playground.{" "}
-              <a href="/api-keys" className="text-primary hover:underline">
-                Create one here
-              </a>
-              .
-            </p>
+      {/* Main panels */}
+      <div className="grid grid-cols-1 lg:grid-cols-[2fr_3fr] gap-4 flex-1 min-h-0">
+        <Card className="overflow-auto">
+          <CardContent className="p-4">
+            {mode === "scrape" ? (
+              <ScrapeOptions state={scrapeState} onChange={setScrapeState} />
+            ) : (
+              <CrawlOptions state={crawlState} onChange={setCrawlState} />
+            )}
           </CardContent>
         </Card>
-      ) : (
-        <div className="grid gap-6 lg:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle>Request</CardTitle>
-              <CardDescription>Configure and send your request</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label>API Key</Label>
-                <Select value={selectedKey} onValueChange={setSelectedKey}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select an API key" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {keys.map((key) => (
-                      <SelectItem key={key.id} value={key.id}>
-                        {key.name} ({key.prefix})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
 
-              <Tabs value={activeTab} onValueChange={setActiveTab}>
-                <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="scrape">Scrape</TabsTrigger>
-                  <TabsTrigger value="crawl">Crawl</TabsTrigger>
-                </TabsList>
+        <Card className="overflow-hidden">
+          <CardContent className="p-4 h-full">
+            <ResultPanel
+              result={result}
+              crawlResult={crawlResult}
+              mode={mode}
+              loading={loading}
+              error={error}
+            />
+          </CardContent>
+        </Card>
+      </div>
 
-                <TabsContent value="scrape" className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="scrapeUrl">URL</Label>
-                    <Input
-                      id="scrapeUrl"
-                      type="url"
-                      placeholder="https://example.com"
-                      value={scrapeUrl}
-                      onChange={(e) => setScrapeUrl(e.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Output Format</Label>
-                    <Select value={scrapeFormat} onValueChange={setScrapeFormat}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="markdown">Markdown</SelectItem>
-                        <SelectItem value="html">HTML</SelectItem>
-                        <SelectItem value="text">Plain Text</SelectItem>
-                        <SelectItem value="json">Structured JSON</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <Button
-                    className="w-full"
-                    onClick={handleScrape}
-                    disabled={loading}
-                  >
-                    {loading ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : (
-                      <Play className="mr-2 h-4 w-4" />
-                    )}
-                    Scrape URL
-                  </Button>
-                </TabsContent>
-
-                <TabsContent value="crawl" className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="crawlUrls">Start URLs (one per line)</Label>
-                    <Textarea
-                      id="crawlUrls"
-                      placeholder="https://example.com&#10;https://example.com/docs"
-                      value={crawlUrls}
-                      onChange={(e) => setCrawlUrls(e.target.value)}
-                      rows={3}
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="crawlDepth">Max Depth</Label>
-                      <Input
-                        id="crawlDepth"
-                        type="number"
-                        min="1"
-                        max="10"
-                        value={crawlDepth}
-                        onChange={(e) => setCrawlDepth(e.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="crawlMaxPages">Max Pages</Label>
-                      <Input
-                        id="crawlMaxPages"
-                        type="number"
-                        min="1"
-                        max="10000"
-                        value={crawlMaxPages}
-                        onChange={(e) => setCrawlMaxPages(e.target.value)}
-                      />
-                    </div>
-                  </div>
-                  <Button
-                    className="w-full"
-                    onClick={handleCrawl}
-                    disabled={loading}
-                  >
-                    {loading ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : (
-                      <Play className="mr-2 h-4 w-4" />
-                    )}
-                    Start Crawl
-                  </Button>
-                </TabsContent>
-              </Tabs>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0">
-              <div>
-                <CardTitle>Response</CardTitle>
-                <CardDescription>API response will appear here</CardDescription>
-              </div>
-              {result && (
-                <Button variant="ghost" size="icon" onClick={copyResult}>
-                  <Copy className="h-4 w-4" />
-                </Button>
-              )}
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="h-[400px] bg-muted rounded-lg p-4 overflow-auto">
-                {loading ? (
-                  <div className="flex items-center justify-center h-full">
-                    <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-                  </div>
-                ) : result ? (
-                  <pre className="text-sm whitespace-pre-wrap">{result}</pre>
-                ) : (
-                  <p className="text-muted-foreground text-center">
-                    Send a request to see the response
-                  </p>
-                )}
-              </div>
-
-              {lastJobId && (
-                <Button
-                  className="w-full"
-                  variant="outline"
-                  onClick={() => router.push(`/jobs/${lastJobId}`)}
-                >
-                  <ExternalLink className="mr-2 h-4 w-4" />
-                  View Job
-                </Button>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      )}
+      {/* Recent runs */}
+      <RecentRuns runs={runs} onReplay={handleReplay} />
     </div>
   );
 }

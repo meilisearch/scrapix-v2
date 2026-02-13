@@ -7,8 +7,14 @@ import type {
   ScrapeResult,
 } from "./api-types";
 
-const BASE =
-  process.env.NEXT_PUBLIC_SCRAPIX_API_URL || "http://localhost:8080";
+// API calls go through Next.js rewrites (/api/scrapix/* → backend) to avoid CORS.
+// WebSocket still connects directly to the backend.
+const BASE = "/api/scrapix";
+const WS_BASE =
+  (process.env.NEXT_PUBLIC_SCRAPIX_API_URL || "http://localhost:8080").replace(
+    /^http/,
+    "ws"
+  );
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, init);
@@ -34,7 +40,9 @@ export async function fetchJobStatus(id: string): Promise<JobStatus> {
 }
 
 export async function deleteJob(id: string): Promise<void> {
-  await fetch(`${BASE}/job/${encodeURIComponent(id)}`, { method: "DELETE" });
+  await fetch(`${BASE}/job/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
 }
 
 export async function fetchErrors(last?: number): Promise<RecentErrors> {
@@ -42,9 +50,8 @@ export async function fetchErrors(last?: number): Promise<RecentErrors> {
   return request(`/errors${params}`);
 }
 
-export async function createCrawl(
-  config: CrawlConfig
-): Promise<{ job_id: string }> {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function createCrawl(config: Record<string, any>): Promise<{ job_id: string }> {
   return request("/crawl", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -52,19 +59,24 @@ export async function createCrawl(
   });
 }
 
-export async function submitScrape(
-  url: string,
-  format: string
-): Promise<ScrapeResult> {
+export interface ScrapeOptions {
+  url: string;
+  formats: string[];
+  only_main_content?: boolean;
+  include_links?: boolean;
+  timeout_ms?: number;
+  headers?: Record<string, string>;
+}
+
+export async function submitScrape(opts: ScrapeOptions): Promise<ScrapeResult> {
   return request("/scrape", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url, format }),
+    body: JSON.stringify(opts),
   });
 }
 
-/** Derive the WebSocket URL from the configured API base URL. */
+/** WebSocket URL pointing directly at the backend (rewrites don't proxy WS). */
 export function wsUrl(path: string): string {
-  const base = BASE.replace(/^http/, "ws");
-  return `${base}${path}`;
+  return `${WS_BASE}${path}`;
 }

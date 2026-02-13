@@ -56,11 +56,11 @@ export default function JobsPage() {
     return () => clearInterval(interval);
   }, [refresh]);
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (jobId: string) => {
     if (!confirm("Are you sure you want to delete this job?")) return;
     try {
-      await deleteJob(id);
-      setJobs((prev) => prev.filter((j) => j.id !== id));
+      await deleteJob(jobId);
+      setJobs((prev) => prev.filter((j) => j.job_id !== jobId));
       toast.success("Job deleted");
     } catch {
       toast.error("Failed to delete job");
@@ -120,21 +120,22 @@ export default function JobsPage() {
                 <TableRow>
                   <TableHead>Job ID</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Start URLs</TableHead>
+                  <TableHead>Index</TableHead>
                   <TableHead className="text-right">Pages</TableHead>
-                  <TableHead>Created</TableHead>
+                  <TableHead className="text-right">Errors</TableHead>
+                  <TableHead>Started</TableHead>
                   <TableHead className="w-[100px]">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {jobs.map((job) => (
-                  <TableRow key={job.id}>
+                  <TableRow key={job.job_id}>
                     <TableCell className="font-mono text-xs">
                       <Link
-                        href={`/jobs/${job.id}`}
+                        href={`/jobs/${job.job_id}`}
                         className="hover:underline text-primary"
                       >
-                        {job.id.slice(0, 8)}...
+                        {job.job_id.slice(0, 8)}...
                       </Link>
                     </TableCell>
                     <TableCell>
@@ -142,21 +143,25 @@ export default function JobsPage() {
                         {job.status}
                       </Badge>
                     </TableCell>
-                    <TableCell className="max-w-[250px] truncate text-sm">
-                      {job.config.start_urls.join(", ")}
+                    <TableCell className="text-sm max-w-[200px] truncate">
+                      {job.index_uid}
                     </TableCell>
                     <TableCell className="text-right text-sm">
                       {job.pages_crawled}
-                      {job.pages_failed > 0 && (
-                        <span className="text-destructive ml-1">
-                          ({job.pages_failed} failed)
-                        </span>
+                    </TableCell>
+                    <TableCell className="text-right text-sm">
+                      {job.errors > 0 ? (
+                        <span className="text-destructive">{job.errors}</span>
+                      ) : (
+                        <span className="text-muted-foreground">0</span>
                       )}
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
-                      {formatDistanceToNow(new Date(job.created_at), {
-                        addSuffix: true,
-                      })}
+                      {job.started_at
+                        ? formatDistanceToNow(new Date(job.started_at), {
+                            addSuffix: true,
+                          })
+                        : "—"}
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1">
@@ -165,14 +170,14 @@ export default function JobsPage() {
                           size="icon"
                           asChild
                         >
-                          <Link href={`/jobs/${job.id}`}>
+                          <Link href={`/jobs/${job.job_id}`}>
                             <ExternalLink className="h-4 w-4" />
                           </Link>
                         </Button>
                         <Button
                           variant="ghost"
                           size="icon"
-                          onClick={() => handleDelete(job.id)}
+                          onClick={() => handleDelete(job.job_id)}
                         >
                           <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>

@@ -21,18 +21,28 @@ export interface SystemStats {
   collected_at: string;
 }
 
-// From GET /jobs — array of Job
+// From GET /jobs — array of JobStatusResponse
+// Also used by GET /job/{id}/status
 export interface Job {
-  id: string;
-  status: "pending" | "running" | "completed" | "failed" | "cancelled";
-  config: CrawlConfig;
-  created_at: string;
+  job_id: string;
+  status: string;
+  index_uid: string;
+  pages_crawled: number;
+  pages_indexed: number;
+  documents_sent: number;
+  errors: number;
   started_at?: string;
   completed_at?: string;
-  pages_crawled: number;
-  pages_failed: number;
-  pages_total?: number;
+  duration_seconds?: number;
+  error_message?: string;
+  crawl_rate: number;
+  eta_seconds?: number;
+  start_urls?: string[];
+  max_pages?: number;
 }
+
+// Alias for backwards compat
+export type JobStatus = Job;
 
 export interface CrawlConfig {
   start_urls: string[];
@@ -40,19 +50,6 @@ export interface CrawlConfig {
   max_pages?: number;
   allowed_domains?: string[];
   index_uid: string;
-}
-
-// From GET /job/{id}/status
-export interface JobStatus {
-  id: string;
-  status: string;
-  pages_crawled: number;
-  pages_failed: number;
-  pages_total?: number;
-  current_depth?: number;
-  urls_in_queue?: number;
-  started_at?: string;
-  elapsed_seconds?: number;
 }
 
 // WebSocket messages from /ws/job/{id}
@@ -87,10 +84,26 @@ export interface ErrorEntry {
 
 // From POST /scrape
 export interface ScrapeResult {
+  success: boolean;
   url: string;
-  title?: string;
-  content?: string;
+  status_code: number;
+  scrape_duration_ms: number;
   markdown?: string;
   html?: string;
-  metadata?: Record<string, string>;
+  raw_html?: string;
+  content?: string;
+  links?: string[];
+  language?: string;
+  metadata?: ScrapeMetadata;
+}
+
+export interface ScrapeMetadata {
+  title?: string;
+  description?: string;
+  author?: string;
+  keywords: string[];
+  canonical_url?: string;
+  published_date?: string;
+  open_graph: Record<string, string>;
+  twitter: Record<string, string>;
 }
