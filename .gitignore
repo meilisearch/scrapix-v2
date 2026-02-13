@@ -41,6 +41,10 @@ tarpaulin-report.html
 storage/
 .cache/
 tmp/
+data/
+
+# MCP config
+.mcp.json
 
 # Docker
 .docker/
