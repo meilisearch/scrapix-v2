@@ -722,6 +722,8 @@ impl CrawlerWorker {
         job_id: &str,
         index_uid: &str,
         url_patterns: Option<UrlPatterns>,
+        meilisearch_url: Option<String>,
+        meilisearch_api_key: Option<String>,
     ) -> scrapix_core::Result<usize> {
         // Check if we've already discovered sitemaps for this domain
         {
@@ -839,13 +841,14 @@ impl CrawlerWorker {
                     crawl_url.priority = (priority * 100.0) as i32;
                 }
 
-                // Include patterns when publishing sitemap URLs
+                // Include patterns and meilisearch config when publishing sitemap URLs
                 let url_msg = match &url_patterns {
                     Some(patterns) => {
                         UrlMessage::with_patterns(crawl_url, job_id, index_uid, patterns.clone())
                     }
                     None => UrlMessage::new(crawl_url, job_id, index_uid),
-                };
+                }
+                .with_meilisearch(meilisearch_url.clone(), meilisearch_api_key.clone());
 
                 if let Err(e) = self
                     .producer
@@ -902,6 +905,8 @@ impl CrawlerWorker {
                         &msg.job_id,
                         &msg.index_uid,
                         msg.url_patterns.clone(),
+                        msg.meilisearch_url.clone(),
+                        msg.meilisearch_api_key.clone(),
                     )
                     .await
                 {
@@ -1099,6 +1104,8 @@ impl CrawlerWorker {
             message_id: uuid::Uuid::new_v4().to_string(),
             etag,
             last_modified,
+            meilisearch_url: msg.meilisearch_url.clone(),
+            meilisearch_api_key: msg.meilisearch_api_key.clone(),
         };
 
         self.producer
@@ -1132,6 +1139,9 @@ impl CrawlerWorker {
             };
             // Propagate account_id for billing attribution
             url_msg.account_id = msg.account_id.clone();
+            // Propagate per-job Meilisearch config
+            url_msg.meilisearch_url = msg.meilisearch_url.clone();
+            url_msg.meilisearch_api_key = msg.meilisearch_api_key.clone();
 
             self.producer
                 .send(

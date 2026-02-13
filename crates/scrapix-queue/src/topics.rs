@@ -45,6 +45,12 @@ pub struct UrlMessage {
     /// URL patterns for filtering discovered URLs (optional, inherited from job config)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url_patterns: Option<UrlPatterns>,
+    /// Per-job Meilisearch URL (overrides global env var)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meilisearch_url: Option<String>,
+    /// Per-job Meilisearch API key (overrides global env var)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meilisearch_api_key: Option<String>,
 }
 
 impl UrlMessage {
@@ -57,6 +63,8 @@ impl UrlMessage {
             message_id: uuid::Uuid::new_v4().to_string(),
             created_at: chrono::Utc::now().timestamp_millis(),
             url_patterns: None,
+            meilisearch_url: None,
+            meilisearch_api_key: None,
         }
     }
 
@@ -75,6 +83,8 @@ impl UrlMessage {
             message_id: uuid::Uuid::new_v4().to_string(),
             created_at: chrono::Utc::now().timestamp_millis(),
             url_patterns: None,
+            meilisearch_url: None,
+            meilisearch_api_key: None,
         }
     }
 
@@ -93,12 +103,21 @@ impl UrlMessage {
             message_id: uuid::Uuid::new_v4().to_string(),
             created_at: chrono::Utc::now().timestamp_millis(),
             url_patterns: Some(patterns),
+            meilisearch_url: None,
+            meilisearch_api_key: None,
         }
     }
 
     /// Set account ID (builder pattern)
     pub fn account(mut self, account_id: impl Into<String>) -> Self {
         self.account_id = Some(account_id.into());
+        self
+    }
+
+    /// Set per-job Meilisearch URL and API key (builder pattern)
+    pub fn with_meilisearch(mut self, url: Option<String>, api_key: Option<String>) -> Self {
+        self.meilisearch_url = url;
+        self.meilisearch_api_key = api_key;
         self
     }
 
@@ -149,6 +168,12 @@ pub struct RawPageMessage {
     /// Last-Modified from response (for incremental crawling)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_modified: Option<String>,
+    /// Per-job Meilisearch URL (overrides global env var)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meilisearch_url: Option<String>,
+    /// Per-job Meilisearch API key (overrides global env var)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meilisearch_api_key: Option<String>,
 }
 
 /// Message for processed documents

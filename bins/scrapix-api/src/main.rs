@@ -128,6 +128,10 @@ struct AppState {
     domain_counters: RwLock<HashMap<String, DomainCounter>>,
     /// ClickHouse event batcher (optional - for analytics persistence)
     clickhouse_batcher: Option<Arc<CrawlEventBatcher>>,
+    /// Last activity time per job (for idle-based completion detection)
+    job_last_activity: RwLock<HashMap<String, std::time::Instant>>,
+    /// Last time each service type was seen (for health monitoring)
+    service_last_seen: RwLock<HashMap<String, std::time::Instant>>,
 }
 
 #[derive(Debug, Clone)]
@@ -150,6 +154,8 @@ impl AppState {
             recent_errors: RwLock::new(VecDeque::with_capacity(1000)),
             domain_counters: RwLock::new(HashMap::new()),
             clickhouse_batcher,
+            job_last_activity: RwLock::new(HashMap::new()),
+            service_last_seen: RwLock::new(HashMap::new()),
         }
     }
 
@@ -214,6 +220,23 @@ impl AppState {
 
     /// Process an event and update job state accordingly
     fn process_event(&self, job_id: &str, event: &CrawlEvent) {
+        // Track last activity for idle-based completion detection
+        {
+            let now = std::time::Instant::now();
+            self.job_last_activity.write().insert(job_id.to_string(), now);
+
+            // Track which services are alive based on event type
+            let service = match event {
+                CrawlEvent::PageCrawled { .. } | CrawlEvent::PageFailed { .. } => Some("crawler"),
+                CrawlEvent::DocumentIndexed { .. } => Some("content"),
+                CrawlEvent::UrlsDiscovered { .. } => Some("frontier"),
+                _ => None,
+            };
+            if let Some(svc) = service {
+                self.service_last_seen.write().insert(svc.to_string(), now);
+            }
+        }
+
         // Persist to ClickHouse if configured
         if let Some(ref batcher) = self.clickhouse_batcher {
             if let Some(ch_event) = kafka_event_to_clickhouse(job_id, event) {
@@ -777,6 +800,54 @@ async fn health(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
     })
 }
 
+/// Service health status for each component
+#[derive(Debug, Serialize)]
+struct ServiceStatus {
+    name: String,
+    status: String, // "up", "idle", "down"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_seen_secs_ago: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+struct ServiceHealthResponse {
+    services: Vec<ServiceStatus>,
+}
+
+/// Service health endpoint — reports liveness of each component
+async fn health_services(State(state): State<Arc<AppState>>) -> Json<ServiceHealthResponse> {
+    let now = std::time::Instant::now();
+    let seen = state.service_last_seen.read();
+    let kafka_connected = state.producer.is_healthy();
+
+    let worker_status = |name: &str| -> ServiceStatus {
+        if let Some(last) = seen.get(name) {
+            let ago = now.duration_since(*last).as_secs();
+            if ago < 60 {
+                ServiceStatus { name: name.to_string(), status: "up".to_string(), last_seen_secs_ago: Some(ago) }
+            } else {
+                ServiceStatus { name: name.to_string(), status: "idle".to_string(), last_seen_secs_ago: Some(ago) }
+            }
+        } else {
+            ServiceStatus { name: name.to_string(), status: "down".to_string(), last_seen_secs_ago: None }
+        }
+    };
+
+    let services = vec![
+        ServiceStatus { name: "api".to_string(), status: "up".to_string(), last_seen_secs_ago: Some(0) },
+        ServiceStatus {
+            name: "kafka".to_string(),
+            status: if kafka_connected { "up" } else { "down" }.to_string(),
+            last_seen_secs_ago: None,
+        },
+        worker_status("crawler"),
+        worker_status("content"),
+        worker_status("frontier"),
+    ];
+
+    Json(ServiceHealthResponse { services })
+}
+
 /// Scrape a single URL and return content immediately
 /// This bypasses the job queue for instant results
 async fn scrape_url(
@@ -1071,13 +1142,18 @@ async fn create_crawl(
         || !url_patterns.exclude.is_empty()
         || !url_patterns.allowed_domains.is_empty();
 
+    // Extract per-job Meilisearch config to propagate through the pipeline
+    let job_meilisearch_url = Some(config.meilisearch.url.clone());
+    let job_meilisearch_key = Some(config.meilisearch.api_key.clone());
+
     for url in &config.start_urls {
         let crawl_url = CrawlUrl::seed(url);
         let msg = if has_patterns {
             UrlMessage::with_patterns(crawl_url, &job_id, &config.index_uid, url_patterns.clone())
         } else {
             UrlMessage::new(crawl_url, &job_id, &config.index_uid)
-        };
+        }
+        .with_meilisearch(job_meilisearch_url.clone(), job_meilisearch_key.clone());
 
         match state
             .producer
@@ -1912,10 +1988,80 @@ async fn main() -> anyhow::Result<()> {
         None
     };
 
+    // Start idle-job completion detector (checks every 5s, completes jobs idle for 30s)
+    let idle_state = state.clone();
+    let mut idle_shutdown_rx = shutdown_rx.clone();
+    let idle_handle = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(5));
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    let now = std::time::Instant::now();
+                    let idle_threshold = Duration::from_secs(30);
+
+                    // Find running jobs that have been idle
+                    let idle_jobs: Vec<(String, u64, u64, u64)> = {
+                        let jobs = idle_state.jobs.read();
+                        let activity = idle_state.job_last_activity.read();
+                        jobs.iter()
+                            .filter(|(_, j)| matches!(j.status, JobStatus::Running))
+                            .filter(|(_, j)| j.pages_crawled > 0) // Must have done some work
+                            .filter(|(id, _)| {
+                                activity.get(*id)
+                                    .map(|last| now.duration_since(*last) > idle_threshold)
+                                    .unwrap_or(false)
+                            })
+                            .map(|(id, j)| (id.clone(), j.pages_crawled, j.pages_indexed, j.errors))
+                            .collect()
+                    };
+
+                    for (job_id, pages_crawled, documents_indexed, errors) in idle_jobs {
+                        let duration_secs = {
+                            let jobs = idle_state.jobs.read();
+                            jobs.get(&job_id)
+                                .and_then(|j| j.duration_seconds())
+                                .unwrap_or(0) as u64
+                        };
+
+                        info!(
+                            job_id = %job_id,
+                            pages_crawled,
+                            documents_indexed,
+                            "Auto-completing idle job (no activity for 30s)"
+                        );
+
+                        let event = CrawlEvent::JobCompleted {
+                            job_id: job_id.clone(),
+                            account_id: None,
+                            pages_crawled,
+                            documents_indexed,
+                            errors,
+                            bytes_downloaded: 0,
+                            duration_secs,
+                            timestamp: chrono::Utc::now().timestamp_millis(),
+                        };
+
+                        idle_state.process_event(&job_id, &event);
+                        idle_state.broadcast_event(&job_id, event);
+
+                        // Clean up activity tracking
+                        idle_state.job_last_activity.write().remove(&job_id);
+                    }
+                }
+                _ = idle_shutdown_rx.changed() => {
+                    info!("Idle job detector shutting down");
+                    break;
+                }
+            }
+        }
+    });
+    info!("Idle job completion detector started (30s threshold)");
+
     // Build router
     // Public routes (no auth required)
     let public_routes = Router::new()
         .route("/health", get(health))
+        .route("/health/services", get(health_services))
         .route("/stats", get(handle_stats))
         .route("/errors", get(handle_errors))
         .route("/domains", get(handle_domains))
@@ -1994,6 +2140,7 @@ async fn main() -> anyhow::Result<()> {
     // Wait for background tasks to finish cleanly
     info!("Waiting for background tasks to shut down...");
     let _ = consumer_handle.await;
+    let _ = idle_handle.await;
     if let Some(handle) = flush_handle {
         let _ = handle.await;
     }

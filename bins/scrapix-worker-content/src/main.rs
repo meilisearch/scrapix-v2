@@ -299,6 +299,12 @@ struct ContentWorker {
     producer: KafkaProducer,
     parser: HtmlParser,
     storage: Option<Arc<MeilisearchStorage>>,
+    /// Default Meilisearch URL (from env/args) for comparison
+    default_meilisearch_url: String,
+    /// Default Meilisearch API key (from env/args) for comparison
+    default_meilisearch_key: String,
+    /// Cache of per-job Meilisearch storage clients, keyed by (url, api_key)
+    storage_cache: tokio::sync::Mutex<HashMap<(String, String), Arc<MeilisearchStorage>>>,
     ai_service: Option<Arc<AiService>>,
     ai_config: AiConfig,
     dedup_detector: Option<Arc<NearDuplicateDetector>>,
@@ -311,6 +317,8 @@ struct ContentWorker {
     publish_history: bool,
     #[allow(dead_code)]
     skip_meilisearch: bool,
+    /// Default batch size for creating new Meilisearch storage clients
+    default_batch_size: usize,
 }
 
 impl ContentWorker {
@@ -491,6 +499,9 @@ impl ContentWorker {
             producer,
             parser,
             storage,
+            default_meilisearch_url: args.meilisearch_url.clone(),
+            default_meilisearch_key: args.meilisearch_key.clone().unwrap_or_default(),
+            storage_cache: tokio::sync::Mutex::new(HashMap::new()),
             ai_service,
             ai_config,
             dedup_detector,
@@ -502,11 +513,93 @@ impl ContentWorker {
             publish_to_kafka: args.publish_to_kafka,
             publish_history: args.publish_history,
             skip_meilisearch: args.skip_meilisearch,
+            default_batch_size: args.batch_size,
         })
     }
 
+    /// Get the appropriate Meilisearch storage for a message.
+    /// Returns the default storage if the message has no per-job override or matches defaults.
+    /// Creates and caches a new storage client for non-default (url, key) pairs.
+    async fn get_storage(&self, msg: &RawPageMessage) -> Option<Arc<MeilisearchStorage>> {
+        let msg_url = msg.meilisearch_url.as_deref().unwrap_or("");
+        let msg_key = msg.meilisearch_api_key.as_deref().unwrap_or("");
+
+        // Use default storage when no override or matches default
+        let is_default = msg_url.is_empty()
+            || (msg_url == self.default_meilisearch_url
+                && msg_key == self.default_meilisearch_key);
+
+        if is_default {
+            return self.storage.clone();
+        }
+
+        // Look up or create a cached storage for this (url, key) pair
+        let cache_key = (msg_url.to_string(), msg_key.to_string());
+        let mut cache = self.storage_cache.lock().await;
+
+        if let Some(storage) = cache.get(&cache_key) {
+            return Some(storage.clone());
+        }
+
+        // Create a new Meilisearch storage client
+        let mut builder = MeilisearchStorageBuilder::new(msg_url, &msg.index_uid);
+        if !msg_key.is_empty() {
+            builder = builder.api_key(msg_key);
+        }
+        builder = builder.batch_size(self.default_batch_size);
+
+        match builder.build().await {
+            Ok(storage) => {
+                let storage = Arc::new(storage);
+                info!(
+                    url = msg_url,
+                    index = %msg.index_uid,
+                    "Created per-job Meilisearch client"
+                );
+                cache.insert(cache_key, storage.clone());
+                Some(storage)
+            }
+            Err(e) => {
+                warn!(
+                    url = msg_url,
+                    error = %e,
+                    "Failed to create per-job Meilisearch client, falling back to default"
+                );
+                self.storage.clone()
+            }
+        }
+    }
+
+    /// Flush all Meilisearch storages (default + cached per-job ones)
+    async fn flush_all_storages(&self) {
+        // Flush default storage
+        if let Some(ref storage) = self.storage {
+            match storage.flush().await {
+                Ok(count) if count > 0 => {
+                    self.metrics.record_indexed(count as u64);
+                    debug!(count, "Flushed default Meilisearch storage");
+                }
+                Err(e) => warn!(error = %e, "Failed to flush default Meilisearch storage"),
+                _ => {}
+            }
+        }
+
+        // Flush all cached storages
+        let cache = self.storage_cache.lock().await;
+        for ((url, _), storage) in cache.iter() {
+            match storage.flush().await {
+                Ok(count) if count > 0 => {
+                    self.metrics.record_indexed(count as u64);
+                    debug!(count, url = %url, "Flushed per-job Meilisearch storage");
+                }
+                Err(e) => warn!(error = %e, url = %url, "Failed to flush per-job Meilisearch storage"),
+                _ => {}
+            }
+        }
+    }
+
     /// Run the content worker
-    async fn run(&self) -> anyhow::Result<()> {
+    async fn run(self: &Arc<Self>) -> anyhow::Result<()> {
         info!(worker_id = %self.worker_id, "Starting content worker main loop");
 
         // Start metrics reporter
@@ -532,27 +625,15 @@ impl ContentWorker {
             }
         });
 
-        // Start periodic flush task for Meilisearch
+        // Start periodic flush task for all Meilisearch storages
         // This ensures documents are indexed even when batch_size isn't reached
-        let flush_handle = if let Some(ref storage) = self.storage {
-            let storage = storage.clone();
-            let shutdown = self.shutdown.clone();
-            let metrics = self.metrics.clone();
+        let flush_handle = if self.storage.is_some() {
+            let worker = self.clone();
             Some(tokio::spawn(async move {
                 let mut interval = tokio::time::interval(Duration::from_secs(5));
-                while !shutdown.load(Ordering::Relaxed) {
+                while !worker.shutdown.load(Ordering::Relaxed) {
                     interval.tick().await;
-                    match storage.flush().await {
-                        Ok(count) => {
-                            if count > 0 {
-                                metrics.record_indexed(count as u64);
-                                info!(count, "Periodic flush indexed documents");
-                            }
-                        }
-                        Err(e) => {
-                            warn!(error = %e, "Periodic flush failed");
-                        }
-                    }
+                    worker.flush_all_storages().await;
                 }
             }))
         } else {
@@ -570,19 +651,8 @@ impl ContentWorker {
             let _ = handle.await;
         }
 
-        // Final flush of any pending documents to Meilisearch
-        if let Some(ref storage) = self.storage {
-            match storage.flush().await {
-                Ok(count) if count > 0 => {
-                    self.metrics.record_indexed(count as u64);
-                    info!(count, "Final flush indexed documents");
-                }
-                Err(e) => {
-                    warn!(error = %e, "Failed to flush pending documents");
-                }
-                _ => {}
-            }
-        }
+        // Final flush of any pending documents to all Meilisearch storages
+        self.flush_all_storages().await;
 
         result
     }
@@ -766,12 +836,15 @@ impl ContentWorker {
 
                         self.metrics.record_success(page_size, block_count as u64);
 
+                        // Get per-job storage once for all blocks
+                        let block_storage = self.get_storage(msg).await;
+
                         // Create and index a document for each block
                         for block in &extracted_blocks.blocks {
                             let block_doc = self.create_block_document(&document, block, msg);
 
                             // Index block document
-                            if let Some(ref storage) = self.storage {
+                            if let Some(ref storage) = block_storage {
                                 if let Err(e) = storage
                                     .add_document_to_index(block_doc.clone(), &msg.index_uid)
                                     .await
@@ -882,8 +955,8 @@ impl ContentWorker {
         document: &Document,
         msg: &RawPageMessage,
     ) -> scrapix_core::Result<()> {
-        // Add document to Meilisearch
-        if let Some(ref storage) = self.storage {
+        // Add document to Meilisearch (using per-job storage if configured)
+        if let Some(storage) = self.get_storage(msg).await {
             if let Err(e) = storage
                 .add_document_to_index(document.clone(), &msg.index_uid)
                 .await
