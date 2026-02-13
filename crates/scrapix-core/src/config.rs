@@ -31,6 +31,13 @@ pub struct CrawlConfig {
     #[serde(default)]
     pub url_patterns: UrlPatterns,
 
+    /// Allowed domains for crawling (if empty, inferred from start_urls)
+    /// When set, only URLs from these exact domains will be crawled.
+    /// This prevents domain explosion (e.g., crawling all Wikipedia languages
+    /// when you only want en.wikipedia.org)
+    #[serde(default)]
+    pub allowed_domains: Vec<String>,
+
     /// Sitemap configuration
     #[serde(default)]
     pub sitemap: SitemapConfig,
@@ -92,6 +99,12 @@ pub struct UrlPatterns {
     /// Only index URLs matching these patterns (but crawl all)
     #[serde(default)]
     pub index_only: Vec<String>,
+
+    /// Allowed domains for crawling (strict whitelist)
+    /// When non-empty, only URLs from these exact domains are allowed.
+    /// No subdomain inference or parent domain escapes.
+    #[serde(default)]
+    pub allowed_domains: Vec<String>,
 }
 
 /// Sitemap discovery settings
@@ -503,6 +516,7 @@ mod tests {
             max_depth: None,
             max_pages: None,
             url_patterns: UrlPatterns::default(),
+            allowed_domains: vec![],
             sitemap: SitemapConfig::default(),
             concurrency: ConcurrencyConfig::default(),
             rate_limit: RateLimitConfig::default(),

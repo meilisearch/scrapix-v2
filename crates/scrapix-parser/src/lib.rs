@@ -55,6 +55,12 @@ pub use language::{
     detect_language, detect_language_info, detect_language_with_threshold, LanguageInfo,
 };
 pub use markdown::{
-    html_to_markdown, html_to_markdown_with_config, markdown_to_text, MarkdownConfig,
+    html_to_main_content_markdown, html_to_markdown, html_to_markdown_with_config,
+    markdown_to_text, MarkdownConfig,
 };
-pub use readability::{extract_content, extract_content_with_config, ReadabilityConfig};
+pub use readability::{
+    extract_content, extract_content_from_dom, extract_content_with_config, ReadabilityConfig,
+};
+
+// Re-export scraper::Html so callers that already have a parsed DOM can use it
+pub use scraper::Html;

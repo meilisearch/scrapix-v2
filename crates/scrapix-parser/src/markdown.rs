@@ -1,6 +1,8 @@
 //! HTML to Markdown conversion
 
 use html2md::parse_html;
+use regex::Regex;
+use std::sync::OnceLock;
 
 /// Configuration for markdown conversion
 #[derive(Debug, Clone)]
@@ -13,6 +15,8 @@ pub struct MarkdownConfig {
     pub convert_images: bool,
     /// Whether to convert code blocks
     pub convert_code_blocks: bool,
+    /// Whether to strip non-content sections (nav, footer, header, aside)
+    pub only_main_content: bool,
 }
 
 impl Default for MarkdownConfig {
@@ -22,26 +26,151 @@ impl Default for MarkdownConfig {
             preserve_link_titles: true,
             convert_images: true,
             convert_code_blocks: true,
+            only_main_content: false,
         }
     }
 }
 
-/// Convert HTML to Markdown
+/// Convert HTML to Markdown (full page)
 pub fn html_to_markdown(html: &str) -> String {
     html_to_markdown_with_config(html, &MarkdownConfig::default())
 }
 
+/// Convert HTML to clean Markdown, stripping boilerplate (nav, footer, etc.)
+pub fn html_to_main_content_markdown(html: &str) -> String {
+    let mut config = MarkdownConfig::default();
+    config.only_main_content = true;
+    html_to_markdown_with_config(html, &config)
+}
+
 /// Convert HTML to Markdown with custom configuration
-pub fn html_to_markdown_with_config(html: &str, _config: &MarkdownConfig) -> String {
+pub fn html_to_markdown_with_config(html: &str, config: &MarkdownConfig) -> String {
+    // Strip non-content tags (script, style, etc.)
+    let mut cleaned_html = strip_non_content_tags(html);
+
+    // Optionally strip boilerplate sections
+    if config.only_main_content {
+        cleaned_html = strip_boilerplate_tags(&cleaned_html);
+    }
+
     // Use html2md for the basic conversion
-    let markdown = parse_html(html);
+    let markdown = parse_html(&cleaned_html);
+
+    // Strip any remaining HTML tags that html2md didn't convert
+    let stripped = strip_remaining_html(&markdown);
 
     // Post-process the markdown
-    clean_markdown(&markdown)
+    clean_markdown(&stripped)
+}
+
+/// Strip script, style, noscript, svg, and head tags (and their content) from HTML.
+fn strip_non_content_tags(html: &str) -> String {
+    static PATTERNS: OnceLock<Vec<Regex>> = OnceLock::new();
+    let patterns = PATTERNS.get_or_init(|| {
+        ["script", "style", "noscript", "svg", "head"]
+            .iter()
+            .map(|tag| {
+                Regex::new(&format!(r"(?si)<{tag}[\s>].*?</{tag}\s*>")).unwrap()
+            })
+            .collect()
+    });
+
+    let mut result = html.to_string();
+    for re in patterns {
+        result = re.replace_all(&result, "").into_owned();
+    }
+    result
+}
+
+/// Strip boilerplate HTML sections: nav, header, footer, aside.
+fn strip_boilerplate_tags(html: &str) -> String {
+    static PATTERNS: OnceLock<Vec<Regex>> = OnceLock::new();
+    let patterns = PATTERNS.get_or_init(|| {
+        ["nav", "footer", "header", "aside"]
+            .iter()
+            .map(|tag| {
+                Regex::new(&format!(r"(?si)<{tag}[\s>].*?</{tag}\s*>")).unwrap()
+            })
+            .collect()
+    });
+
+    let mut result = html.to_string();
+    for re in patterns {
+        result = re.replace_all(&result, "").into_owned();
+    }
+    result
+}
+
+/// Strip any remaining HTML tags from markdown output.
+///
+/// Converts `<img>` tags to `![alt](src)` before stripping, so image info is preserved.
+/// All other HTML tags are removed, keeping only their text content.
+fn strip_remaining_html(markdown: &str) -> String {
+    // Convert <img> tags to markdown images: ![alt](src)
+    static IMG_RE: OnceLock<Regex> = OnceLock::new();
+    let img_re = IMG_RE.get_or_init(|| Regex::new(r#"(?i)<img\s[^>]*?>"#).unwrap());
+
+    static ALT_RE: OnceLock<Regex> = OnceLock::new();
+    let alt_re = ALT_RE.get_or_init(|| Regex::new(r#"(?i)alt\s*=\s*"([^"]*)""#).unwrap());
+
+    static SRC_RE: OnceLock<Regex> = OnceLock::new();
+    let src_re = SRC_RE.get_or_init(|| Regex::new(r#"(?i)src\s*=\s*"([^"]*)""#).unwrap());
+
+    let result = img_re.replace_all(markdown, |caps: &regex::Captures| {
+        let tag = &caps[0];
+        let alt = alt_re
+            .captures(tag)
+            .map(|c| c[1].to_string())
+            .unwrap_or_default();
+        let src = src_re
+            .captures(tag)
+            .map(|c| c[1].to_string())
+            .unwrap_or_default();
+        if alt.is_empty() && src.is_empty() {
+            String::new()
+        } else {
+            format!("![{alt}]({src})")
+        }
+    });
+
+    // Strip all remaining HTML tags (opening, closing, self-closing)
+    static TAG_RE: OnceLock<Regex> = OnceLock::new();
+    let tag_re = TAG_RE.get_or_init(|| Regex::new(r"<[^>]+>").unwrap());
+
+    tag_re.replace_all(&result, "").into_owned()
 }
 
 /// Clean up the markdown output
 fn clean_markdown(markdown: &str) -> String {
+    // First pass: clean up multiline link/image syntax
+    // [\n\nText\n\n](url) → [Text](url)
+    // ![\n\nAlt\n\n](url) → ![Alt](url)
+    static MULTILINE_LINK_RE: OnceLock<Regex> = OnceLock::new();
+    let multiline_link_re = MULTILINE_LINK_RE.get_or_init(|| {
+        Regex::new(r"(!?\[)\s*\n\s*(.*?)\s*\n\s*\]\(([^)]*)\)").unwrap()
+    });
+    let markdown = multiline_link_re.replace_all(markdown, "$1$2]($3)");
+
+    // Remove empty links: [](url)
+    static EMPTY_LINK_RE: OnceLock<Regex> = OnceLock::new();
+    let empty_link_re =
+        EMPTY_LINK_RE.get_or_init(|| Regex::new(r"\[]\([^)]*\)").unwrap());
+    let markdown = empty_link_re.replace_all(&markdown, "");
+
+    // Remove images with relative/asset URLs (decorative)
+    static DECORATIVE_IMG_RE: OnceLock<Regex> = OnceLock::new();
+    let decorative_img_re = DECORATIVE_IMG_RE.get_or_init(|| {
+        Regex::new(r"!\[[^\]]*\]\(/_next/[^)]*\)").unwrap()
+    });
+    let markdown = decorative_img_re.replace_all(&markdown, "");
+
+    // Remove images with no alt text
+    static NO_ALT_IMG_RE: OnceLock<Regex> = OnceLock::new();
+    let no_alt_img_re =
+        NO_ALT_IMG_RE.get_or_init(|| Regex::new(r"!\[\]\([^)]*\)").unwrap());
+    let markdown = no_alt_img_re.replace_all(&markdown, "");
+
+    // Second pass: line-by-line cleanup
     let mut result = String::new();
     let mut prev_blank = false;
     let mut in_code_block = false;
@@ -87,11 +216,19 @@ fn clean_markdown(markdown: &str) -> String {
 
 /// Clean a single line of markdown
 fn clean_line(line: &str) -> String {
-    let mut result = line.to_string();
-
-    // Remove excessive whitespace
-    while result.contains("  ") {
-        result = result.replace("  ", " ");
+    // Collapse consecutive spaces in a single pass - O(n) with one allocation
+    let mut result = String::with_capacity(line.len());
+    let mut prev_space = false;
+    for ch in line.chars() {
+        if ch == ' ' {
+            if !prev_space {
+                result.push(' ');
+            }
+            prev_space = true;
+        } else {
+            result.push(ch);
+            prev_space = false;
+        }
     }
 
     // Fix heading spacing
@@ -220,6 +357,47 @@ mod tests {
         let md = html_to_markdown(html);
 
         assert!(md.contains("fn main()"));
+    }
+
+    #[test]
+    fn test_strips_nav_footer_in_main_content_mode() {
+        let html = r#"
+            <nav><a href="/">Home</a><a href="/about">About</a></nav>
+            <main><h1>Article</h1><p>Content here</p></main>
+            <footer><p>Copyright 2026</p></footer>
+        "#;
+        let md = html_to_main_content_markdown(html);
+
+        assert!(md.contains("Article"));
+        assert!(md.contains("Content here"));
+        assert!(!md.contains("Home"));
+        assert!(!md.contains("Copyright"));
+    }
+
+    #[test]
+    fn test_strips_decorative_images() {
+        let html = r#"
+            <img src="/_next/static/media/bg.svg" alt="">
+            <h1>Title</h1>
+            <img src="https://example.com/photo.jpg" alt="A photo">
+        "#;
+        let md = html_to_main_content_markdown(html);
+
+        assert!(md.contains("Title"));
+        assert!(!md.contains("/_next/"));
+        assert!(md.contains("![A photo](https://example.com/photo.jpg)"));
+    }
+
+    #[test]
+    fn test_removes_empty_links() {
+        let html = r#"
+            <a href="https://github.com"></a>
+            <a href="https://example.com">Real link</a>
+        "#;
+        let md = html_to_markdown(html);
+
+        assert!(md.contains("[Real link]"));
+        assert!(!md.contains("[]("));
     }
 
     #[test]

@@ -119,6 +119,11 @@ impl MetadataExtractor {
     #[instrument(skip(self, html), level = "debug")]
     pub fn extract(&self, html: &str) -> Result<ExtractedMetadata, MetadataError> {
         let document = Html::parse_document(html);
+        self.extract_from_dom(&document)
+    }
+
+    /// Extract all metadata from a pre-parsed DOM, avoiding redundant parsing
+    pub fn extract_from_dom(&self, document: &Html) -> Result<ExtractedMetadata, MetadataError> {
         let mut metadata = ExtractedMetadata::default();
 
         // Extract title
@@ -130,10 +135,10 @@ impl MetadataExtractor {
         }
 
         // Extract meta tags
-        self.extract_meta_tags(&document, &mut metadata);
+        self.extract_meta_tags(document, &mut metadata);
 
         // Extract link tags
-        self.extract_link_tags(&document, &mut metadata);
+        self.extract_link_tags(document, &mut metadata);
 
         // Post-process: extract common fields from meta
         self.post_process(&mut metadata);

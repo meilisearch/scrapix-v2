@@ -478,7 +478,7 @@ impl ClickHouseStorage {
                 ) ENGINE = MergeTree()
                 PARTITION BY toYYYYMM(crawled_at)
                 ORDER BY (account_id, domain, crawled_at, url)
-                TTL crawled_at + INTERVAL 90 DAY
+                TTL toDateTime(crawled_at) + INTERVAL 90 DAY
                 "#,
                 crawl_events_table
             ))
@@ -508,7 +508,7 @@ impl ClickHouseStorage {
                 ) ENGINE = MergeTree()
                 PARTITION BY toYYYYMM(extracted_at)
                 ORDER BY (domain, extracted_at, url)
-                TTL extracted_at + INTERVAL 90 DAY
+                TTL toDateTime(extracted_at) + INTERVAL 90 DAY
                 "#,
                 content_events_table
             ))

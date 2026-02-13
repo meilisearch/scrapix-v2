@@ -3,7 +3,36 @@
 //! Extracts the main content from a web page by removing boilerplate
 //! (navigation, ads, footers, etc.) and keeping the main article content.
 
+use std::sync::OnceLock;
+
 use scraper::{ElementRef, Html, Selector};
+
+// Pre-compiled selectors used in readability extraction (compiled once on first use)
+static LI_SELECTOR: OnceLock<Selector> = OnceLock::new();
+static P_SELECTOR: OnceLock<Selector> = OnceLock::new();
+static A_SELECTOR: OnceLock<Selector> = OnceLock::new();
+static DIV_SECTION_ARTICLE_SELECTOR: OnceLock<Selector> = OnceLock::new();
+static BODY_SELECTOR: OnceLock<Selector> = OnceLock::new();
+
+fn li_selector() -> &'static Selector {
+    LI_SELECTOR.get_or_init(|| Selector::parse("li").unwrap())
+}
+
+fn p_selector() -> &'static Selector {
+    P_SELECTOR.get_or_init(|| Selector::parse("p").unwrap())
+}
+
+fn a_selector() -> &'static Selector {
+    A_SELECTOR.get_or_init(|| Selector::parse("a").unwrap())
+}
+
+fn div_section_article_selector() -> &'static Selector {
+    DIV_SECTION_ARTICLE_SELECTOR.get_or_init(|| Selector::parse("div, section, article").unwrap())
+}
+
+fn body_selector() -> &'static Selector {
+    BODY_SELECTOR.get_or_init(|| Selector::parse("body").unwrap())
+}
 
 /// Configuration for content extraction
 #[derive(Debug, Clone)]
@@ -85,14 +114,18 @@ pub fn extract_content(html: &str) -> String {
 /// Extract main content with custom configuration
 pub fn extract_content_with_config(html: &str, config: &ReadabilityConfig) -> String {
     let document = Html::parse_document(html);
+    extract_content_from_dom(&document, config)
+}
 
+/// Extract main content from a pre-parsed DOM, avoiding redundant parsing
+pub fn extract_content_from_dom(document: &Html, config: &ReadabilityConfig) -> String {
     // Try to find the main content container
-    if let Some(content) = find_main_content(&document, config) {
+    if let Some(content) = find_main_content(document, config) {
         return content;
     }
 
     // Fallback: extract all text from body, filtering out noise
-    extract_body_content(&document, config)
+    extract_body_content(document, config)
 }
 
 /// Find the main content container
@@ -127,13 +160,11 @@ fn find_main_content(document: &Html, config: &ReadabilityConfig) -> Option<Stri
     let mut best_element = None;
     let mut best_score = 0.0;
 
-    if let Ok(selector) = Selector::parse("div, section, article") {
-        for element in document.select(&selector) {
-            let score = score_element(&element, config);
-            if score > best_score {
-                best_score = score;
-                best_element = Some(element);
-            }
+    for element in document.select(div_section_article_selector()) {
+        let score = score_element(&element, config);
+        if score > best_score {
+            best_score = score;
+            best_element = Some(element);
         }
     }
 
@@ -170,31 +201,27 @@ fn score_element(element: &ElementRef, config: &ReadabilityConfig) -> f64 {
     }
 
     // Count paragraphs
-    if let Ok(p_selector) = Selector::parse("p") {
-        let paragraphs: Vec<_> = element.select(&p_selector).collect();
-        score += paragraphs.len() as f64 * 3.0;
+    let paragraphs: Vec<_> = element.select(p_selector()).collect();
+    score += paragraphs.len() as f64 * 3.0;
 
-        // Count words in paragraphs
-        for p in paragraphs {
-            let text = p.text().collect::<String>();
-            let word_count = text.split_whitespace().count();
-            if word_count > 100 {
-                score += 10.0;
-            } else if word_count > 50 {
-                score += 5.0;
-            }
+    // Count words in paragraphs
+    for p in paragraphs {
+        let text = p.text().collect::<String>();
+        let word_count = text.split_whitespace().count();
+        if word_count > 100 {
+            score += 10.0;
+        } else if word_count > 50 {
+            score += 5.0;
         }
     }
 
     // Penalty for too many links
-    if let Ok(a_selector) = Selector::parse("a") {
-        let links = element.select(&a_selector).count();
-        let text_len = element.text().collect::<String>().len();
-        if text_len > 0 {
-            let link_density = links as f64 / (text_len as f64 / 100.0);
-            if link_density > 0.5 {
-                score -= link_density * 10.0;
-            }
+    let links = element.select(a_selector()).count();
+    let text_len = element.text().collect::<String>().len();
+    if text_len > 0 {
+        let link_density = links as f64 / (text_len as f64 / 100.0);
+        if link_density > 0.5 {
+            score -= link_density * 10.0;
         }
     }
 
@@ -256,13 +283,11 @@ fn extract_text_recursive(
             }
         }
         "ul" | "ol" => {
-            if let Ok(li_selector) = Selector::parse("li") {
-                for li in element.select(&li_selector) {
-                    let text: String = li.text().collect();
-                    let text = text.trim();
-                    if !text.is_empty() {
-                        parts.push(format!("- {}", text));
-                    }
+            for li in element.select(li_selector()) {
+                let text: String = li.text().collect();
+                let text = text.trim();
+                if !text.is_empty() {
+                    parts.push(format!("- {}", text));
                 }
             }
         }
@@ -288,19 +313,17 @@ fn extract_body_content(document: &Html, config: &ReadabilityConfig) -> String {
     let mut paragraphs = Vec::new();
 
     // Try to find body
-    if let Ok(body_selector) = Selector::parse("body") {
-        if let Some(body) = document.select(&body_selector).next() {
-            extract_text_recursive(
-                &body,
-                &config
-                    .remove_tags
-                    .iter()
-                    .map(|s| s.as_str())
-                    .collect::<Vec<_>>(),
-                config,
-                &mut paragraphs,
-            );
-        }
+    if let Some(body) = document.select(body_selector()).next() {
+        extract_text_recursive(
+            &body,
+            &config
+                .remove_tags
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>(),
+            config,
+            &mut paragraphs,
+        );
     }
 
     // If we got nothing, just extract all text
