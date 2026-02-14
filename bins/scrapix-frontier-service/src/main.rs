@@ -150,6 +150,10 @@ struct JobFrontier {
     urls_dispatched: AtomicU64,
     /// URL patterns for filtering - stored per job, propagated to all URLs
     url_patterns: Option<UrlPatterns>,
+    /// Per-job Meilisearch URL (overrides global env var)
+    meilisearch_url: Option<String>,
+    /// Per-job Meilisearch API key (overrides global env var)
+    meilisearch_api_key: Option<String>,
 }
 
 impl JobFrontier {
@@ -159,6 +163,8 @@ impl JobFrontier {
         dedup_config: &DedupConfig,
         priority_config: &PriorityConfig,
         url_patterns: Option<UrlPatterns>,
+        meilisearch_url: Option<String>,
+        meilisearch_api_key: Option<String>,
     ) -> Self {
         Self {
             job_id: job_id.to_string(),
@@ -170,6 +176,8 @@ impl JobFrontier {
             urls_deduplicated: AtomicU64::new(0),
             urls_dispatched: AtomicU64::new(0),
             url_patterns,
+            meilisearch_url,
+            meilisearch_api_key,
         }
     }
 
@@ -284,6 +292,8 @@ struct ReadyUrl {
     index_uid: String,
     domain: String,
     url_patterns: Option<UrlPatterns>,
+    meilisearch_url: Option<String>,
+    meilisearch_api_key: Option<String>,
 }
 
 /// The frontier service
@@ -454,6 +464,8 @@ impl FrontierService {
         job_id: &str,
         index_uid: &str,
         url_patterns: Option<UrlPatterns>,
+        meilisearch_url: Option<String>,
+        meilisearch_api_key: Option<String>,
     ) -> Arc<JobFrontier> {
         // Fast path: check if job exists
         {
@@ -475,6 +487,8 @@ impl FrontierService {
                     &self.dedup_config,
                     &self.priority_config,
                     url_patterns,
+                    meilisearch_url,
+                    meilisearch_api_key,
                 ))
             })
             .clone()
@@ -634,8 +648,14 @@ impl FrontierService {
                     }
                 }
 
-                // Get or create job frontier (patterns are stored per-job from first message)
-                let job = self.get_or_create_job(&msg.job_id, &msg.index_uid, msg.url_patterns.clone());
+                // Get or create job frontier (patterns + meilisearch config stored per-job from first message)
+                let job = self.get_or_create_job(
+                    &msg.job_id,
+                    &msg.index_uid,
+                    msg.url_patterns.clone(),
+                    msg.meilisearch_url.clone(),
+                    msg.meilisearch_api_key.clone(),
+                );
 
                 // Try to add URL (deduplication happens here)
                 if job.try_add(url.clone()) {
@@ -692,6 +712,8 @@ impl FrontierService {
                                 index_uid: job.index_uid.clone(),
                                 domain,
                                 url_patterns: job.url_patterns.clone(),
+                                meilisearch_url: job.meilisearch_url.clone(),
+                                meilisearch_api_key: job.meilisearch_api_key.clone(),
                             };
 
                             if dispatch_tx.send(ready).await.is_err() {
@@ -739,7 +761,8 @@ impl FrontierService {
                             )
                         } else {
                             UrlMessage::new(ready.url, &ready.job_id, &ready.index_uid)
-                        };
+                        }
+                        .with_meilisearch(ready.meilisearch_url, ready.meilisearch_api_key);
 
                         // Publish to processing topic
                         match producer

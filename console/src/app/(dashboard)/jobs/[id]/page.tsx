@@ -577,7 +577,7 @@ export default function JobDetailPage() {
             <Collapsible>
               <Card>
                 <CollapsibleTrigger asChild>
-                  <CardHeader className="cursor-pointer select-none pb-3 hover:bg-muted/50 transition-colors">
+                  <CardHeader className="group cursor-pointer select-none pb-3 hover:bg-muted/50 transition-colors">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <Settings2 className="h-4 w-4 text-muted-foreground" />
@@ -585,7 +585,7 @@ export default function JobDetailPage() {
                           Configuration
                         </CardTitle>
                       </div>
-                      <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform [[data-state=open]_&]:rotate-180" />
+                      <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
                     </div>
                     <CardDescription>
                       Crawl parameters used for this job

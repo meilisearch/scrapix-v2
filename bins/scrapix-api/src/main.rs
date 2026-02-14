@@ -1196,9 +1196,13 @@ async fn create_crawl(
     // Broadcast event for SSE
     state.broadcast_event(&job_id, event);
 
-    // Update job state
+    // Update job state (write back config, start_urls, max_pages that were set on the local copy)
     state.update_job(&job_id, |j| {
         j.status = JobStatus::Running;
+        j.start_urls = config.start_urls.clone();
+        j.max_pages = config.max_pages;
+        j.config = serde_json::to_value(&config).ok();
+        j.started_at = Some(chrono::Utc::now());
     });
 
     info!(
