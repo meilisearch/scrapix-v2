@@ -703,8 +703,11 @@ impl ContentWorker {
         let start = Instant::now();
         let page_size = msg.html.len() as u64;
 
-        // Skip non-HTML content
+        // Route by content type: markdown gets its own path, non-HTML is skipped
         if let Some(ref content_type) = msg.content_type {
+            if content_type.contains("text/markdown") {
+                return self.process_markdown_page(msg).await;
+            }
             if !content_type.contains("text/html") && !content_type.contains("application/xhtml") {
                 debug!(
                     url = %msg.url,
@@ -937,6 +940,84 @@ impl ContentWorker {
                 debug!(error = %e, "Failed to publish crawl history");
             }
         }
+
+        Ok(())
+    }
+
+    /// Process a page that was returned as server-provided markdown (e.g. Cloudflare "Markdown for Agents")
+    async fn process_markdown_page(&self, msg: &RawPageMessage) -> scrapix_core::Result<()> {
+        let start = Instant::now();
+        let page_size = msg.html.len() as u64;
+
+        // Parse the markdown into a Document
+        let document = match scrapix_parser::parse_markdown_page(&msg.final_url, &msg.html) {
+            Ok(doc) => doc,
+            Err(e) => {
+                self.metrics.record_failure();
+                let event = CrawlEvent::PageFailed {
+                    job_id: msg.job_id.clone(),
+                    account_id: msg.account_id.clone(),
+                    url: msg.url.clone(),
+                    error: format!("Markdown parse error: {}", e),
+                    retry_count: 0,
+                    timestamp: chrono::Utc::now().timestamp_millis(),
+                };
+                self.publish_event(&msg.job_id, &event).await?;
+                return Err(e);
+            }
+        };
+
+        // Check if document has enough content
+        let content_len = document.content.as_ref().map(|c| c.len()).unwrap_or(0);
+        if content_len == 0 {
+            debug!(url = %msg.url, "Skipping markdown page with no content");
+            self.metrics.record_skipped();
+            return Ok(());
+        }
+
+        // Check for near-duplicates if enabled
+        if let Some(ref detector) = self.dedup_detector {
+            let content_for_dedup = document
+                .content
+                .as_ref()
+                .or(document.markdown.as_ref())
+                .map(|s| s.as_str())
+                .unwrap_or("");
+
+            if let Some(duplicate_url) = detector.check_and_add(&msg.url, content_for_dedup) {
+                debug!(
+                    url = %msg.url,
+                    duplicate_of = %duplicate_url,
+                    "Skipping near-duplicate markdown content"
+                );
+                self.metrics.record_duplicate();
+                let event = CrawlEvent::PageSkipped {
+                    job_id: msg.job_id.clone(),
+                    url: msg.url.clone(),
+                    reason: format!("Near-duplicate of {}", duplicate_url),
+                    timestamp: chrono::Utc::now().timestamp_millis(),
+                };
+                self.publish_event(&msg.job_id, &event).await?;
+                return Ok(());
+            }
+        }
+
+        let parse_duration = start.elapsed();
+        info!(
+            url = %msg.url,
+            title = ?document.title,
+            content_len = content_len,
+            language = ?document.language,
+            duration_ms = parse_duration.as_millis(),
+            "Markdown page parsed successfully (server-provided)"
+        );
+
+        // Apply AI enrichment
+        let document = self.enrich_with_ai(document).await;
+
+        // Index single document (no block splitting for server-provided markdown)
+        self.metrics.record_success(page_size, 1);
+        self.index_single_document(&document, msg).await?;
 
         Ok(())
     }
