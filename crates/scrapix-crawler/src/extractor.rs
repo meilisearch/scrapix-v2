@@ -249,26 +249,38 @@ impl UrlExtractor {
         Some(url_str)
     }
 
+    /// Normalize a domain by stripping the `www.` prefix for comparison.
+    fn normalize_domain(domain: &str) -> &str {
+        domain
+            .strip_prefix("www.")
+            .or_else(|| domain.strip_prefix("WWW."))
+            .unwrap_or(domain)
+    }
+
     /// Check if a domain is allowed based on configuration
     fn is_allowed_domain(&self, url_domain: &str, base_domain: &str) -> bool {
+        let url_norm = Self::normalize_domain(url_domain);
+
         // If explicit allowed_domains whitelist is set, use ONLY that (strict mode)
         if !self.config.allowed_domains.is_empty() {
             return self
                 .config
                 .allowed_domains
                 .iter()
-                .any(|d| d.eq_ignore_ascii_case(url_domain));
+                .any(|d| Self::normalize_domain(d).eq_ignore_ascii_case(url_norm));
         }
 
-        // Fallback to automatic domain inference (legacy behavior)
-        if url_domain == base_domain {
+        // Fallback to automatic domain inference
+        let base_norm = Self::normalize_domain(base_domain);
+        if url_norm.eq_ignore_ascii_case(base_norm) {
             return true;
         }
 
         if self.config.follow_subdomains {
             // Check if url_domain is a subdomain of base_domain
             // e.g., blog.example.com is a subdomain of example.com
-            if url_domain.ends_with(&format!(".{}", base_domain)) {
+            let suffix = format!(".{}", base_norm);
+            if url_norm.ends_with(&suffix) {
                 return true;
             }
             // NOTE: We intentionally do NOT check if base_domain is a subdomain of url_domain
@@ -521,6 +533,47 @@ mod tests {
         assert_eq!(urls.len(), 1);
         assert!(urls[0].contains("en.wikipedia.org"));
         assert!(!urls.iter().any(|u| u == "https://wikipedia.org"));
+    }
+
+    #[test]
+    fn test_www_normalization_in_allowed_domains() {
+        // When allowed_domains contains "meilisearch.com", links to
+        // "www.meilisearch.com" should also be allowed (and vice versa).
+        let extractor = UrlExtractor::new(ExtractorConfig {
+            allowed_domains: vec!["meilisearch.com".to_string()],
+            ..Default::default()
+        });
+        let page = make_page(
+            "https://meilisearch.com",
+            "<html><body>\
+                <a href=\"https://www.meilisearch.com/docs\">Docs</a>\
+                <a href=\"https://meilisearch.com/blog\">Blog</a>\
+                <a href=\"https://other.com/\">Other</a>\
+            </body></html>",
+        );
+
+        let urls = extractor.extract_urls(&page);
+        assert_eq!(urls.len(), 2);
+        assert!(urls.iter().any(|u| u.contains("meilisearch.com/docs")));
+        assert!(urls.iter().any(|u| u.contains("meilisearch.com/blog")));
+    }
+
+    #[test]
+    fn test_www_normalization_base_domain() {
+        // When crawling from "meilisearch.com" (no allowed_domains set),
+        // links to "www.meilisearch.com" should be followed.
+        let extractor = UrlExtractor::with_defaults();
+        let page = make_page(
+            "https://meilisearch.com",
+            "<html><body>\
+                <a href=\"https://www.meilisearch.com/docs\">Docs</a>\
+                <a href=\"https://other.com/\">Other</a>\
+            </body></html>",
+        );
+
+        let urls = extractor.extract_urls(&page);
+        assert_eq!(urls.len(), 1);
+        assert!(urls[0].contains("meilisearch.com/docs"));
     }
 
     #[test]
