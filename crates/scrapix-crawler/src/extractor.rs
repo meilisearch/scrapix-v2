@@ -222,7 +222,7 @@ impl UrlExtractor {
         Some(normalized)
     }
 
-    /// Normalize a URL (remove fragments, trailing slashes, etc.)
+    /// Normalize a URL (remove fragments, query parameters, trailing slashes, etc.)
     fn normalize_url(&self, url: &Url) -> Option<String> {
         // Only allow HTTP/HTTPS
         if url.scheme() != "http" && url.scheme() != "https" {
@@ -233,6 +233,10 @@ impl UrlExtractor {
 
         // Remove fragment
         normalized.set_fragment(None);
+
+        // Remove query parameters — they almost never change page content
+        // and cause massive duplication (utm_*, fbclid, sort, ref, etc.)
+        normalized.set_query(None);
 
         // Convert to string
         let mut url_str = normalized.to_string();

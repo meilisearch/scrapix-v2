@@ -279,30 +279,10 @@ fn normalize_url(url: &str) -> String {
         normalized.pop();
     }
 
-    // Remove common tracking parameters
+    // Remove all query parameters — they almost never change page content
+    // and cause massive duplication (utm_*, fbclid, sort, ref, etc.)
     if let Ok(mut parsed) = url::Url::parse(&normalized) {
-        let tracking_params = [
-            "utm_source",
-            "utm_medium",
-            "utm_campaign",
-            "utm_content",
-            "utm_term",
-            "fbclid",
-            "gclid",
-        ];
-
-        let query: Vec<_> = parsed
-            .query_pairs()
-            .filter(|(k, _)| !tracking_params.contains(&k.as_ref()))
-            .map(|(k, v)| format!("{}={}", k, v))
-            .collect();
-
-        if query.is_empty() {
-            parsed.set_query(None);
-        } else {
-            parsed.set_query(Some(&query.join("&")));
-        }
-
+        parsed.set_query(None);
         normalized = parsed.to_string();
     }
 
@@ -394,11 +374,12 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_removes_tracking() {
+    fn test_normalize_removes_query_params() {
         let url = "https://example.com/page?id=123&utm_source=google&utm_campaign=test";
         let normalized = normalize_url(url);
-        assert!(normalized.contains("id=123"));
+        assert!(!normalized.contains("id=123"));
         assert!(!normalized.contains("utm_source"));
         assert!(!normalized.contains("utm_campaign"));
+        assert_eq!(normalized, "https://example.com/page");
     }
 }
