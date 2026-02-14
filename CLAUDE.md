@@ -80,10 +80,33 @@ KAFKA_BROKERS=localhost:19092 cargo run --release --bin scrapix-worker-crawler
 KAFKA_BROKERS=localhost:19092 MEILISEARCH_URL=http://localhost:7700 MEILISEARCH_API_KEY=masterKey cargo run --release --bin scrapix-worker-content
 ```
 
+Console (Next.js frontend, port 3001):
+```bash
+cd console && npm run dev
+```
+
 Start a crawl:
 ```bash
 scrapix crawl -p examples/simple-crawl.json
 ```
+
+## Docker Compose
+
+```bash
+# Full stack (infra + all services + console)
+docker compose up -d
+
+# Full stack with file watching (hot-reload for console)
+docker compose watch
+
+# Infrastructure only (run Rust services and console locally)
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+```
+
+The console service uses `develop.watch`:
+- `sync` for `src/` and `public/` (hot-reloaded by Next.js via WATCHPACK_POLLING)
+- `rebuild` for `package.json` and `package-lock.json` (dependency changes)
+- `sync+restart` for `next.config.ts` (config changes need process restart)
 
 ## Diagnostic CLI Commands
 
@@ -215,6 +238,11 @@ The project is organized as a Cargo workspace with two main directories:
 - `scrapix-worker-content` - Content processor that parses HTML and indexes to Meilisearch
 - `scrapix-frontier-service` - Frontier service managing URL queue and deduplication
 - `scrapix-cli` - CLI tool for starting crawls and checking status
+
+**Frontend (`console/`):**
+- Next.js 16 app (App Router) with TypeScript, Tailwind CSS v4, shadcn/ui
+- Runs on port 3001 (`npm run dev`)
+- `Dockerfile.dev` for containerized development with `docker compose watch`
 
 ### Data Flow
 
