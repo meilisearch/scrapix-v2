@@ -64,3 +64,94 @@ pub use readability::{
 
 // Re-export scraper::Html so callers that already have a parsed DOM can use it
 pub use scraper::Html;
+
+use scrapix_core::{Document, Result, ScrapixError};
+use url::Url;
+
+/// Parse a server-provided markdown page into a Document.
+///
+/// Used when the server responds with `Content-Type: text/markdown`
+/// (e.g. Cloudflare's "Markdown for Agents" feature). The markdown is used
+/// directly instead of running our HTML→markdown conversion pipeline.
+pub fn parse_markdown_page(url: &str, markdown: &str) -> Result<Document> {
+    let parsed_url = Url::parse(url)?;
+    let domain = parsed_url
+        .host_str()
+        .ok_or_else(|| ScrapixError::Parse("URL has no host".to_string()))?;
+
+    let mut doc = Document::new(url, domain);
+
+    // Extract title from first `# ` heading
+    for line in markdown.lines() {
+        let trimmed = line.trim();
+        if let Some(title) = trimmed.strip_prefix("# ") {
+            let title = title.trim();
+            if !title.is_empty() {
+                doc.title = Some(title.to_string());
+                break;
+            }
+        }
+    }
+
+    // Set markdown directly from server response
+    doc.markdown = Some(markdown.to_string());
+
+    // Derive plain text content from markdown
+    let content = markdown_to_text(markdown);
+    if !content.is_empty() {
+        doc.content = Some(content.clone());
+
+        // Detect language from content
+        doc.language = detect_language(&content);
+    }
+
+    // Extract URL tags (path segments)
+    let path = parsed_url.path();
+    let mut tags = Vec::new();
+    let mut current = String::new();
+    for segment in path.split('/').filter(|s| !s.is_empty()) {
+        if !current.is_empty() {
+            current.push('/');
+        }
+        current.push_str(segment);
+        tags.push(format!("/{}", current));
+    }
+    doc.urls_tags = Some(tags);
+
+    Ok(doc)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_markdown_page_basic() {
+        let markdown = "# Hello World\n\nThis is a test page with some content.\n\n## Section\n\nMore content here.";
+        let doc = parse_markdown_page("https://example.com/docs/test", markdown).unwrap();
+
+        assert_eq!(doc.title, Some("Hello World".to_string()));
+        assert_eq!(doc.domain, "example.com");
+        assert_eq!(doc.markdown, Some(markdown.to_string()));
+        assert!(doc.content.is_some());
+        assert!(doc.content.as_ref().unwrap().contains("Hello World"));
+        assert_eq!(doc.urls_tags, Some(vec!["/docs".to_string(), "/docs/test".to_string()]));
+    }
+
+    #[test]
+    fn test_parse_markdown_page_no_heading() {
+        let markdown = "Just some plain text content without a heading.";
+        let doc = parse_markdown_page("https://example.com/", markdown).unwrap();
+
+        assert_eq!(doc.title, None);
+        assert!(doc.content.is_some());
+    }
+
+    #[test]
+    fn test_parse_markdown_page_language_detection() {
+        let markdown = "# English Page\n\nThis is a page written entirely in the English language with enough content for detection to work properly and accurately.";
+        let doc = parse_markdown_page("https://example.com/page", markdown).unwrap();
+
+        assert_eq!(doc.language, Some("en".to_string()));
+    }
+}

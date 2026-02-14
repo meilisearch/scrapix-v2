@@ -160,7 +160,7 @@ impl HttpFetcher {
         default_headers.insert(
             ACCEPT,
             HeaderValue::from_static(
-                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "text/markdown,text/html;q=0.9,application/xhtml+xml;q=0.9,application/xml;q=0.8,*/*;q=0.1",
             ),
         );
         default_headers.insert(
@@ -462,9 +462,12 @@ impl HttpFetcher {
 
         let content_type = headers.get("content-type").cloned();
 
-        // Check content type - we only want HTML
+        // Check content type - we accept HTML and markdown
         if let Some(ref ct) = content_type {
-            if !ct.contains("text/html") && !ct.contains("application/xhtml") {
+            if !ct.contains("text/html")
+                && !ct.contains("application/xhtml")
+                && !ct.contains("text/markdown")
+            {
                 return Err(ScrapixError::Crawl(format!(
                     "Unsupported content type: {}",
                     ct
