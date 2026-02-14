@@ -274,7 +274,14 @@ services:
       - "3001:3001"
     environment:
       WATCHPACK_POLLING: "true"
-      NEXT_PUBLIC_SCRAPIX_API_URL: http://scrapix-api:8080
+      NEXT_PUBLIC_SCRAPIX_API_URL: http://localhost:8080
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
     develop:
       watch:
         - action: sync
@@ -285,6 +292,11 @@ services:
           target: /app/public
         - action: rebuild
           path: ./console/package.json
+        - action: rebuild
+          path: ./console/package-lock.json
+        - action: sync+restart
+          path: ./console/next.config.ts
+          target: /app/next.config.ts
 
 # -----------------------------------------------------------------------------
 # Volumes
