@@ -23,6 +23,9 @@ services:
   scrapix-content:
     profiles: ["full"]
 
+  console:
+    profiles: ["full"]
+
   # More verbose Redpanda logging for debugging
   redpanda:
     command:

@@ -258,6 +258,34 @@ services:
     deploy:
       replicas: 1
 
+  # ---------------------------------------------------------------------------
+  # Console (Next.js Frontend)
+  # ---------------------------------------------------------------------------
+
+  console:
+    build:
+      context: ./console
+      dockerfile: Dockerfile.dev
+    container_name: scrapix-console
+    depends_on:
+      scrapix-api:
+        condition: service_healthy
+    ports:
+      - "3001:3001"
+    environment:
+      WATCHPACK_POLLING: "true"
+      NEXT_PUBLIC_SCRAPIX_API_URL: http://scrapix-api:8080
+    develop:
+      watch:
+        - action: sync
+          path: ./console/src
+          target: /app/src
+        - action: sync
+          path: ./console/public
+          target: /app/public
+        - action: rebuild
+          path: ./console/package.json
+
 # -----------------------------------------------------------------------------
 # Volumes
 # -----------------------------------------------------------------------------
