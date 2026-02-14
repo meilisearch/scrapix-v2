@@ -344,6 +344,10 @@ pub struct JobState {
     /// Max pages limit from config (for progress display)
     #[serde(default)]
     pub max_pages: Option<u64>,
+
+    /// Original crawl config (for display in UI)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<serde_json::Value>,
 }
 
 impl JobState {
@@ -365,6 +369,7 @@ impl JobState {
             eta_seconds: None,
             start_urls: Vec::new(),
             max_pages: None,
+            config: None,
         }
     }
 
