@@ -39,6 +39,8 @@ export interface Job {
   eta_seconds?: number;
   start_urls?: string[];
   max_pages?: number;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  config?: Record<string, any>;
 }
 
 // Alias for backwards compat
@@ -52,18 +54,38 @@ export interface CrawlConfig {
   index_uid: string;
 }
 
-// WebSocket messages from /ws/job/{id}
-export type WsMessage =
-  | { type: "page_crawled"; url: string; status: number; elapsed_ms: number }
-  | { type: "page_failed"; url: string; error: string }
-  | {
-      type: "job_progress";
-      pages_crawled: number;
-      pages_failed: number;
-      pages_total?: number;
-    }
-  | { type: "job_completed"; pages_crawled: number; pages_failed: number }
-  | { type: "job_failed"; error: string };
+// WebSocket envelope messages from /ws/job/{id}
+// The server wraps events in WsServerMessage envelopes.
+export type WsServerMessage =
+  | { type: "event"; job_id: string; event: CrawlEvent }
+  | { type: "status"; job_id: string; status: Job }
+  | { type: "subscribed"; job_id: string }
+  | { type: "unsubscribed"; job_id: string }
+  | { type: "error"; message: string; code: string }
+  | { type: "pong"; timestamp: number };
+
+// Inner CrawlEvent — matches Rust CrawlEvent serde output
+export type CrawlEvent =
+  | { type: "job_started"; job_id: string; index_uid: string; start_urls: string[]; timestamp: number }
+  | { type: "page_crawled"; job_id: string; url: string; status: number; content_length: number; duration_ms: number; timestamp: number }
+  | { type: "page_failed"; job_id: string; url: string; error: string; retry_count: number; timestamp: number }
+  | { type: "document_indexed"; job_id: string; url: string; document_id: string; timestamp: number }
+  | { type: "urls_discovered"; job_id: string; source_url: string; count: number; timestamp: number }
+  | { type: "job_completed"; job_id: string; pages_crawled: number; documents_indexed: number; errors: number; bytes_downloaded: number; duration_secs: number; timestamp: number }
+  | { type: "job_failed"; job_id: string; error: string; timestamp: number }
+  | { type: "page_skipped"; job_id: string; url: string; reason: string; timestamp: number }
+  | { type: "rate_limited"; job_id: string; domain: string; wait_ms: number; timestamp: number };
+
+// From GET /health/services
+export interface ServiceHealth {
+  services: ServiceStatus[];
+}
+
+export interface ServiceStatus {
+  name: string;
+  status: "up" | "idle" | "down";
+  last_seen_secs_ago?: number;
+}
 
 // From GET /errors
 export interface RecentErrors {

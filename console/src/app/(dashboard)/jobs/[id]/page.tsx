@@ -10,6 +10,11 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -22,9 +27,11 @@ import {
   FileText,
   Zap,
   ExternalLink,
+  Settings2,
+  ChevronDown,
 } from "lucide-react";
 import { fetchJobStatus, deleteJob, wsUrl } from "@/lib/api";
-import type { JobStatus, WsMessage } from "@/lib/api-types";
+import type { JobStatus, WsServerMessage, CrawlEvent } from "@/lib/api-types";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 
@@ -45,6 +52,115 @@ const statusVariant: Record<
   cancelled: "destructive",
   paused: "outline",
 };
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function ConfigSummary({ config }: { config: Record<string, any> }) {
+  // Group config entries into sections
+  const mainFields: [string, string][] = [];
+  const meilisearch: [string, string][] = [];
+  const patterns: [string, string][] = [];
+  const other: [string, string][] = [];
+
+  // start_urls already shown in the "Crawling" card, skip it
+  // index_uid already shown in "Index" card, skip it
+  const skip = new Set(["start_urls", "index_uid"]);
+
+  const formatValue = (v: unknown): string => {
+    if (v == null) return "—";
+    if (typeof v === "boolean") return v ? "Yes" : "No";
+    if (Array.isArray(v)) return v.length === 0 ? "—" : v.join(", ");
+    if (typeof v === "object") return JSON.stringify(v);
+    return String(v);
+  };
+
+  const labelMap: Record<string, string> = {
+    max_depth: "Max Depth",
+    max_pages: "Max Pages",
+    crawler_type: "Crawler Type",
+    allowed_domains: "Allowed Domains",
+  };
+
+  for (const [key, value] of Object.entries(config)) {
+    if (skip.has(key)) continue;
+    // Skip empty/default nested objects
+    if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+      const entries = Object.entries(value).filter(
+        ([, v]) =>
+          v != null &&
+          v !== "" &&
+          v !== false &&
+          !(Array.isArray(v) && v.length === 0)
+      );
+      if (entries.length === 0) continue;
+
+      if (key === "meilisearch") {
+        for (const [k, v] of entries) {
+          // Mask API key
+          const display =
+            k === "api_key" && typeof v === "string" && v.length > 4
+              ? `${v.slice(0, 4)}${"*".repeat(Math.min(v.length - 4, 20))}`
+              : formatValue(v);
+          meilisearch.push([k.replace(/_/g, " "), display]);
+        }
+      } else if (key === "url_patterns") {
+        for (const [k, v] of entries) {
+          patterns.push([k.replace(/_/g, " "), formatValue(v)]);
+        }
+      } else {
+        for (const [k, v] of entries) {
+          other.push([`${key}.${k}`, formatValue(v)]);
+        }
+      }
+      continue;
+    }
+
+    if (key in labelMap || ["max_depth", "max_pages", "crawler_type", "allowed_domains"].includes(key)) {
+      const display = formatValue(value);
+      if (display !== "—") mainFields.push([labelMap[key] || key, display]);
+    } else {
+      const display = formatValue(value);
+      if (display !== "—") other.push([key.replace(/_/g, " "), display]);
+    }
+  }
+
+  const Section = ({
+    title,
+    entries,
+  }: {
+    title: string;
+    entries: [string, string][];
+  }) =>
+    entries.length > 0 ? (
+      <div>
+        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
+          {title}
+        </p>
+        <div className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1">
+          {entries.map(([label, value]) => (
+            <div key={label} className="contents">
+              <span className="text-sm text-muted-foreground capitalize">
+                {label}
+              </span>
+              <span className="text-sm font-mono truncate">{value}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    ) : null;
+
+  return (
+    <div className="space-y-4">
+      <Section title="Crawl" entries={mainFields} />
+      {patterns.length > 0 && (
+        <Section title="URL Patterns" entries={patterns} />
+      )}
+      {meilisearch.length > 0 && (
+        <Section title="Meilisearch" entries={meilisearch} />
+      )}
+      {other.length > 0 && <Section title="Other" entries={other} />}
+    </div>
+  );
+}
 
 export default function JobDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -101,52 +217,90 @@ export default function JobDetailPage() {
         addLog("Connected to live feed");
       };
 
-      ws.onmessage = (event) => {
+      ws.onmessage = (rawEvent) => {
         try {
-          const msg: WsMessage = JSON.parse(event.data);
-          switch (msg.type) {
-            case "page_crawled":
-              addLog(
-                `Crawled ${msg.url} (${msg.status}) in ${msg.elapsed_ms}ms`
-              );
-              setStatus((prev) =>
-                prev
-                  ? { ...prev, pages_crawled: prev.pages_crawled + 1 }
-                  : prev
-              );
-              break;
-            case "page_failed":
-              addLog(`Failed ${msg.url}: ${msg.error}`, "error");
-              setStatus((prev) =>
-                prev ? { ...prev, errors: prev.errors + 1 } : prev
-              );
-              break;
-            case "job_progress":
-              setStatus((prev) =>
-                prev
-                  ? {
-                      ...prev,
-                      pages_crawled: msg.pages_crawled,
-                      errors: msg.pages_failed,
-                    }
-                  : prev
-              );
-              break;
-            case "job_completed":
-              addLog(
-                `Job completed: ${msg.pages_crawled} crawled, ${msg.pages_failed} failed`
-              );
-              setStatus((prev) =>
-                prev ? { ...prev, status: "completed" } : prev
-              );
-              break;
-            case "job_failed":
-              addLog(`Job failed: ${msg.error}`, "error");
-              setStatus((prev) =>
-                prev ? { ...prev, status: "failed" } : prev
-              );
-              break;
+          const msg: WsServerMessage = JSON.parse(rawEvent.data);
+
+          if (msg.type === "status") {
+            // Initial status snapshot on connect or on request
+            setStatus(msg.status);
+            addLog(
+              `Status: ${msg.status.status} — ${msg.status.pages_crawled} crawled, ${msg.status.pages_indexed} indexed, ${msg.status.errors} errors`
+            );
+            return;
           }
+
+          if (msg.type === "event") {
+            const evt: CrawlEvent = msg.event;
+            switch (evt.type) {
+              case "page_crawled":
+                addLog(
+                  `Crawled ${evt.url} (${evt.status}) in ${evt.duration_ms}ms`
+                );
+                setStatus((prev) =>
+                  prev
+                    ? { ...prev, pages_crawled: prev.pages_crawled + 1 }
+                    : prev
+                );
+                break;
+              case "page_failed":
+                addLog(`Failed ${evt.url}: ${evt.error}`, "error");
+                setStatus((prev) =>
+                  prev ? { ...prev, errors: prev.errors + 1 } : prev
+                );
+                break;
+              case "document_indexed":
+                addLog(`Indexed ${evt.url} → ${evt.document_id}`);
+                setStatus((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        pages_indexed: prev.pages_indexed + 1,
+                        documents_sent: prev.documents_sent + 1,
+                      }
+                    : prev
+                );
+                break;
+              case "urls_discovered":
+                addLog(
+                  `Discovered ${evt.count} URLs from ${evt.source_url}`
+                );
+                break;
+              case "page_skipped":
+                addLog(`Skipped ${evt.url}: ${evt.reason}`);
+                break;
+              case "rate_limited":
+                addLog(
+                  `Rate limited on ${evt.domain}, waiting ${evt.wait_ms}ms`
+                );
+                break;
+              case "job_started":
+                addLog(
+                  `Job started: crawling ${evt.start_urls.length} seed URL(s)`
+                );
+                setStatus((prev) =>
+                  prev ? { ...prev, status: "running" } : prev
+                );
+                break;
+              case "job_completed":
+                addLog(
+                  `Job completed: ${evt.pages_crawled} crawled, ${evt.documents_indexed} indexed, ${evt.errors} errors in ${evt.duration_secs}s`
+                );
+                setStatus((prev) =>
+                  prev ? { ...prev, status: "completed" } : prev
+                );
+                break;
+              case "job_failed":
+                addLog(`Job failed: ${evt.error}`, "error");
+                setStatus((prev) =>
+                  prev ? { ...prev, status: "failed" } : prev
+                );
+                break;
+            }
+            return;
+          }
+
+          // Ignore subscribed/unsubscribed/pong/error envelopes
         } catch {
           // ignore parse errors
         }
@@ -417,6 +571,35 @@ export default function JobDetailPage() {
               </Card>
             )}
           </div>
+
+          {/* Crawl Configuration */}
+          {status.config && (
+            <Collapsible>
+              <Card>
+                <CollapsibleTrigger asChild>
+                  <CardHeader className="cursor-pointer select-none pb-3 hover:bg-muted/50 transition-colors">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Settings2 className="h-4 w-4 text-muted-foreground" />
+                        <CardTitle className="text-base">
+                          Configuration
+                        </CardTitle>
+                      </div>
+                      <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform [[data-state=open]_&]:rotate-180" />
+                    </div>
+                    <CardDescription>
+                      Crawl parameters used for this job
+                    </CardDescription>
+                  </CardHeader>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <CardContent className="pt-0">
+                    <ConfigSummary config={status.config} />
+                  </CardContent>
+                </CollapsibleContent>
+              </Card>
+            </Collapsible>
+          )}
         </>
       )}
 

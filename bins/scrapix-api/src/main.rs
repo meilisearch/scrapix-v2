@@ -501,6 +501,8 @@ struct JobStatusResponse {
     start_urls: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_pages: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    config: Option<serde_json::Value>,
 }
 
 impl From<JobState> for JobStatusResponse {
@@ -522,6 +524,7 @@ impl From<JobState> for JobStatusResponse {
             eta_seconds: job.eta_seconds,
             start_urls: job.start_urls,
             max_pages: job.max_pages,
+            config: job.config,
         }
     }
 }
@@ -1099,6 +1102,7 @@ async fn create_crawl(
     let mut job = state.create_job(&job_id, &config.index_uid);
     job.start_urls = config.start_urls.clone();
     job.max_pages = config.max_pages;
+    job.config = serde_json::to_value(&config).ok();
     job.start();
 
     // Build allowed_domains list:
