@@ -93,20 +93,30 @@ scrapix crawl -p examples/simple-crawl.json
 ## Docker Compose
 
 ```bash
-# Full stack (infra + all services + console)
-docker compose up -d
-
-# Full stack with file watching (hot-reload for console)
+# Full stack with file watching (recommended for development)
 docker compose watch
+
+# Full stack without file watching
+docker compose up -d
 
 # Infrastructure only (run Rust services and console locally)
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+
+# Stop (preserves build caches in named volumes)
+docker compose down
+
+# Stop and remove all volumes (full reset)
+docker compose down -v
 ```
 
-The console service uses `develop.watch`:
-- `sync` for `src/` and `public/` (hot-reloaded by Next.js via WATCHPACK_POLLING)
-- `rebuild` for `package.json` and `package-lock.json` (dependency changes)
-- `sync+restart` for `next.config.ts` (config changes need process restart)
+**Dev workflow (`docker compose watch`):**
+- Rust services use `Dockerfile.dev` with `cargo-watch` for incremental debug rebuilds
+- Source changes in `crates/` and `bins/` are synced into containers — `cargo-watch` recompiles automatically (~5-15s)
+- `Cargo.toml`/`Cargo.lock` changes trigger a full image rebuild
+- Per-service `target/` named volumes prevent cargo lock contention across 4 concurrent builds
+- Shared `cargo-registry` and `cargo-git` volumes avoid re-downloading crates
+- Console uses named volumes for `node_modules/` and `.next/` to persist across restarts
+- First build is slow (~15-20 min, compiling all deps); subsequent starts reuse cached volumes
 
 ## Diagnostic CLI Commands
 

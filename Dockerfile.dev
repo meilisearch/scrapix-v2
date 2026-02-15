@@ -1,0 +1,24 @@
+# =============================================================================
+# Scrapix Dev Dockerfile (Rust services)
+# =============================================================================
+# Shared dev image for all Rust services. Each service overrides `command`
+# in docker-compose.yml to run cargo-watch for its specific binary.
+#
+# Usage:  docker compose watch
+# =============================================================================
+
+FROM rust:1.93-bookworm
+WORKDIR /app
+
+# Install build dependencies for rdkafka (cmake, libsasl2) + cargo-watch
+RUN apt-get update && apt-get install -y \
+    cmake libssl-dev libsasl2-dev libclang-dev pkg-config \
+    && rm -rf /var/lib/apt/lists/* \
+    && cargo install cargo-watch
+
+# Copy everything and do initial debug build to warm the target/ cache.
+# On first `docker compose up`, Docker populates the named volume from the image.
+COPY . .
+RUN cargo build --workspace
+
+CMD ["cargo", "watch", "-x", "run"]
