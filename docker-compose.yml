@@ -4,10 +4,10 @@
 # Full development stack with all services
 #
 # Usage:
+#   docker compose watch                    # Start with file watching (recommended)
 #   docker compose up -d                    # Start all services
-#   docker compose up -d redpanda redis meilisearch  # Infrastructure only
-#   docker compose logs -f scrapix-api     # Follow API logs
-#   docker compose down -v                  # Stop and remove volumes
+#   docker compose down                     # Stop (preserves build caches)
+#   docker compose down -v                  # Stop and remove all volumes
 # =============================================================================
 
 services:
@@ -152,7 +152,8 @@ services:
   scrapix-api:
     build:
       context: .
-      target: scrapix-api
+      dockerfile: Dockerfile.dev
+    command: cargo watch -x "run --bin scrapix-api" -w crates -w bins/scrapix-api
     container_name: scrapix-api
     depends_on:
       redpanda:
@@ -179,18 +180,35 @@ services:
       CLICKHOUSE_DATABASE: scrapix
       CLICKHOUSE_USER: scrapix
       CLICKHOUSE_PASSWORD: scrapix
+    volumes:
+      - cargo-registry:/usr/local/cargo/registry
+      - cargo-git:/usr/local/cargo/git
+      - target-api:/app/target
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
       interval: 10s
       timeout: 5s
       retries: 3
+    develop:
+      watch:
+        - action: sync
+          path: ./crates
+          target: /app/crates
+        - action: sync
+          path: ./bins
+          target: /app/bins
+        - action: rebuild
+          path: ./Cargo.toml
+        - action: rebuild
+          path: ./Cargo.lock
 
   # Frontier Service - URL deduplication and politeness
   scrapix-frontier:
     build:
       context: .
-      target: scrapix-frontier-service
+      dockerfile: Dockerfile.dev
+    command: cargo watch -x "run --bin scrapix-frontier-service" -w crates -w bins/scrapix-frontier-service
     container_name: scrapix-frontier
     depends_on:
       redpanda:
@@ -206,13 +224,30 @@ services:
       DOMAIN_DELAY_MS: 1000
       BLOOM_CAPACITY: 10000000
       BLOOM_FP_RATE: "0.01"
+    volumes:
+      - cargo-registry:/usr/local/cargo/registry
+      - cargo-git:/usr/local/cargo/git
+      - target-frontier:/app/target
     restart: unless-stopped
+    develop:
+      watch:
+        - action: sync
+          path: ./crates
+          target: /app/crates
+        - action: sync
+          path: ./bins
+          target: /app/bins
+        - action: rebuild
+          path: ./Cargo.toml
+        - action: rebuild
+          path: ./Cargo.lock
 
   # Crawler Worker - Fetches web pages
   scrapix-crawler:
     build:
       context: .
-      target: scrapix-worker-crawler
+      dockerfile: Dockerfile.dev
+    command: cargo watch -x "run --bin scrapix-worker-crawler" -w crates -w bins/scrapix-worker-crawler
     container_name: scrapix-crawler
     depends_on:
       redpanda:
@@ -229,15 +264,32 @@ services:
       MAX_RETRIES: 3
       MAX_DEPTH: 100
       RESPECT_ROBOTS: "true"
+    volumes:
+      - cargo-registry:/usr/local/cargo/registry
+      - cargo-git:/usr/local/cargo/git
+      - target-crawler:/app/target
     restart: unless-stopped
     deploy:
       replicas: 1
+    develop:
+      watch:
+        - action: sync
+          path: ./crates
+          target: /app/crates
+        - action: sync
+          path: ./bins
+          target: /app/bins
+        - action: rebuild
+          path: ./Cargo.toml
+        - action: rebuild
+          path: ./Cargo.lock
 
   # Content Worker - Parses pages and indexes to Meilisearch
   scrapix-content:
     build:
       context: .
-      target: scrapix-worker-content
+      dockerfile: Dockerfile.dev
+    command: cargo watch -x "run --bin scrapix-worker-content" -w crates -w bins/scrapix-worker-content
     container_name: scrapix-content
     depends_on:
       redpanda:
@@ -254,9 +306,25 @@ services:
       MEILISEARCH_API_KEY: masterKey
       BATCH_SIZE: 100
       BATCH_TIMEOUT_SECS: 5
+    volumes:
+      - cargo-registry:/usr/local/cargo/registry
+      - cargo-git:/usr/local/cargo/git
+      - target-content:/app/target
     restart: unless-stopped
     deploy:
       replicas: 1
+    develop:
+      watch:
+        - action: sync
+          path: ./crates
+          target: /app/crates
+        - action: sync
+          path: ./bins
+          target: /app/bins
+        - action: rebuild
+          path: ./Cargo.toml
+        - action: rebuild
+          path: ./Cargo.lock
 
   # ---------------------------------------------------------------------------
   # Console (Next.js Frontend)
@@ -275,6 +343,9 @@ services:
     environment:
       WATCHPACK_POLLING: "true"
       NEXT_PUBLIC_SCRAPIX_API_URL: http://localhost:8080
+    volumes:
+      - console-node-modules:/app/node_modules
+      - console-next:/app/.next
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001"]
       interval: 10s
@@ -302,6 +373,7 @@ services:
 # Volumes
 # -----------------------------------------------------------------------------
 volumes:
+  # Infrastructure data
   redpanda_data:
     driver: local
   dragonfly_data:
@@ -312,6 +384,17 @@ volumes:
     driver: local
   clickhouse_logs:
     driver: local
+  # Rust build caches (shared across services)
+  cargo-registry:
+  cargo-git:
+  # Per-service target dirs (avoids cargo lock contention)
+  target-api:
+  target-frontier:
+  target-crawler:
+  target-content:
+  # Console build caches
+  console-node-modules:
+  console-next:
 
 # -----------------------------------------------------------------------------
 # Networks
