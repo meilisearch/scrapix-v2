@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -34,6 +33,8 @@ import { Plus, Copy, Eye, EyeOff, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 
+const BASE = "/api/scrapix";
+
 interface ApiKey {
   id: string;
   name: string;
@@ -46,105 +47,72 @@ interface ApiKey {
 export default function ApiKeysPage() {
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [loading, setLoading] = useState(true);
-  const [accountId, setAccountId] = useState<string | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
   const [createdKey, setCreatedKey] = useState<string | null>(null);
   const [showKey, setShowKey] = useState(false);
   const [creating, setCreating] = useState(false);
-  const supabase = createClient();
 
   useEffect(() => {
     fetchKeys();
   }, []);
 
   const fetchKeys = async () => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return;
-
-    // Get the user's account
-    const { data: membership } = await supabase
-      .from("account_members")
-      .select("account_id")
-      .eq("user_id", user.id)
-      .single();
-
-    if (membership) {
-      setAccountId(membership.account_id);
-
-      // Get API keys for this account
-      const { data: keysData } = await supabase
-        .from("api_keys")
-        .select("id, name, prefix, active, last_used_at, created_at")
-        .eq("account_id", membership.account_id)
-        .order("created_at", { ascending: false });
-
-      if (keysData) {
-        setKeys(keysData);
+    try {
+      const res = await fetch(`${BASE}/account/api-keys`, {
+        credentials: "include",
+      });
+      if (res.ok) {
+        setKeys(await res.json());
       }
+    } catch {
+      // ignore
     }
     setLoading(false);
   };
 
-  const generateApiKey = () => {
-    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    let key = "sk_live_";
-    for (let i = 0; i < 32; i++) {
-      key += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return key;
-  };
-
-  const hashKey = async (key: string) => {
-    const encoder = new TextEncoder();
-    const data = encoder.encode(key);
-    const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
-  };
-
   const createKey = async () => {
-    if (!accountId || !newKeyName.trim()) return;
+    if (!newKeyName.trim()) return;
 
     setCreating(true);
-    const apiKey = generateApiKey();
-    const keyHash = await hashKey(apiKey);
-    const prefix = apiKey.slice(0, 12) + "...";
-
-    const { error } = await supabase.from("api_keys").insert({
-      account_id: accountId,
-      name: newKeyName.trim(),
-      prefix,
-      key_hash: keyHash,
-    });
-
-    if (error) {
+    try {
+      const res = await fetch(`${BASE}/account/api-keys`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newKeyName.trim() }),
+        credentials: "include",
+      });
+      if (!res.ok) {
+        toast.error("Failed to create API key");
+        setCreating(false);
+        return;
+      }
+      const data = await res.json();
+      setCreatedKey(data.key);
+      setNewKeyName("");
+      setCreating(false);
+      fetchKeys();
+    } catch {
       toast.error("Failed to create API key");
       setCreating(false);
-      return;
     }
-
-    setCreatedKey(apiKey);
-    setNewKeyName("");
-    setCreating(false);
-    fetchKeys();
   };
 
   const revokeKey = async (keyId: string) => {
-    const { error } = await supabase
-      .from("api_keys")
-      .update({ active: false })
-      .eq("id", keyId);
-
-    if (error) {
+    try {
+      const res = await fetch(`${BASE}/account/api-keys/${keyId}`, {
+        method: "PATCH",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        toast.error("Failed to revoke API key");
+        return;
+      }
+      toast.success("API key revoked");
+      fetchKeys();
+    } catch {
       toast.error("Failed to revoke API key");
-      return;
     }
-
-    toast.success("API key revoked");
-    fetchKeys();
   };
 
   const copyToClipboard = (text: string) => {
@@ -189,7 +157,7 @@ export default function ApiKeysPage() {
                   <div className="p-4 bg-muted rounded-lg">
                     <div className="flex items-center gap-2">
                       <code className="flex-1 text-sm break-all">
-                        {showKey ? createdKey : "•".repeat(40)}
+                        {showKey ? createdKey : "\u2022".repeat(40)}
                       </code>
                       <Button
                         variant="ghost"

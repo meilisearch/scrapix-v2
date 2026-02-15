@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { signup } from "@/lib/auth";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,7 +15,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Loader2, CheckCircle } from "lucide-react";
+import { Loader2 } from "lucide-react";
 
 export default function SignupPage() {
   const [fullName, setFullName] = useState("");
@@ -22,60 +23,22 @@ export default function SignupPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [success, setSuccess] = useState(false);
-  const supabase = createClient();
+  const router = useRouter();
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setLoading(true);
 
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          full_name: fullName,
-        },
-        emailRedirectTo: `${window.location.origin}/`,
-      },
-    });
-
-    if (error) {
-      setError(error.message);
+    try {
+      await signup(email, password, fullName || undefined);
+      router.push("/");
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Signup failed");
       setLoading(false);
-      return;
     }
-
-    setSuccess(true);
-    setLoading(false);
   };
-
-  if (success) {
-    return (
-      <Card>
-        <CardHeader className="space-y-1">
-          <div className="flex items-center justify-center mb-4">
-            <CheckCircle className="h-12 w-12 text-green-500" />
-          </div>
-          <CardTitle className="text-2xl font-bold text-center">
-            Check your email
-          </CardTitle>
-          <CardDescription className="text-center">
-            We&apos;ve sent you a confirmation link to <strong>{email}</strong>.
-            Click the link to verify your account.
-          </CardDescription>
-        </CardHeader>
-        <CardFooter>
-          <Link href="/login" className="w-full">
-            <Button variant="outline" className="w-full">
-              Back to sign in
-            </Button>
-          </Link>
-        </CardFooter>
-      </Card>
-    );
-  }
 
   return (
     <Card>

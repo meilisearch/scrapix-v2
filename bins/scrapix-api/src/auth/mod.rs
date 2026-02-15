@@ -1,0 +1,46 @@
+//! Authentication module
+//!
+//! Provides password-based auth with JWT sessions and API key validation.
+
+mod handlers;
+mod jwt;
+mod middleware;
+mod password;
+
+pub use handlers::auth_routes;
+pub use handlers::session_routes;
+pub use middleware::validate_api_key;
+pub use middleware::validate_session;
+
+use sqlx::{postgres::PgPoolOptions, PgPool};
+
+/// Account information extracted from a validated API key
+#[derive(Debug, Clone)]
+pub struct AuthenticatedAccount {
+    pub account_id: String,
+    pub tier: String,
+}
+
+/// User information extracted from a validated JWT session
+#[derive(Debug, Clone)]
+pub struct AuthenticatedUser {
+    pub user_id: uuid::Uuid,
+    pub email: String,
+}
+
+/// Shared auth state: database pool + JWT secret
+#[derive(Clone)]
+pub struct AuthState {
+    pub pool: PgPool,
+    pub jwt_secret: String,
+}
+
+impl AuthState {
+    pub async fn new(database_url: &str, jwt_secret: String) -> Result<Self, sqlx::Error> {
+        let pool = PgPoolOptions::new()
+            .max_connections(10)
+            .connect(database_url)
+            .await?;
+        Ok(Self { pool, jwt_secret })
+    }
+}

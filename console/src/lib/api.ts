@@ -5,6 +5,7 @@ import type {
   CrawlConfig,
   RecentErrors,
   ScrapeResult,
+  ServiceHealth,
 } from "./api-types";
 
 // API calls go through Next.js rewrites (/api/scrapix/* → backend) to avoid CORS.
@@ -17,7 +18,10 @@ const WS_BASE =
   );
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, init);
+  const res = await fetch(`${BASE}${path}`, {
+    credentials: "include",
+    ...init,
+  });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(
@@ -43,6 +47,10 @@ export async function deleteJob(id: string): Promise<void> {
   await fetch(`${BASE}/job/${encodeURIComponent(id)}`, {
     method: "DELETE",
   });
+}
+
+export async function fetchServiceHealth(): Promise<ServiceHealth> {
+  return request("/health/services");
 }
 
 export async function fetchErrors(last?: number): Promise<RecentErrors> {

@@ -52,7 +52,11 @@ tokio-stream = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
-# Auth - API key validation via Supabase
-sqlx = { version = "0.8", features = ["runtime-tokio", "postgres"] }
+# Auth
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "uuid", "chrono"] }
 sha2 = "0.10"
 hex = "0.4"
+argon2 = "0.5"
+jsonwebtoken = "9"
+axum-extra = { version = "0.10", features = ["cookie"] }
+rand = { workspace = true }

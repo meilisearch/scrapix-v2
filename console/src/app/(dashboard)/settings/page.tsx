@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { getMe, type AuthUser } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -17,108 +17,63 @@ import { Separator } from "@/components/ui/separator";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
-interface Profile {
-  id: string;
-  email: string;
-  full_name: string | null;
-}
-
-interface Account {
-  id: string;
-  name: string;
-}
+const BASE = "/api/scrapix";
 
 export default function SettingsPage() {
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [account, setAccount] = useState<Account | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [fullName, setFullName] = useState("");
   const [accountName, setAccountName] = useState("");
-  const supabase = createClient();
 
   useEffect(() => {
-    fetchData();
+    getMe()
+      .then((u) => {
+        setUser(u);
+        setFullName(u.full_name || "");
+        setAccountName(u.account?.name || "");
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
   }, []);
 
-  const fetchData = async () => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return;
-
-    // Get profile
-    const { data: profileData } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", user.id)
-      .single();
-
-    if (profileData) {
-      setProfile(profileData);
-      setFullName(profileData.full_name || "");
-    }
-
-    // Get account
-    const { data: membership } = await supabase
-      .from("account_members")
-      .select("account_id")
-      .eq("user_id", user.id)
-      .single();
-
-    if (membership) {
-      const { data: accountData } = await supabase
-        .from("accounts")
-        .select("*")
-        .eq("id", membership.account_id)
-        .single();
-
-      if (accountData) {
-        setAccount(accountData);
-        setAccountName(accountData.name);
-      }
-    }
-
-    setLoading(false);
-  };
-
   const saveProfile = async () => {
-    if (!profile) return;
-
     setSaving(true);
-
-    const { error } = await supabase
-      .from("profiles")
-      .update({ full_name: fullName })
-      .eq("id", profile.id);
-
-    if (error) {
-      toast.error("Failed to update profile");
-    } else {
+    try {
+      const res = await fetch(`${BASE}/auth/me`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ full_name: fullName }),
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error();
       toast.success("Profile updated");
-      setProfile({ ...profile, full_name: fullName });
+      setUser((prev) => prev ? { ...prev, full_name: fullName } : prev);
+    } catch {
+      toast.error("Failed to update profile");
     }
-
     setSaving(false);
   };
 
   const saveAccount = async () => {
-    if (!account) return;
-
     setSaving(true);
-
-    const { error } = await supabase
-      .from("accounts")
-      .update({ name: accountName })
-      .eq("id", account.id);
-
-    if (error) {
-      toast.error("Failed to update account");
-    } else {
+    try {
+      const res = await fetch(`${BASE}/account`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: accountName }),
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error();
       toast.success("Account updated");
-      setAccount({ ...account, name: accountName });
+      setUser((prev) =>
+        prev && prev.account
+          ? { ...prev, account: { ...prev.account, name: accountName } }
+          : prev
+      );
+    } catch {
+      toast.error("Failed to update account");
     }
-
     setSaving(false);
   };
 
@@ -153,7 +108,7 @@ export default function SettingsPage() {
             <Input
               id="email"
               type="email"
-              value={profile?.email || ""}
+              value={user?.email || ""}
               disabled
               className="bg-muted"
             />
@@ -173,7 +128,7 @@ export default function SettingsPage() {
         <CardFooter>
           <Button
             onClick={saveProfile}
-            disabled={saving || fullName === profile?.full_name}
+            disabled={saving || fullName === user?.full_name}
           >
             {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Save Changes
@@ -194,7 +149,7 @@ export default function SettingsPage() {
             <Label htmlFor="accountId">Account ID</Label>
             <Input
               id="accountId"
-              value={account?.id || ""}
+              value={user?.account?.id || ""}
               disabled
               className="bg-muted font-mono"
             />
@@ -211,7 +166,7 @@ export default function SettingsPage() {
         <CardFooter>
           <Button
             onClick={saveAccount}
-            disabled={saving || accountName === account?.name}
+            disabled={saving || accountName === user?.account?.name}
           >
             {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Save Changes
