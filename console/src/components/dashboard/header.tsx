@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
-import { User } from "@supabase/supabase-js";
+import { getMe, logout, type AuthUser } from "@/lib/auth";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,27 +14,20 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useRouter } from "next/navigation";
 
 export function Header() {
-  const [user, setUser] = useState<User | null>(null);
-  const supabase = createClient();
+  const [user, setUser] = useState<AuthUser | null>(null);
   const router = useRouter();
 
   useEffect(() => {
-    const getUser = async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      setUser(user);
-    };
-    getUser();
-  }, [supabase.auth]);
+    getMe().then(setUser).catch(() => {});
+  }, []);
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
+    await logout();
     router.push("/login");
     router.refresh();
   };
 
-  const initials = user?.user_metadata?.full_name
+  const initials = user?.full_name
     ?.split(" ")
     .map((n: string) => n[0])
     .join("")
@@ -59,7 +51,7 @@ export function Header() {
             <DropdownMenuLabel>
               <div className="flex flex-col space-y-1">
                 <p className="text-sm font-medium">
-                  {user?.user_metadata?.full_name || "User"}
+                  {user?.full_name || "User"}
                 </p>
                 <p className="text-xs text-muted-foreground">{user?.email}</p>
               </div>

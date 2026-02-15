@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { getMe, type AuthUser } from "@/lib/auth";
 import {
   Card,
   CardContent,
@@ -14,48 +14,16 @@ import { Badge } from "@/components/ui/badge";
 import { fetchStats, fetchErrors } from "@/lib/api";
 import type { SystemStats, RecentErrors } from "@/lib/api-types";
 
-interface Account {
-  id: string;
-  name: string;
-  tier: string;
-}
-
 export default function DashboardPage() {
-  const [account, setAccount] = useState<Account | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [errors, setErrors] = useState<RecentErrors | null>(null);
   const [loading, setLoading] = useState(true);
   const [apiError, setApiError] = useState<string | null>(null);
-  const supabase = createClient();
 
   useEffect(() => {
-    const fetchAccount = async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) return;
-
-      const { data: membership } = await supabase
-        .from("account_members")
-        .select("account_id")
-        .eq("user_id", user.id)
-        .single();
-
-      if (membership) {
-        const { data: accountData } = await supabase
-          .from("accounts")
-          .select("*")
-          .eq("id", membership.account_id)
-          .single();
-
-        if (accountData) {
-          setAccount(accountData);
-        }
-      }
-    };
-
-    fetchAccount();
-  }, [supabase]);
+    getMe().then(setUser).catch(() => {});
+  }, []);
 
   const refreshData = useCallback(async () => {
     try {
@@ -114,6 +82,8 @@ export default function DashboardPage() {
         },
       ]
     : [];
+
+  const account = user?.account;
 
   return (
     <div className="space-y-6">

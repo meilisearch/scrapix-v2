@@ -94,6 +94,25 @@ services:
       timeout: 3s
       retries: 5
 
+  # PostgreSQL - Auth, accounts, API keys
+  postgres:
+    image: postgres:17-alpine
+    container_name: scrapix-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: scrapix
+      POSTGRES_USER: scrapix
+      POSTGRES_PASSWORD: scrapix
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./deploy/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scrapix -d scrapix"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   # ClickHouse - Analytics database for crawl metrics
   clickhouse:
     image: clickhouse/clickhouse-server:24.8
@@ -164,6 +183,8 @@ services:
         condition: service_healthy
       clickhouse:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
       init-topics:
         condition: service_completed_successfully
     ports:
@@ -180,6 +201,8 @@ services:
       CLICKHOUSE_DATABASE: scrapix
       CLICKHOUSE_USER: scrapix
       CLICKHOUSE_PASSWORD: scrapix
+      DATABASE_URL: postgres://scrapix:scrapix@postgres:5432/scrapix
+      JWT_SECRET: dev-jwt-secret-change-in-production
     volumes:
       - cargo-registry:/usr/local/cargo/registry
       - cargo-git:/usr/local/cargo/git
@@ -343,6 +366,7 @@ services:
     environment:
       WATCHPACK_POLLING: "true"
       NEXT_PUBLIC_SCRAPIX_API_URL: http://localhost:8080
+      SCRAPIX_API_URL: http://scrapix-api:8080
     volumes:
       - console-node-modules:/app/node_modules
       - console-next:/app/.next
@@ -374,6 +398,8 @@ services:
 # -----------------------------------------------------------------------------
 volumes:
   # Infrastructure data
+  pg_data:
+    driver: local
   redpanda_data:
     driver: local
   dragonfly_data:

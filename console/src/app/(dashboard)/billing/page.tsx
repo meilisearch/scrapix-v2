@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { getMe, type AuthUser } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -14,12 +14,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Check, Loader2 } from "lucide-react";
 
-interface Account {
-  id: string;
-  name: string;
-  tier: string;
-  stripe_customer_id: string | null;
-}
+const BASE = "/api/scrapix";
 
 const plans = [
   {
@@ -88,10 +83,9 @@ const plans = [
 ];
 
 export default function BillingPage() {
-  const [account, setAccount] = useState<Account | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [upgrading, setUpgrading] = useState<string | null>(null);
-  const supabase = createClient();
 
   // Mock usage data - in production this would come from ClickHouse
   const usage = {
@@ -100,52 +94,49 @@ export default function BillingPage() {
   };
 
   useEffect(() => {
-    fetchAccount();
+    getMe()
+      .then((u) => {
+        setUser(u);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
   }, []);
 
-  const fetchAccount = async () => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return;
-
-    const { data: membership } = await supabase
-      .from("account_members")
-      .select("account_id")
-      .eq("user_id", user.id)
-      .single();
-
-    if (membership) {
-      const { data: accountData } = await supabase
-        .from("accounts")
-        .select("*")
-        .eq("id", membership.account_id)
-        .single();
-
-      if (accountData) {
-        setAccount(accountData);
-      }
-    }
-    setLoading(false);
-  };
+  const accountTier = user?.account?.tier || "free";
 
   const handleUpgrade = async (tier: string) => {
-    // In production, this would redirect to Stripe Checkout
     setUpgrading(tier);
 
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-
-    // Update the account tier
-    if (account) {
-      await supabase.from("accounts").update({ tier }).eq("id", account.id);
-      setAccount({ ...account, tier });
+    try {
+      const res = await fetch(`${BASE}/account/billing`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tier }),
+        credentials: "include",
+      });
+      if (res.ok && user?.account) {
+        setUser({
+          ...user,
+          account: { ...user.account, tier },
+        });
+      }
+    } catch {
+      // ignore
     }
 
     setUpgrading(null);
   };
 
-  const currentPlan = plans.find((p) => p.tier === account?.tier) || plans[0];
+  const currentPlan =
+    plans.find((p) => p.tier === accountTier) || plans[0];
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -288,7 +279,7 @@ export default function BillingPage() {
                 </ul>
               </CardContent>
               <CardFooter>
-                {account?.tier === plan.tier ? (
+                {accountTier === plan.tier ? (
                   <Button className="w-full" disabled variant="outline">
                     Current Plan
                   </Button>
@@ -305,7 +296,7 @@ export default function BillingPage() {
                     {upgrading === plan.tier ? (
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                     ) : null}
-                    {plans.findIndex((p) => p.tier === account?.tier) <
+                    {plans.findIndex((p) => p.tier === accountTier) <
                     plans.findIndex((p) => p.tier === plan.tier)
                       ? "Upgrade"
                       : "Downgrade"}

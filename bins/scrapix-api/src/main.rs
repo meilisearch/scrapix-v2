@@ -62,7 +62,7 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
-use tower_http::{cors::CorsLayer, trace::TraceLayer};
+use tower_http::{cors::{AllowOrigin, CorsLayer}, trace::TraceLayer};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -91,17 +91,13 @@ struct Args {
     #[arg(short, long, env = "KAFKA_BROKERS", default_value = "localhost:9092")]
     brokers: String,
 
-    /// Enable CORS for all origins
-    #[arg(long, env = "ENABLE_CORS")]
-    enable_cors: bool,
+    /// PostgreSQL database URL
+    #[arg(long, env = "DATABASE_URL")]
+    database_url: Option<String>,
 
-    /// API key for authentication (optional - legacy)
-    #[arg(long, env = "API_KEY")]
-    api_key: Option<String>,
-
-    /// Supabase database URL for API key validation
-    #[arg(long, env = "SUPABASE_DB_URL")]
-    supabase_db_url: Option<String>,
+    /// JWT secret for session tokens
+    #[arg(long, env = "JWT_SECRET", default_value = "dev-jwt-secret-change-in-production")]
+    jwt_secret: String,
 
     /// Maximum jobs to keep in memory
     #[arg(long, env = "MAX_JOBS", default_value = "10000")]
@@ -1937,20 +1933,20 @@ async fn main() -> anyhow::Result<()> {
     // Initialize ClickHouse for analytics (optional)
     let (analytics_state, clickhouse_batcher) = init_clickhouse().await;
 
-    // Initialize auth state if Supabase DB URL is provided
-    let auth_state = if let Some(ref db_url) = args.supabase_db_url {
-        match auth::AuthState::new(db_url).await {
+    // Initialize auth state if DATABASE_URL is provided
+    let auth_state = if let Some(ref db_url) = args.database_url {
+        match auth::AuthState::new(db_url, args.jwt_secret.clone()).await {
             Ok(state) => {
-                info!("API key authentication enabled via Supabase");
+                info!("Authentication enabled via PostgreSQL");
                 Some(Arc::new(state))
             }
             Err(e) => {
-                warn!(error = %e, "Failed to connect to Supabase DB. API key auth disabled.");
+                warn!(error = %e, "Failed to connect to PostgreSQL. Auth disabled.");
                 None
             }
         }
     } else {
-        info!("API key authentication disabled (SUPABASE_DB_URL not set)");
+        info!("Authentication disabled (DATABASE_URL not set)");
         None
     };
 
@@ -2076,7 +2072,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/ws", get(ws_handler))
         .route("/ws/job/{id}", get(ws_job_handler));
 
-    // Protected routes (auth required when enabled)
+    // Protected routes (API key auth required when enabled)
     let protected_routes = Router::new()
         .route("/scrape", post(scrape_url))
         .route("/crawl", post(create_crawl))
@@ -2086,7 +2082,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/job/{id}/events", get(job_events))
         .route("/job/{id}", delete(cancel_job));
 
-    // Apply auth middleware if configured
+    // Apply API key auth middleware if configured
     let protected_routes = if let Some(ref auth) = auth_state {
         protected_routes.layer(middleware::from_fn_with_state(
             auth.clone(),
@@ -2102,6 +2098,14 @@ async fn main() -> anyhow::Result<()> {
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
+    // Add auth and session routes if database is configured
+    if let Some(ref auth) = auth_state {
+        app = app
+            .merge(auth::auth_routes(auth.clone()))
+            .merge(auth::session_routes(auth.clone()));
+        info!("Auth routes enabled (/auth/signup, /auth/login, /auth/me, /account/*)");
+    }
+
     // Add analytics routes if ClickHouse is available
     if let Some(analytics) = analytics_state {
         app = app.nest("/analytics/v0", analytics::create_analytics_router(analytics));
@@ -2110,11 +2114,29 @@ async fn main() -> anyhow::Result<()> {
         info!("Analytics API disabled (CLICKHOUSE_URL not set)");
     }
 
-    // Add CORS if enabled
-    if args.enable_cors {
-        app = app.layer(CorsLayer::permissive());
-        info!("CORS enabled for all origins");
-    }
+    // CORS: credential-aware for console at localhost:3001
+    let cors = CorsLayer::new()
+        .allow_origin(AllowOrigin::list([
+            "http://localhost:3001".parse().unwrap(),
+            "http://127.0.0.1:3001".parse().unwrap(),
+        ]))
+        .allow_methods([
+            axum::http::Method::GET,
+            axum::http::Method::POST,
+            axum::http::Method::PUT,
+            axum::http::Method::PATCH,
+            axum::http::Method::DELETE,
+            axum::http::Method::OPTIONS,
+        ])
+        .allow_headers([
+            axum::http::header::CONTENT_TYPE,
+            axum::http::header::AUTHORIZATION,
+            axum::http::header::COOKIE,
+            axum::http::HeaderName::from_static("x-api-key"),
+        ])
+        .allow_credentials(true)
+        .expose_headers([axum::http::header::SET_COOKIE]);
+    app = app.layer(cors);
 
     // Start server with graceful shutdown
     let addr: SocketAddr = format!("{}:{}", args.host, args.port).parse()?;
