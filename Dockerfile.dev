@@ -16,9 +16,10 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/* \
     && cargo install cargo-watch
 
-# Copy everything and do initial debug build to warm the target/ cache.
-# On first `docker compose up`, Docker populates the named volume from the image.
+# Copy everything and pre-build library crates to warm the target/ cache.
+# Only build libs (not bins) to avoid expensive linking in Docker build.
+# cargo-watch will build the specific binary when the container starts.
 COPY . .
-RUN cargo build --workspace
+RUN cargo build --workspace --lib
 
 CMD ["cargo", "watch", "-x", "run"]
