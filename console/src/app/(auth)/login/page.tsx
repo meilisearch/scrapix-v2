@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { login } from "@/lib/auth";
+import { login, signup } from "@/lib/auth";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,11 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
 import { Loader2 } from "lucide-react";
+
+const isDev = process.env.NEXT_PUBLIC_SCRAPIX_API_URL?.includes("localhost")
+  || typeof window !== "undefined" && window.location.hostname === "localhost";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -36,6 +40,29 @@ export default function LoginPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
       setLoading(false);
+    }
+  };
+
+  const handleDevLogin = async () => {
+    setError(null);
+    setLoading(true);
+    const devEmail = "dev@scrapix.local";
+    const devPassword = "dev123456";
+
+    try {
+      await login(devEmail, devPassword);
+      router.push("/");
+      router.refresh();
+    } catch {
+      // User doesn't exist yet — create it
+      try {
+        await signup(devEmail, devPassword, "Dev User");
+        router.push("/");
+        router.refresh();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Dev login failed");
+        setLoading(false);
+      }
     }
   };
 
@@ -87,6 +114,21 @@ export default function LoginPage() {
               Sign up
             </Link>
           </p>
+          {isDev && (
+            <>
+              <Separator />
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                disabled={loading}
+                onClick={handleDevLogin}
+              >
+                {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Skip Login (Dev)
+              </Button>
+            </>
+          )}
         </CardFooter>
       </form>
     </Card>
