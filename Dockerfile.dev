@@ -4,6 +4,9 @@
 # Shared dev image for all Rust services. Each service overrides `command`
 # in docker-compose.yml to run cargo-watch for its specific binary.
 #
+# Uses a two-phase build to cache compiled dependencies separately from
+# source code. Only Cargo.toml/Cargo.lock changes trigger a full dep rebuild.
+#
 # Usage:  docker compose watch
 # =============================================================================
 
@@ -16,10 +19,47 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/* \
     && cargo install cargo-watch
 
-# Copy everything and pre-build library crates to warm the target/ cache.
-# Only build libs (not bins) to avoid expensive linking in Docker build.
-# cargo-watch will build the specific binary when the container starts.
+# ---------- Phase 1: Cache dependencies (only invalidated by Cargo.toml/Cargo.lock) ----------
+
+COPY Cargo.toml Cargo.lock ./
+
+# Copy all workspace member Cargo.toml files
+COPY crates/scrapix-core/Cargo.toml crates/scrapix-core/Cargo.toml
+COPY crates/scrapix-frontier/Cargo.toml crates/scrapix-frontier/Cargo.toml
+COPY crates/scrapix-crawler/Cargo.toml crates/scrapix-crawler/Cargo.toml
+COPY crates/scrapix-parser/Cargo.toml crates/scrapix-parser/Cargo.toml
+COPY crates/scrapix-extractor/Cargo.toml crates/scrapix-extractor/Cargo.toml
+COPY crates/scrapix-ai/Cargo.toml crates/scrapix-ai/Cargo.toml
+COPY crates/scrapix-storage/Cargo.toml crates/scrapix-storage/Cargo.toml
+COPY crates/scrapix-queue/Cargo.toml crates/scrapix-queue/Cargo.toml
+COPY crates/scrapix-telemetry/Cargo.toml crates/scrapix-telemetry/Cargo.toml
+COPY bins/scrapix-api/Cargo.toml bins/scrapix-api/Cargo.toml
+COPY bins/scrapix-worker-crawler/Cargo.toml bins/scrapix-worker-crawler/Cargo.toml
+COPY bins/scrapix-worker-content/Cargo.toml bins/scrapix-worker-content/Cargo.toml
+COPY bins/scrapix-frontier-service/Cargo.toml bins/scrapix-frontier-service/Cargo.toml
+COPY bins/scrapix-cli/Cargo.toml bins/scrapix-cli/Cargo.toml
+COPY benches/Cargo.toml benches/Cargo.toml
+COPY tests/Cargo.toml tests/Cargo.toml
+
+# Create dummy source files so cargo can resolve the workspace and compile deps
+RUN set -e; \
+    for crate in core frontier crawler parser extractor ai storage queue telemetry; do \
+        mkdir -p crates/scrapix-$crate/src && echo "" > crates/scrapix-$crate/src/lib.rs; \
+    done; \
+    for bin in scrapix-api scrapix-worker-crawler scrapix-worker-content scrapix-frontier-service scrapix-cli; do \
+        mkdir -p bins/$bin/src && echo "fn main(){}" > bins/$bin/src/main.rs; \
+    done; \
+    mkdir -p benches/src && echo "" > benches/src/lib.rs; \
+    mkdir -p tests/src && echo "" > tests/src/lib.rs
+
+# Build all dependencies (cached until Cargo.toml or Cargo.lock changes)
+RUN cargo build --workspace 2>/dev/null ; true
+
+# ---------- Phase 2: Copy real source code ----------
+
+# Remove dummy source and compiled artifacts for our crates (keep dep artifacts)
+RUN rm -rf crates bins benches tests
+
 COPY . .
-RUN cargo build --workspace --lib
 
 CMD ["cargo", "watch", "-x", "run"]
