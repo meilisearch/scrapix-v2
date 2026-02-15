@@ -50,10 +50,14 @@ RUN set -e; \
     mkdir -p benches/src && echo "" > benches/src/lib.rs; \
     mkdir -p tests/src && echo "" > tests/src/lib.rs
 
-# Build deps with BuildKit cache mounts — survives across image rebuilds
+# Build deps with BuildKit cache mounts — survives across image rebuilds.
+# target/ is also cached so recompilation is incremental even after Dockerfile changes.
+# We copy the result out because cache mounts aren't baked into the image.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    cargo build --workspace 2>/dev/null ; true
+    --mount=type=cache,id=scrapix-target,target=/tmp/target \
+    CARGO_TARGET_DIR=/tmp/target cargo build --workspace 2>/dev/null ; \
+    cp -a /tmp/target/. /app/target/ ; true
 
 # Copy real source code
 RUN rm -rf crates bins benches tests
