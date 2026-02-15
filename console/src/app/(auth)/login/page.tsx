@@ -18,8 +18,14 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Loader2 } from "lucide-react";
 
-const isDev = process.env.NEXT_PUBLIC_SCRAPIX_API_URL?.includes("localhost")
-  || typeof window !== "undefined" && window.location.hostname === "localhost";
+function checkIsDev() {
+  if (typeof window === "undefined") return false;
+  const host = window.location.hostname;
+  return host === "localhost"
+    || host === "127.0.0.1"
+    || host.endsWith(".orb.local")
+    || host.endsWith(".local");
+}
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -27,6 +33,7 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+  const isDev = checkIsDev();
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
