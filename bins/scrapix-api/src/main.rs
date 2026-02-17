@@ -2082,11 +2082,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/job/{id}/events", get(job_events))
         .route("/job/{id}", delete(cancel_job));
 
-    // Apply API key auth middleware if configured
+    // Apply auth middleware if configured (accepts API key or session cookie)
     let protected_routes = if let Some(ref auth) = auth_state {
         protected_routes.layer(middleware::from_fn_with_state(
             auth.clone(),
-            auth::validate_api_key,
+            auth::validate_api_key_or_session,
         ))
     } else {
         protected_routes

@@ -136,6 +136,98 @@ pub async fn validate_session(
     Ok(next.run(request).await)
 }
 
+/// Middleware: accept either API key (X-API-Key header) or session cookie.
+/// This allows both external API clients and the console to access protected routes.
+pub async fn validate_api_key_or_session(
+    State(auth_state): State<Arc<AuthState>>,
+    jar: CookieJar,
+    mut request: Request,
+    next: Next,
+) -> Result<Response, AuthError> {
+    // Try API key first
+    if let Some(api_key) = request
+        .headers()
+        .get("X-API-Key")
+        .and_then(|h| h.to_str().ok())
+    {
+        if !api_key.starts_with("sk_live_") && !api_key.starts_with("sk_test_") {
+            return Err(AuthError {
+                error: "Invalid API key format".to_string(),
+                code: "invalid_api_key".to_string(),
+            });
+        }
+
+        let key_hash = hash_api_key(api_key);
+        debug!(prefix = %api_key.get(..12).unwrap_or("???"), "Validating API key");
+
+        let row = sqlx::query("SELECT account_id, tier, active FROM validate_api_key($1)")
+            .bind(&key_hash)
+            .fetch_optional(&auth_state.pool)
+            .await
+            .map_err(|e| {
+                warn!(error = %e, "Database error during API key validation");
+                AuthError {
+                    error: "Authentication service unavailable".to_string(),
+                    code: "auth_service_error".to_string(),
+                }
+            })?
+            .ok_or_else(|| AuthError {
+                error: "Invalid or inactive API key".to_string(),
+                code: "invalid_api_key".to_string(),
+            })?;
+
+        let account_id: uuid::Uuid = row.try_get("account_id").map_err(|_| AuthError {
+            error: "Invalid API key".to_string(),
+            code: "invalid_api_key".to_string(),
+        })?;
+        let tier: String = row.try_get("tier").map_err(|_| AuthError {
+            error: "Invalid API key".to_string(),
+            code: "invalid_api_key".to_string(),
+        })?;
+        let active: bool = row.try_get("active").unwrap_or(false);
+        if !active {
+            return Err(AuthError {
+                error: "Account is inactive".to_string(),
+                code: "account_inactive".to_string(),
+            });
+        }
+
+        debug!(account_id = %account_id, tier = %tier, "API key validated");
+        request.extensions_mut().insert(AuthenticatedAccount {
+            account_id: account_id.to_string(),
+            tier,
+        });
+
+        return Ok(next.run(request).await);
+    }
+
+    // Fall back to session cookie
+    let token = jar
+        .get("scrapix_session")
+        .map(|c| c.value().to_string())
+        .ok_or_else(|| AuthError {
+            error: "Missing API key or session".to_string(),
+            code: "not_authenticated".to_string(),
+        })?;
+
+    let claims = jwt::decode_jwt(&token, &auth_state.jwt_secret).map_err(|_| AuthError {
+        error: "Invalid or expired session".to_string(),
+        code: "invalid_session".to_string(),
+    })?;
+
+    let user_id: uuid::Uuid = claims.sub.parse().map_err(|_| AuthError {
+        error: "Invalid session".to_string(),
+        code: "invalid_session".to_string(),
+    })?;
+
+    request.extensions_mut().insert(AuthenticatedUser {
+        user_id,
+        email: claims.email,
+    });
+
+    Ok(next.run(request).await)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

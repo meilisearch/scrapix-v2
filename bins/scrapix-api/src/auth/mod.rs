@@ -10,6 +10,7 @@ mod password;
 pub use handlers::auth_routes;
 pub use handlers::session_routes;
 pub use middleware::validate_api_key;
+pub use middleware::validate_api_key_or_session;
 pub use middleware::validate_session;
 
 use sqlx::{postgres::PgPoolOptions, PgPool};
