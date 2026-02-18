@@ -3,8 +3,9 @@
 import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
-import { submitScrape, createCrawl } from "@/lib/api";
-import type { ScrapeResult } from "@/lib/api-types";
+import { Badge } from "@/components/ui/badge";
+import { submitScrape, createCrawl, fetchServiceHealth } from "@/lib/api";
+import type { ScrapeResult, ServiceStatus } from "@/lib/api-types";
 import { UrlBar } from "./url-bar";
 import { ScrapeOptions, type ScrapeState } from "./scrape-options";
 import { CrawlOptions, type CrawlState, defaultCrawlState } from "./crawl-options";
@@ -32,9 +33,21 @@ export default function PlaygroundPage() {
   });
 
   const [crawlState, setCrawlState] = useState<CrawlState>(defaultCrawlState);
+  const [services, setServices] = useState<ServiceStatus[]>([]);
 
   useEffect(() => {
     setRuns(loadRuns());
+  }, []);
+
+  // Poll service health every 10s
+  useEffect(() => {
+    const poll = () =>
+      fetchServiceHealth()
+        .then((data) => setServices(data.services))
+        .catch(() => {});
+    poll();
+    const interval = setInterval(poll, 10000);
+    return () => clearInterval(interval);
   }, []);
 
   const handleScrape = useCallback(async () => {
@@ -62,7 +75,7 @@ export default function PlaygroundPage() {
       });
       setResult(data);
       const newRuns = saveRun({
-        id: crypto.randomUUID(),
+        id: Math.random().toString(36).slice(2) + Date.now().toString(36),
         type: "scrape",
         url,
         status_code: data.status_code,
@@ -272,7 +285,7 @@ export default function PlaygroundPage() {
         message: `Crawl job submitted for ${urls.length} URL(s)`,
       });
       const newRuns = saveRun({
-        id: crypto.randomUUID(),
+        id: Math.random().toString(36).slice(2) + Date.now().toString(36),
         type: "crawl",
         url: urls[0],
         timestamp: new Date().toISOString(),
@@ -298,6 +311,30 @@ export default function PlaygroundPage() {
 
   return (
     <div className="flex flex-col gap-4 h-[calc(100vh-6rem)]">
+      {/* Service health bar */}
+      {services.length > 0 && (
+        <div className="flex items-center gap-3 px-1">
+          {services.map((svc) => (
+            <Badge
+              key={svc.name}
+              variant="outline"
+              className="text-xs gap-1.5 font-normal"
+            >
+              <span
+                className={`inline-block h-1.5 w-1.5 rounded-full ${
+                  svc.status === "up"
+                    ? "bg-green-500"
+                    : svc.status === "idle"
+                      ? "bg-yellow-500"
+                      : "bg-gray-400"
+                }`}
+              />
+              {svc.name}
+            </Badge>
+          ))}
+        </div>
+      )}
+
       {/* URL Bar */}
       <UrlBar
         mode={mode}
