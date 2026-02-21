@@ -32,6 +32,9 @@ images:
   - name: scrapix-worker-content
     newName: ghcr.io/quentindequelen/scrapix-worker-content
     newTag: v0.1.0
+  - name: scrapix-console
+    newName: ghcr.io/quentindequelen/scrapix-console
+    newTag: v0.1.0
 
 # Secret generator for production secrets
 # NOTE: In production, use external secrets manager (e.g., Sealed Secrets, External Secrets)

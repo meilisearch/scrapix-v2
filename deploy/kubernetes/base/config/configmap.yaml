@@ -15,6 +15,14 @@ data:
   # Redis/Dragonfly configuration
   REDIS_URL: "redis://dragonfly:6379"
 
+  # PostgreSQL configuration
+  DATABASE_URL: "postgres://scrapix:$(POSTGRES_PASSWORD)@postgres:5432/scrapix"
+
+  # ClickHouse configuration
+  CLICKHOUSE_URL: "http://clickhouse:8123"
+  CLICKHOUSE_DATABASE: "scrapix"
+  CLICKHOUSE_USER: "scrapix"
+
   # Logging
   RUST_LOG: "info,scrapix=debug"
 
@@ -48,5 +56,13 @@ type: Opaque
 stringData:
   # Meilisearch master key (change in production!)
   MEILISEARCH_API_KEY: "masterKey"
+  # PostgreSQL password (change in production!)
+  POSTGRES_PASSWORD: "scrapix"
+  # ClickHouse password (change in production!)
+  CLICKHOUSE_PASSWORD: "scrapix"
+  # JWT secret (change in production!)
+  JWT_SECRET: "dev-jwt-secret-change-in-production"
   # Optional: API authentication key
   # API_KEY: "your-api-key-here"
+  # Optional: OpenAI API key for AI enrichment
+  # OPENAI_API_KEY: "your-openai-key-here"

@@ -1,0 +1,27 @@
+# KEDA ScaledObject — scales crawler workers based on Kafka consumer lag
+# Requires KEDA installed in the cluster:
+#   helm install keda kedacore/keda --namespace keda --create-namespace
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: scrapix-crawler-scaler
+  namespace: scrapix
+  labels:
+    app.kubernetes.io/name: scrapix-worker-crawler
+    app.kubernetes.io/component: autoscaling
+    app.kubernetes.io/part-of: scrapix
+spec:
+  scaleTargetRef:
+    name: scrapix-worker-crawler
+  pollingInterval: 15
+  cooldownPeriod: 60
+  minReplicaCount: 2
+  maxReplicaCount: 20
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: redpanda.scrapix.svc.cluster.local:9092
+        consumerGroup: scrapix-crawlers
+        topic: scrapix.urls.processing
+        lagThreshold: "100"
+        offsetResetPolicy: earliest

@@ -1,4 +1,4 @@
-# Production configuration overrides
+# Scaleway production configuration — tuned for high throughput
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -26,3 +26,6 @@ data:
   # Content worker configuration - large batches
   BATCH_SIZE: "2000"
   BATCH_TIMEOUT_SECS: "10"
+
+  # Meilisearch - production mode
+  MEILI_ENV: "production"

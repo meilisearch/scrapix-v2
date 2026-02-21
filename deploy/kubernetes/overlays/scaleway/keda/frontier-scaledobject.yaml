@@ -1,0 +1,25 @@
+# KEDA ScaledObject — scales frontier based on Kafka consumer lag
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: scrapix-frontier-scaler
+  namespace: scrapix
+  labels:
+    app.kubernetes.io/name: scrapix-frontier
+    app.kubernetes.io/component: autoscaling
+    app.kubernetes.io/part-of: scrapix
+spec:
+  scaleTargetRef:
+    name: scrapix-frontier
+  pollingInterval: 15
+  cooldownPeriod: 120
+  minReplicaCount: 1
+  maxReplicaCount: 3
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: redpanda.scrapix.svc.cluster.local:9092
+        consumerGroup: scrapix-frontier
+        topic: scrapix.urls.frontier
+        lagThreshold: "500"
+        offsetResetPolicy: earliest

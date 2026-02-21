@@ -1,0 +1,77 @@
+# Pod Disruption Budgets for Scaleway production
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: scrapix-api-pdb
+  namespace: scrapix
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: scrapix-api
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: scrapix-worker-crawler-pdb
+  namespace: scrapix
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: scrapix-worker-crawler
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: scrapix-worker-content-pdb
+  namespace: scrapix
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: scrapix-worker-content
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: redpanda-pdb
+  namespace: scrapix
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redpanda
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: meilisearch-pdb
+  namespace: scrapix
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: meilisearch
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: postgres-pdb
+  namespace: scrapix
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: console-pdb
+  namespace: scrapix
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: console

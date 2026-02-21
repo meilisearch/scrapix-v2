@@ -343,7 +343,7 @@ enum K8sCommands {
         #[arg(short, long, default_value = "scrapix")]
         namespace: String,
 
-        /// Kustomize overlay (local, staging, prod)
+        /// Kustomize overlay (local, staging, prod, scaleway)
         #[arg(short, long, default_value = "local")]
         overlay: String,
     },
@@ -354,7 +354,7 @@ enum K8sCommands {
         #[arg(short, long, default_value = "scrapix")]
         namespace: String,
 
-        /// Kustomize overlay (local, staging, prod)
+        /// Kustomize overlay (local, staging, prod, scaleway)
         #[arg(short, long, default_value = "local")]
         overlay: String,
 

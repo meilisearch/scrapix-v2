@@ -1,0 +1,48 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  # KEDA ScaledObjects (replaces CPU-only HPAs for workers)
+  - keda/crawler-scaledobject.yaml
+  - keda/content-scaledobject.yaml
+  - keda/frontier-scaledobject.yaml
+  # Scaleway storage class
+  - patches/storage-class.yaml
+  # Ingress + TLS
+  - patches/ingress.yaml
+  - patches/cert-manager-issuer.yaml
+  # Sealed Secrets (replace base secrets)
+  - patches/sealed-secrets.yaml
+  # HPA (API only — workers use KEDA)
+  - patches/hpa.yaml
+  # Pod Disruption Budgets
+  - patches/pdb.yaml
+
+namespace: scrapix
+
+commonLabels:
+  environment: scaleway
+
+# Strategic merge patches
+patches:
+  - path: patches/scaleway-config.yaml
+  - path: patches/scaleway-resources.yaml
+  - path: patches/node-selectors.yaml
+
+images:
+  - name: scrapix-api
+    newName: ghcr.io/quentindequelen/scrapix-api
+    newTag: latest
+  - name: scrapix-frontier-service
+    newName: ghcr.io/quentindequelen/scrapix-frontier-service
+    newTag: latest
+  - name: scrapix-worker-crawler
+    newName: ghcr.io/quentindequelen/scrapix-worker-crawler
+    newTag: latest
+  - name: scrapix-worker-content
+    newName: ghcr.io/quentindequelen/scrapix-worker-content
+    newTag: latest
+  - name: scrapix-console
+    newName: ghcr.io/quentindequelen/scrapix-console
+    newTag: latest

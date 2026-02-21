@@ -13,6 +13,8 @@ resources:
   # Infrastructure
   - redpanda-statefulset.yaml
   - meilisearch-statefulset.yaml
+  - postgres-statefulset.yaml
+  - clickhouse-statefulset.yaml
   - dragonfly-deployment.yaml
 
   # Scrapix Services
@@ -20,12 +22,16 @@ resources:
   - frontier-deployment.yaml
   - crawler-worker-deployment.yaml
   - content-worker-deployment.yaml
+  - console-deployment.yaml
 
   # Services
   - services/api-service.yaml
   - services/redpanda-service.yaml
   - services/meilisearch-service.yaml
+  - services/postgres-service.yaml
+  - services/clickhouse-service.yaml
   - services/dragonfly-service.yaml
+  - services/console-service.yaml
 
 commonLabels:
   app.kubernetes.io/managed-by: kustomize

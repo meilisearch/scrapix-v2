@@ -1,0 +1,129 @@
+# Node pool scheduling — assigns workloads to appropriate Scaleway node pools
+#
+# Node pool recommendations:
+#   infra pool  (PRO2-S: 4 vCPU, 16GB) x 3  — Redpanda, Meilisearch, PostgreSQL, ClickHouse
+#   workers pool (DEV1-M: 3 vCPU, 4GB) x auto — crawlers, content workers, frontier
+#   system pool  (DEV1-S: 2 vCPU, 2GB) x 2   — API, console, ingress
+#
+# Label your Scaleway node pools with:
+#   scrapix.io/pool=infra | workers | system
+
+# System pool: API
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scrapix-api
+  namespace: scrapix
+spec:
+  template:
+    spec:
+      nodeSelector:
+        scrapix.io/pool: system
+---
+# System pool: Console
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: console
+  namespace: scrapix
+spec:
+  template:
+    spec:
+      nodeSelector:
+        scrapix.io/pool: system
+---
+# Workers pool: Frontier
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scrapix-frontier
+  namespace: scrapix
+spec:
+  template:
+    spec:
+      nodeSelector:
+        scrapix.io/pool: workers
+---
+# Workers pool: Crawler
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scrapix-worker-crawler
+  namespace: scrapix
+spec:
+  template:
+    spec:
+      nodeSelector:
+        scrapix.io/pool: workers
+---
+# Workers pool: Content
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scrapix-worker-content
+  namespace: scrapix
+spec:
+  template:
+    spec:
+      nodeSelector:
+        scrapix.io/pool: workers
+---
+# Infra pool: Redpanda
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redpanda
+  namespace: scrapix
+spec:
+  template:
+    spec:
+      nodeSelector:
+        scrapix.io/pool: infra
+---
+# Infra pool: Meilisearch
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: meilisearch
+  namespace: scrapix
+spec:
+  template:
+    spec:
+      nodeSelector:
+        scrapix.io/pool: infra
+---
+# Infra pool: PostgreSQL
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: scrapix
+spec:
+  template:
+    spec:
+      nodeSelector:
+        scrapix.io/pool: infra
+---
+# Infra pool: ClickHouse
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: clickhouse
+  namespace: scrapix
+spec:
+  template:
+    spec:
+      nodeSelector:
+        scrapix.io/pool: infra
+---
+# Infra pool: Dragonfly
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dragonfly
+  namespace: scrapix
+spec:
+  template:
+    spec:
+      nodeSelector:
+        scrapix.io/pool: infra

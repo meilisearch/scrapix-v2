@@ -1,0 +1,13 @@
+# Scaleway Block Storage (SBS) storage class
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: scw-bssd
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+provisioner: csi.scaleway.com
+parameters:
+  type: b_ssd
+reclaimPolicy: Retain
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
