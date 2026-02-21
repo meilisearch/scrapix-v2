@@ -12,8 +12,8 @@ resources:
   # Ingress + TLS
   - patches/ingress.yaml
   - patches/cert-manager-issuer.yaml
-  # Sealed Secrets (replace base secrets)
-  - patches/sealed-secrets.yaml
+  # Secrets created manually (kubectl create secret) for first deploy
+  # TODO: switch to Sealed Secrets once kubeseal is configured
   # HPA (API only — workers use KEDA)
   - patches/hpa.yaml
   # Pod Disruption Budgets

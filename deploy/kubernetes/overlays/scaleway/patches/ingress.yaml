@@ -18,11 +18,11 @@ spec:
   ingressClassName: nginx
   tls:
     - hosts:
-        - api.scrapix.io
-        - console.scrapix.io
+        - api.scrapix.meilisearch.net
+        - console.scrapix.meilisearch.net
       secretName: scrapix-tls
   rules:
-    - host: api.scrapix.io
+    - host: api.scrapix.meilisearch.net
       http:
         paths:
           - path: /
@@ -32,7 +32,7 @@ spec:
                 name: scrapix-api
                 port:
                   number: 8080
-    - host: console.scrapix.io
+    - host: console.scrapix.meilisearch.net
       http:
         paths:
           - path: /
