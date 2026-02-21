@@ -1,4 +1,5 @@
-# API HPA only — crawler/content/frontier scaling handled by KEDA ScaledObjects
+# API HPA — min 1 to save cost when idle, scales up under load
+# Crawler/content/frontier scaling handled by KEDA ScaledObjects (scale-to-zero)
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -9,8 +10,21 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: scrapix-api
-  minReplicas: 2
+  minReplicas: 1
   maxReplicas: 10
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 120
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 30
   metrics:
     - type: Resource
       resource:
