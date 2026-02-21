@@ -57,32 +57,38 @@ cargo bench --bench integrated_benchmarks
 cargo bench --bench wikipedia_e2e
 ```
 
-## Running Locally
+## Running Locally (Recommended)
 
-Start infrastructure first:
+**Prerequisites:** `just`, `overmind`, `tmux`, `cargo-watch` (all via Homebrew)
+
 ```bash
-scrapix infra up
-# Or manually: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# Start everything — infrastructure + all services + console
+just dev
+
+# Or step by step:
+just infra        # Start Docker infra (Redpanda, Meilisearch, DragonflyDB, Postgres, ClickHouse)
+just services     # Start all Rust services + console via overmind
+
+# Manage individual services
+just logs api     # Attach to API service logs (overmind connect)
+just restart api  # Restart just the API service
+just stop         # Stop everything (services + infra)
 ```
 
-Then run services (each in separate terminal):
+**How it works:**
+- Infrastructure runs in Docker (via `docker-compose.dev.yml` overlay which disables app services)
+- Rust services run natively with `cargo-watch` — shared `target/` dir means one incremental build (~3-5s)
+- Console runs natively with `npm run dev`
+- All managed by overmind (tmux-based process manager)
+- Environment loaded from `.env` via `set dotenv-load` in the justfile
+
+**Individual service commands** (when you only need one):
 ```bash
-# API Server (port 8080)
-KAFKA_BROKERS=localhost:19092 MEILISEARCH_URL=http://localhost:7700 MEILISEARCH_API_KEY=masterKey cargo run --release --bin scrapix-api
-
-# Frontier Service
-KAFKA_BROKERS=localhost:19092 cargo run --release --bin scrapix-frontier-service
-
-# Crawler Worker
-KAFKA_BROKERS=localhost:19092 cargo run --release --bin scrapix-worker-crawler
-
-# Content Worker
-KAFKA_BROKERS=localhost:19092 MEILISEARCH_URL=http://localhost:7700 MEILISEARCH_API_KEY=masterKey cargo run --release --bin scrapix-worker-content
-```
-
-Console (Next.js frontend, port 3001):
-```bash
-cd console && npm run dev
+just api       # cargo watch for scrapix-api only
+just frontier  # cargo watch for frontier only
+just crawler   # cargo watch for crawler only
+just content   # cargo watch for content only
+just console   # npm run dev for console only
 ```
 
 Start a crawl:
@@ -92,14 +98,13 @@ scrapix crawl -p examples/simple-crawl.json
 
 ## Docker Compose
 
+Docker Compose is available for full-stack containerized development, but `just dev` (native services) is faster for iteration.
+
 ```bash
-# Full stack with file watching (recommended for development)
+# Full stack in containers with file watching
 docker compose watch
 
-# Full stack without file watching
-docker compose up -d
-
-# Infrastructure only (run Rust services and console locally)
+# Infrastructure only (for use with `just services`)
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 
 # Stop (preserves build caches in named volumes)
@@ -108,15 +113,6 @@ docker compose down
 # Stop and remove all volumes (full reset)
 docker compose down -v
 ```
-
-**Dev workflow (`docker compose watch`):**
-- Rust services use `Dockerfile.dev` with `cargo-watch` for incremental debug rebuilds
-- Source changes in `crates/` and `bins/` are synced into containers — `cargo-watch` recompiles automatically (~5-15s)
-- `Cargo.toml`/`Cargo.lock` changes trigger a full image rebuild
-- Per-service `target/` named volumes prevent cargo lock contention across 4 concurrent builds
-- Shared `cargo-registry` and `cargo-git` volumes avoid re-downloading crates
-- Console uses named volumes for `node_modules/` and `.next/` to persist across restarts
-- First build is slow (~15-20 min, compiling all deps); subsequent starts reuse cached volumes
 
 ## Diagnostic CLI Commands
 

@@ -1,4 +1,3 @@
-infra:    docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 api:      cargo watch -w crates -w bins/scrapix-api -x 'run --bin scrapix-api -- --enable-cors'
 frontier: cargo watch -w crates -w bins/scrapix-frontier-service -x 'run --bin scrapix-frontier-service'
 crawler:  cargo watch -w crates -w bins/scrapix-worker-crawler -x 'run --bin scrapix-worker-crawler'
