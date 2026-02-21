@@ -30,8 +30,8 @@ services:
       - --rpc-addr redpanda:33145
       - --advertise-rpc-addr redpanda:33145
       - --mode dev-container
-      - --smp 2
-      - --memory 2G
+      - --smp 1
+      - --memory 1G
       - --default-log-level=info
     ports:
       - "19092:19092"  # Kafka external
@@ -89,7 +89,7 @@ services:
     volumes:
       - meilisearch_data:/meili_data
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:7700/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7700/health"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -133,7 +133,7 @@ services:
         soft: 262144
         hard: 262144
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8123/ping"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8123/ping"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -209,7 +209,7 @@ services:
       - target-api:/app/target
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -242,10 +242,9 @@ services:
       RUST_LOG: info,scrapix=debug
       KAFKA_BROKERS: redpanda:9092
       KAFKA_GROUP_ID: scrapix-frontier
-      DISPATCH_INTERVAL_MS: 20
-      DISPATCH_BATCH_SIZE: 2000
-      DOMAIN_DELAY_MS: 50
-      CONCURRENT_PER_DOMAIN: 50
+      DISPATCH_INTERVAL_MS: 100
+      DISPATCH_BATCH_SIZE: 100
+      DOMAIN_DELAY_MS: 1000
       BLOOM_CAPACITY: 10000000
       BLOOM_FP_RATE: "0.01"
     volumes:
@@ -282,7 +281,7 @@ services:
       RUST_LOG: info,scrapix=debug
       KAFKA_BROKERS: redpanda:9092
       KAFKA_GROUP_ID: scrapix-crawlers
-      CONCURRENCY: 50
+      CONCURRENCY: 10
       USER_AGENT: "Scrapix/1.0 (compatible; +https://github.com/quentindequelen/scrapix)"
       REQUEST_TIMEOUT: 30
       MAX_RETRIES: 3
@@ -294,7 +293,7 @@ services:
       - target-crawler:/app/target
     restart: unless-stopped
     deploy:
-      replicas: 3
+      replicas: 1
     develop:
       watch:
         - action: sync
@@ -328,8 +327,7 @@ services:
       KAFKA_GROUP_ID: scrapix-content
       MEILISEARCH_URL: http://meilisearch:7700
       MEILISEARCH_API_KEY: masterKey
-      BATCH_SIZE: 2000
-      CONCURRENCY: 40
+      BATCH_SIZE: 100
       BATCH_TIMEOUT_SECS: 5
     volumes:
       - cargo-registry:/usr/local/cargo/registry
@@ -337,7 +335,7 @@ services:
       - target-content:/app/target
     restart: unless-stopped
     deploy:
-      replicas: 2
+      replicas: 1
     develop:
       watch:
         - action: sync
@@ -373,7 +371,7 @@ services:
       - console-node-modules:/app/node_modules
       - console-next:/app/.next
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3001"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001"]
       interval: 10s
       timeout: 5s
       retries: 5
