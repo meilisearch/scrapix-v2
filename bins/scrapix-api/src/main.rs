@@ -67,7 +67,12 @@ use tracing::{debug, error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use scrapix_core::{CrawlConfig, CrawlUrl, JobState, JobStatus};
-use scrapix_extractor::{Extractor, ExtractedMetadata};
+use scrapix_crawler::{HttpFetcher, HttpFetcherBuilder, RobotsCache, RobotsConfig};
+use scrapix_ai::{AiClient, AiClientConfig, AiService, FieldDefinition as AiFieldDefinition, SchemaBuilder};
+use scrapix_extractor::{
+    Extractor, ExtractedMetadata, ExtractedSchema, ContentBlock,
+    SelectorExtractor, SelectorDefinition,
+};
 use scrapix_parser::{extract_content, html_to_markdown, html_to_main_content_markdown, html_to_minihtml, html_to_main_content_minihtml, detect_language_info};
 use scrapix_queue::{topic_names, ConsumerBuilder, CrawlEvent, KafkaProducer, ProducerBuilder, UrlMessage};
 use scrapix_storage::clickhouse::{
@@ -128,6 +133,10 @@ struct AppState {
     job_last_activity: RwLock<HashMap<String, std::time::Instant>>,
     /// Last time each service type was seen (for health monitoring)
     service_last_seen: RwLock<HashMap<String, std::time::Instant>>,
+    /// Shared HTTP fetcher for /scrape endpoint (connection pooling, retries, DNS cache)
+    fetcher: Arc<HttpFetcher>,
+    /// Optional AI service for /scrape enrichment
+    ai_service: Option<Arc<AiService>>,
 }
 
 #[derive(Debug, Clone)]
@@ -140,6 +149,8 @@ impl AppState {
         producer: KafkaProducer,
         config: AppConfig,
         clickhouse_batcher: Option<Arc<CrawlEventBatcher>>,
+        fetcher: Arc<HttpFetcher>,
+        ai_service: Option<Arc<AiService>>,
     ) -> Self {
         let (event_tx, _) = broadcast::channel(1000);
         Self {
@@ -152,6 +163,8 @@ impl AppState {
             clickhouse_batcher,
             job_last_activity: RwLock::new(HashMap::new()),
             service_last_seen: RwLock::new(HashMap::new()),
+            fetcher,
+            ai_service,
         }
     }
 
@@ -320,6 +333,32 @@ impl AppState {
                 });
             }
             CrawlEvent::JobFailed { error, .. } => {
+                // Best-effort cleanup of temp index if this was a replace_index job
+                let swap_info = {
+                    let jobs = self.jobs.read();
+                    jobs.get(job_id).and_then(|j| {
+                        if let (Some(temp), Some(url)) = (&j.swap_temp_index, &j.swap_meilisearch_url) {
+                            Some((temp.clone(), url.clone(), j.swap_meilisearch_api_key.clone()))
+                        } else {
+                            None
+                        }
+                    })
+                };
+
+                if let Some((temp_index, ms_url, ms_key)) = swap_info {
+                    tokio::spawn(async move {
+                        if let Err(e) = scrapix_storage::meilisearch::MeilisearchStorage::cleanup_temp_index(
+                            &ms_url,
+                            ms_key.as_deref(),
+                            &temp_index,
+                        ).await {
+                            warn!(temp = %temp_index, error = %e, "Failed to cleanup temp index after job failure");
+                        } else {
+                            info!(temp = %temp_index, "Cleaned up temp index after job failure");
+                        }
+                    });
+                }
+
                 self.update_job(job_id, |j| {
                     j.status = JobStatus::Failed;
                     j.error_message = Some(error.clone());
@@ -575,6 +614,65 @@ struct ScrapeRequest {
     /// Custom headers to send with the request
     #[serde(default)]
     headers: std::collections::HashMap<String, String>,
+
+    /// CSS selectors to remove before extraction
+    #[serde(default)]
+    exclude_selectors: Vec<String>,
+
+    /// CSS selectors to keep (only extract from these)
+    #[serde(default)]
+    include_selectors: Vec<String>,
+
+    /// Custom CSS selector extraction (field_name -> selector definition)
+    #[serde(default)]
+    extract: HashMap<String, SelectorDefinition>,
+
+    /// AI enrichment options
+    #[serde(default)]
+    ai: Option<AiOptions>,
+}
+
+/// AI enrichment options for /scrape
+#[derive(Debug, Deserialize)]
+struct AiOptions {
+    /// Generate a TL;DR summary
+    #[serde(default)]
+    summary: bool,
+
+    /// Extract structured data (prompt-based or schema-based)
+    #[serde(default)]
+    extract: Option<AiExtractOptions>,
+
+    /// Generate vector embedding
+    #[serde(default)]
+    embed: bool,
+}
+
+/// AI extraction options
+#[derive(Debug, Deserialize)]
+struct AiExtractOptions {
+    /// Natural language prompt for extraction
+    #[serde(default)]
+    prompt: String,
+
+    /// Schema with field definitions (alternative to prompt)
+    #[serde(default)]
+    schema: Option<Vec<AiFieldDef>>,
+}
+
+/// Field definition for AI schema-based extraction
+#[derive(Debug, Deserialize)]
+struct AiFieldDef {
+    name: String,
+    description: String,
+    #[serde(default = "default_string_type")]
+    field_type: String,
+    #[serde(default)]
+    required: bool,
+}
+
+fn default_string_type() -> String {
+    "string".to_string()
 }
 
 fn default_true_bool() -> bool {
@@ -596,6 +694,8 @@ enum ScrapeFormat {
     Links,
     Metadata,
     Screenshot,
+    Schema,
+    Blocks,
 }
 
 /// Response for /scrape endpoint
@@ -635,11 +735,42 @@ struct ScrapeResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     language: Option<String>,
 
+    /// JSON-LD and structured data (if format "schema" requested)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    schema: Option<ExtractedSchema>,
+
+    /// Content blocks split by headings (if format "blocks" requested)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    blocks: Option<Vec<ContentBlock>>,
+
+    /// Custom selector extraction results
+    #[serde(skip_serializing_if = "Option::is_none")]
+    extract: Option<HashMap<String, serde_json::Value>>,
+
+    /// AI enrichment results
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ai: Option<AiResult>,
+
+    /// Warning message (e.g. "AI requires OPENAI_API_KEY")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    warning: Option<String>,
+
     /// HTTP status code
     status_code: u16,
 
     /// Time taken to scrape in milliseconds
     scrape_duration_ms: u64,
+}
+
+/// AI enrichment results
+#[derive(Debug, Serialize)]
+struct AiResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    summary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    extract: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    embedding: Option<Vec<f32>>,
 }
 
 /// Metadata from scraped page
@@ -847,10 +978,62 @@ async fn health_services(State(state): State<Arc<AppState>>) -> Json<ServiceHeal
     Json(ServiceHealthResponse { services })
 }
 
+/// Preprocess HTML by applying include/exclude CSS selectors.
+/// - `include_selectors`: if non-empty, only keep HTML from matching elements
+/// - `exclude_selectors`: if non-empty, remove matching elements from the HTML
+fn preprocess_html(
+    html: &str,
+    include_selectors: &[String],
+    exclude_selectors: &[String],
+) -> String {
+    use scraper::{Html, Selector};
+
+    if include_selectors.is_empty() && exclude_selectors.is_empty() {
+        return html.to_string();
+    }
+
+    let document = Html::parse_document(html);
+
+    // Step 1: If include_selectors are specified, collect matching elements' HTML
+    let working_html = if !include_selectors.is_empty() {
+        let mut parts = Vec::new();
+        for sel_str in include_selectors {
+            if let Ok(selector) = Selector::parse(sel_str) {
+                for element in document.select(&selector) {
+                    parts.push(element.html());
+                }
+            }
+        }
+        if parts.is_empty() {
+            return html.to_string();
+        }
+        format!("<html><body>{}</body></html>", parts.join(""))
+    } else {
+        html.to_string()
+    };
+
+    // Step 2: If exclude_selectors are specified, remove matching elements
+    if !exclude_selectors.is_empty() {
+        let mut result = working_html;
+        for sel_str in exclude_selectors {
+            if let Ok(selector) = Selector::parse(sel_str) {
+                let doc = Html::parse_document(&result);
+                for element in doc.select(&selector) {
+                    let outer = element.html();
+                    result = result.replacen(&outer, "", 1);
+                }
+            }
+        }
+        result
+    } else {
+        working_html
+    }
+}
+
 /// Scrape a single URL and return content immediately
 /// This bypasses the job queue for instant results
 async fn scrape_url(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Json(request): Json<ScrapeRequest>,
 ) -> Result<Json<ScrapeResponse>, ApiError> {
     let start_time = std::time::Instant::now();
@@ -870,54 +1053,55 @@ async fn scrape_url(
 
     info!(url = %request.url, "Scraping URL");
 
-    // Build HTTP client with timeout
-    let mut client_builder = reqwest::Client::builder()
-        .user_agent("Scrapix/1.0")
-        .timeout(Duration::from_millis(request.timeout_ms))
-        .redirect(reqwest::redirect::Policy::limited(10));
+    // (a) Fetch using shared HttpFetcher or one-off fetcher for custom headers
+    let crawl_url = CrawlUrl::seed(&request.url);
 
-    // Add custom headers (block sensitive headers to prevent injection attacks)
-    const BLOCKED_HEADERS: &[&str] = &[
-        "host",
-        "transfer-encoding",
-        "content-length",
-        "connection",
-        "upgrade",
-        "proxy-authorization",
-        "proxy-connection",
-        "te",
-        "trailer",
-    ];
-    let mut headers = reqwest::header::HeaderMap::new();
-    for (key, value) in &request.headers {
-        let key_lower = key.to_lowercase();
-        if BLOCKED_HEADERS.contains(&key_lower.as_str()) {
-            warn!(header = %key, "Blocked sensitive header in scrape request");
-            continue;
+    let raw_page = if request.headers.is_empty() {
+        // Use the shared fetcher (connection pooling, DNS cache, retries)
+        state.fetcher.fetch(&crawl_url).await.map_err(|e| {
+            ApiError::new(&format!("Failed to fetch URL: {}", e), "fetch_error")
+        })?
+    } else {
+        // Build a one-off fetcher with custom headers
+        let robots_config = RobotsConfig {
+            respect_robots: false,
+            ..Default::default()
+        };
+        let robots_cache = Arc::new(RobotsCache::new(robots_config).map_err(|e| {
+            ApiError::new(&format!("Failed to create robots cache: {}", e), "internal_error")
+        })?);
+
+        let mut builder = HttpFetcherBuilder::new()
+            .timeout(Duration::from_millis(request.timeout_ms));
+
+        // Add custom headers (block sensitive headers to prevent injection attacks)
+        const BLOCKED_HEADERS: &[&str] = &[
+            "host", "transfer-encoding", "content-length", "connection",
+            "upgrade", "proxy-authorization", "proxy-connection", "te", "trailer",
+        ];
+        for (key, value) in &request.headers {
+            let key_lower = key.to_lowercase();
+            if BLOCKED_HEADERS.contains(&key_lower.as_str()) {
+                warn!(header = %key, "Blocked sensitive header in scrape request");
+                continue;
+            }
+            builder = builder.header(key, value);
         }
-        if let (Ok(name), Ok(val)) = (
-            reqwest::header::HeaderName::from_bytes(key.as_bytes()),
-            reqwest::header::HeaderValue::from_str(value),
-        ) {
-            headers.insert(name, val);
-        }
-    }
-    client_builder = client_builder.default_headers(headers);
 
-    let client = client_builder.build().map_err(|e| {
-        ApiError::new(&format!("Failed to create HTTP client: {}", e), "internal_error")
-    })?;
+        let fetcher = builder.build(robots_cache).map_err(|e| {
+            ApiError::new(&format!("Failed to create HTTP client: {}", e), "internal_error")
+        })?;
 
-    // Fetch the page
-    let response = client.get(&request.url).send().await.map_err(|e| {
-        ApiError::new(&format!("Failed to fetch URL: {}", e), "fetch_error")
-    })?;
+        fetcher.fetch(&crawl_url).await.map_err(|e| {
+            ApiError::new(&format!("Failed to fetch URL: {}", e), "fetch_error")
+        })?
+    };
 
-    let status_code = response.status().as_u16();
-    let final_url = response.url().to_string();
+    let status_code = raw_page.status;
+    let final_url = raw_page.final_url.clone();
 
     // Check for success status
-    if !response.status().is_success() {
+    if status_code < 200 || status_code >= 300 {
         return Ok(Json(ScrapeResponse {
             success: false,
             url: final_url,
@@ -928,17 +1112,26 @@ async fn scrape_url(
             metadata: None,
             links: None,
             language: None,
+            schema: None,
+            blocks: None,
+            extract: None,
+            ai: None,
+            warning: None,
             status_code,
             scrape_duration_ms: start_time.elapsed().as_millis() as u64,
         }));
     }
 
-    // Get response body
-    let raw_html = response.text().await.map_err(|e| {
-        ApiError::new(&format!("Failed to read response body: {}", e), "fetch_error")
-    })?;
+    let original_html = raw_page.html;
 
-    // Determine which formats to return (default: all main formats)
+    // (b) Preprocess HTML with include/exclude selectors
+    let processed_html = preprocess_html(
+        &original_html,
+        &request.include_selectors,
+        &request.exclude_selectors,
+    );
+
+    // Determine which formats to return (default: markdown + content + metadata)
     let formats = if request.formats.is_empty() {
         vec![
             ScrapeFormat::Markdown,
@@ -949,12 +1142,60 @@ async fn scrape_url(
         request.formats.clone()
     };
 
-    // Extract content based on requested formats
+    // (c) Run extractor for metadata, schema, blocks, and custom selectors
+    let needs_extraction = formats.contains(&ScrapeFormat::Metadata)
+        || formats.contains(&ScrapeFormat::Schema)
+        || formats.contains(&ScrapeFormat::Blocks)
+        || !request.extract.is_empty();
+
+    let extraction_result = if needs_extraction {
+        let mut extractor = Extractor::new();
+
+        if formats.contains(&ScrapeFormat::Metadata) {
+            extractor = extractor.with_metadata();
+        }
+        if formats.contains(&ScrapeFormat::Schema) {
+            extractor = extractor.with_schema();
+        }
+        if formats.contains(&ScrapeFormat::Blocks) {
+            extractor = extractor.with_blocks();
+        }
+        if !request.extract.is_empty() {
+            let sel_extractor = SelectorExtractor::with_definitions(request.extract.clone());
+            extractor = extractor.with_selectors(sel_extractor);
+        }
+
+        extractor.extract(&processed_html).ok()
+    } else {
+        None
+    };
+
+    // Pull out extraction results
+    let metadata = extraction_result
+        .as_ref()
+        .and_then(|r| r.metadata.clone())
+        .map(ScrapeMetadata::from);
+
+    let schema = extraction_result
+        .as_ref()
+        .and_then(|r| r.schema.clone());
+
+    let blocks = extraction_result
+        .as_ref()
+        .and_then(|r| r.blocks.clone())
+        .map(|b| b.blocks);
+
+    let custom_extract = extraction_result
+        .as_ref()
+        .and_then(|r| r.custom.clone())
+        .map(|c| c.values);
+
+    // (d) Run parser functions on processed HTML
     let markdown = if formats.contains(&ScrapeFormat::Markdown) {
         if request.only_main_content {
-            Some(html_to_main_content_markdown(&raw_html))
+            Some(html_to_main_content_markdown(&processed_html))
         } else {
-            Some(html_to_markdown(&raw_html))
+            Some(html_to_markdown(&processed_html))
         }
     } else {
         None
@@ -962,36 +1203,32 @@ async fn scrape_url(
 
     let content = if formats.contains(&ScrapeFormat::Content) {
         if request.only_main_content {
-            Some(extract_content(&raw_html))
+            Some(extract_content(&processed_html))
         } else {
-            // Return full text content without readability extraction
-            Some(html_to_markdown(&raw_html))
+            Some(html_to_markdown(&processed_html))
+        }
+    } else {
+        None
+    };
+
+    let html_output = if formats.contains(&ScrapeFormat::Html) {
+        if request.only_main_content {
+            Some(html_to_main_content_minihtml(&processed_html))
+        } else {
+            Some(html_to_minihtml(&processed_html))
         }
     } else {
         None
     };
 
     let return_raw_html = if formats.contains(&ScrapeFormat::RawHtml) {
-        Some(raw_html.clone())
+        Some(original_html)
     } else {
         None
     };
 
-    // Extract metadata
-    let metadata = if formats.contains(&ScrapeFormat::Metadata) {
-        let extractor = Extractor::new().with_metadata();
-        extractor
-            .extract(&raw_html)
-            .ok()
-            .and_then(|r| r.metadata)
-            .map(ScrapeMetadata::from)
-    } else {
-        None
-    };
-
-    // Extract links if requested
     let links = if formats.contains(&ScrapeFormat::Links) || request.include_links {
-        Some(extract_links_from_html(&raw_html, &final_url))
+        Some(extract_links_from_html(&processed_html, &final_url))
     } else {
         None
     };
@@ -1002,6 +1239,88 @@ async fn scrape_url(
         .or(markdown.as_ref())
         .and_then(|text| detect_language_info(text))
         .map(|info| info.code);
+
+    // (e) AI enrichment (optional)
+    let mut ai_result = None;
+    let mut warning = None;
+
+    if let Some(ref ai_opts) = request.ai {
+        if let Some(ref ai_service) = state.ai_service {
+            // Use content or markdown as input text for AI
+            let ai_text = content
+                .as_deref()
+                .or(markdown.as_deref())
+                .unwrap_or("");
+
+            if !ai_text.is_empty() {
+                // Run AI operations concurrently
+                let summary_fut = async {
+                    if ai_opts.summary {
+                        ai_service.tldr(ai_text).await.ok()
+                    } else {
+                        None
+                    }
+                };
+
+                let extract_fut = async {
+                    if let Some(ref extract_opts) = ai_opts.extract {
+                        if let Some(ref schema_fields) = extract_opts.schema {
+                            // Schema-based extraction
+                            let mut builder = SchemaBuilder::new();
+                            for field in schema_fields {
+                                builder = builder.field(AiFieldDefinition {
+                                    name: field.name.clone(),
+                                    description: field.description.clone(),
+                                    field_type: field.field_type.clone(),
+                                    required: field.required,
+                                    default: None,
+                                    example: None,
+                                });
+                            }
+                            let schema = builder.build();
+                            ai_service
+                                .extract_schema(ai_text, &schema)
+                                .await
+                                .ok()
+                                .map(|r| r.data)
+                        } else if !extract_opts.prompt.is_empty() {
+                            // Prompt-based extraction
+                            ai_service
+                                .extract(ai_text, &extract_opts.prompt)
+                                .await
+                                .ok()
+                                .map(|r| r.data)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                };
+
+                let embed_fut = async {
+                    if ai_opts.embed {
+                        ai_service.embed(ai_text).await.ok().map(|e| e.vector)
+                    } else {
+                        None
+                    }
+                };
+
+                let (ai_summary, ai_extract, ai_embedding) =
+                    tokio::join!(summary_fut, extract_fut, embed_fut);
+
+                if ai_summary.is_some() || ai_extract.is_some() || ai_embedding.is_some() {
+                    ai_result = Some(AiResult {
+                        summary: ai_summary,
+                        extract: ai_extract,
+                        embedding: ai_embedding,
+                    });
+                }
+            }
+        } else {
+            warning = Some("AI features require OPENAI_API_KEY environment variable".to_string());
+        }
+    }
 
     let scrape_duration_ms = start_time.elapsed().as_millis() as u64;
 
@@ -1016,20 +1335,17 @@ async fn scrape_url(
         success: true,
         url: final_url,
         markdown,
-        html: if formats.contains(&ScrapeFormat::Html) {
-            if request.only_main_content {
-                Some(html_to_main_content_minihtml(&raw_html))
-            } else {
-                Some(html_to_minihtml(&raw_html))
-            }
-        } else {
-            None
-        },
+        html: html_output,
         raw_html: return_raw_html,
         content,
         metadata,
         links,
         language,
+        schema,
+        blocks,
+        extract: custom_extract,
+        ai: ai_result,
+        warning,
         status_code,
         scrape_duration_ms,
     }))
@@ -1095,18 +1411,33 @@ async fn create_crawl(
     // Generate job ID
     let job_id = uuid::Uuid::new_v4().to_string();
 
+    // If replace_index is enabled, workers write to a temp index; we swap on completion
+    let target_index_uid = config.index_uid.clone();
+    let pipeline_index_uid = if config.replace_index {
+        format!("{}_tmp_{}", config.index_uid, &job_id[..8])
+    } else {
+        config.index_uid.clone()
+    };
+
     info!(
         job_id = %job_id,
-        index_uid = %config.index_uid,
+        index_uid = %target_index_uid,
+        pipeline_index_uid = %pipeline_index_uid,
+        replace_index = config.replace_index,
         start_urls_count = config.start_urls.len(),
         "Creating new crawl job"
     );
 
-    // Create job state
-    let mut job = state.create_job(&job_id, &config.index_uid);
+    // Create job state (tracks the target index_uid, not the temp one)
+    let mut job = state.create_job(&job_id, &target_index_uid);
     job.start_urls = config.start_urls.clone();
     job.max_pages = config.max_pages;
     job.config = serde_json::to_value(&config).ok();
+    if config.replace_index {
+        job.swap_temp_index = Some(pipeline_index_uid.clone());
+        job.swap_meilisearch_url = Some(config.meilisearch.url.clone());
+        job.swap_meilisearch_api_key = Some(config.meilisearch.api_key.clone());
+    }
     job.start();
 
     // Build allowed_domains list:
@@ -1156,10 +1487,11 @@ async fn create_crawl(
 
     for url in &config.start_urls {
         let crawl_url = CrawlUrl::seed(url);
+        // Use pipeline_index_uid (temp index if replace_index, otherwise target)
         let msg = if has_patterns {
-            UrlMessage::with_patterns(crawl_url, &job_id, &config.index_uid, url_patterns.clone())
+            UrlMessage::with_patterns(crawl_url, &job_id, &pipeline_index_uid, url_patterns.clone())
         } else {
-            UrlMessage::new(crawl_url, &job_id, &config.index_uid)
+            UrlMessage::new(crawl_url, &job_id, &pipeline_index_uid)
         }
         .with_meilisearch(job_meilisearch_url.clone(), job_meilisearch_key.clone());
 
@@ -1188,7 +1520,7 @@ async fn create_crawl(
     }
 
     // Publish job started event
-    let event = CrawlEvent::job_started(&job_id, &config.index_uid, config.start_urls.clone());
+    let event = CrawlEvent::job_started(&job_id, &target_index_uid, config.start_urls.clone());
     if let Err(e) = state
         .producer
         .send(topic_names::EVENTS, Some(&job_id), &event)
@@ -1200,13 +1532,20 @@ async fn create_crawl(
     // Broadcast event for SSE
     state.broadcast_event(&job_id, event);
 
-    // Update job state (write back config, start_urls, max_pages that were set on the local copy)
+    // Update job state (write back config, start_urls, max_pages, swap metadata)
+    let replace_index = config.replace_index;
+    let swap_temp = if replace_index { Some(pipeline_index_uid.clone()) } else { None };
+    let swap_url = if replace_index { Some(config.meilisearch.url.clone()) } else { None };
+    let swap_key = if replace_index { Some(config.meilisearch.api_key.clone()) } else { None };
     state.update_job(&job_id, |j| {
         j.status = JobStatus::Running;
         j.start_urls = config.start_urls.clone();
         j.max_pages = config.max_pages;
         j.config = serde_json::to_value(&config).ok();
         j.started_at = Some(chrono::Utc::now());
+        j.swap_temp_index = swap_temp;
+        j.swap_meilisearch_url = swap_url;
+        j.swap_meilisearch_api_key = swap_key;
     });
 
     info!(
@@ -1218,7 +1557,7 @@ async fn create_crawl(
     Ok(Json(CreateCrawlResponse {
         job_id: job_id.clone(),
         status: "running".to_string(),
-        index_uid: config.index_uid,
+        index_uid: target_index_uid,
         start_urls_count: urls_published,
         message: format!("Crawl job started with {} seed URLs", urls_published),
     }))
@@ -1958,11 +2297,46 @@ async fn main() -> anyhow::Result<()> {
         None
     };
 
+    // Initialize shared HTTP fetcher for /scrape endpoint
+    let robots_config = RobotsConfig {
+        respect_robots: false, // /scrape is user-directed, not a crawler
+        ..Default::default()
+    };
+    let robots_cache = Arc::new(RobotsCache::new(robots_config).expect("Failed to create robots cache"));
+    let fetcher = Arc::new(
+        HttpFetcherBuilder::new()
+            .with_dns_cache()
+            .build(robots_cache)
+            .expect("Failed to create HTTP fetcher"),
+    );
+    info!("Shared HTTP fetcher initialized for /scrape endpoint");
+
+    // Initialize AI service if OPENAI_API_KEY is set
+    let ai_service = std::env::var("OPENAI_API_KEY").ok().and_then(|api_key| {
+        let config = AiClientConfig {
+            api_key,
+            ..Default::default()
+        };
+        match AiClient::new(config) {
+            Ok(client) => {
+                info!("AI service initialized (OPENAI_API_KEY found)");
+                Some(Arc::new(AiService::new(Arc::new(client))))
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to initialize AI client");
+                None
+            }
+        }
+    });
+    if ai_service.is_none() {
+        info!("AI enrichment disabled (OPENAI_API_KEY not set)");
+    }
+
     // Create application state
     let config = AppConfig {
         max_jobs: args.max_jobs,
     };
-    let state = Arc::new(AppState::new(producer, config, clickhouse_batcher.clone()));
+    let state = Arc::new(AppState::new(producer, config, clickhouse_batcher.clone(), fetcher, ai_service));
 
     // Shutdown coordination
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
@@ -2012,7 +2386,8 @@ async fn main() -> anyhow::Result<()> {
                     let idle_threshold = Duration::from_secs(30);
 
                     // Find running jobs that have been idle
-                    let idle_jobs: Vec<(String, u64, u64, u64)> = {
+                    // Also extract swap metadata for atomic index swap
+                    let idle_jobs: Vec<(String, u64, u64, u64, Option<String>, Option<String>, Option<String>, String)> = {
                         let jobs = idle_state.jobs.read();
                         let activity = idle_state.job_last_activity.read();
                         jobs.iter()
@@ -2023,17 +2398,74 @@ async fn main() -> anyhow::Result<()> {
                                     .map(|last| now.duration_since(*last) > idle_threshold)
                                     .unwrap_or(false)
                             })
-                            .map(|(id, j)| (id.clone(), j.pages_crawled, j.pages_indexed, j.errors))
+                            .map(|(id, j)| (
+                                id.clone(),
+                                j.pages_crawled,
+                                j.pages_indexed,
+                                j.errors,
+                                j.swap_temp_index.clone(),
+                                j.swap_meilisearch_url.clone(),
+                                j.swap_meilisearch_api_key.clone(),
+                                j.index_uid.clone(),
+                            ))
                             .collect()
                     };
 
-                    for (job_id, pages_crawled, documents_indexed, errors) in idle_jobs {
+                    for (job_id, pages_crawled, documents_indexed, errors, swap_temp, swap_url, swap_key, index_uid) in idle_jobs {
                         let duration_secs = {
                             let jobs = idle_state.jobs.read();
                             jobs.get(&job_id)
                                 .and_then(|j| j.duration_seconds())
                                 .unwrap_or(0) as u64
                         };
+
+                        // If this job uses atomic index swap, perform the swap before completing
+                        if let (Some(temp_index), Some(ms_url)) = (&swap_temp, &swap_url) {
+                            info!(
+                                job_id = %job_id,
+                                target = %index_uid,
+                                temp = %temp_index,
+                                "Performing atomic index swap before completing job"
+                            );
+
+                            match scrapix_storage::meilisearch::MeilisearchStorage::perform_swap(
+                                ms_url,
+                                swap_key.as_deref(),
+                                &index_uid,
+                                temp_index,
+                            ).await {
+                                Ok(()) => {
+                                    info!(
+                                        job_id = %job_id,
+                                        target = %index_uid,
+                                        temp = %temp_index,
+                                        "Index swap completed successfully"
+                                    );
+                                }
+                                Err(e) => {
+                                    error!(
+                                        job_id = %job_id,
+                                        error = %e,
+                                        temp = %temp_index,
+                                        "Index swap failed, marking job as failed"
+                                    );
+
+                                    let event = CrawlEvent::JobFailed {
+                                        job_id: job_id.clone(),
+                                        account_id: None,
+                                        error: format!(
+                                            "Index swap failed: {}. Temp index '{}' preserved for manual recovery.",
+                                            e, temp_index
+                                        ),
+                                        timestamp: chrono::Utc::now().timestamp_millis(),
+                                    };
+                                    idle_state.process_event(&job_id, &event);
+                                    idle_state.broadcast_event(&job_id, event);
+                                    idle_state.job_last_activity.write().remove(&job_id);
+                                    continue;
+                                }
+                            }
+                        }
 
                         info!(
                             job_id = %job_id,

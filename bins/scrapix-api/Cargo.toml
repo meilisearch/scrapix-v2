@@ -17,6 +17,8 @@ scrapix-storage = { path = "../../crates/scrapix-storage" }
 scrapix-telemetry = { path = "../../crates/scrapix-telemetry" }
 scrapix-parser = { path = "../../crates/scrapix-parser" }
 scrapix-extractor = { path = "../../crates/scrapix-extractor" }
+scrapix-crawler = { path = "../../crates/scrapix-crawler" }
+scrapix-ai = { path = "../../crates/scrapix-ai" }
 
 # HTTP client for /scrape endpoint
 reqwest = { workspace = true }
