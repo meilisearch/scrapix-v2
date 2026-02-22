@@ -2,6 +2,14 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Workflow: Linear Issue Tracking
+
+When creating a plan or proposing any major addition/feature to the project, **always create a Linear issue first** using the Linear MCP tool:
+- **Team:** SCR (`https://linear.app/meilisearch/team/SCR/`)
+- **Project:** "Console — Yet Another Meilisearch UI" (`https://linear.app/meilisearch/project/console-yet-another-meilisearch-ui-8f6681d804f7`)
+
+The issue should contain the plan summary, scope of changes, and affected files. Do this before starting implementation.
+
 ## Project Overview
 
 Scrapix is a high-performance, distributed web crawler and search indexer built in Rust. It's designed for internet-scale crawling with three main use cases: global internet indexing, targeted site crawling, and real-time information retrieval.
