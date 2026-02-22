@@ -11,11 +11,30 @@ import type {
 // API calls go through Next.js rewrites (/api/scrapix/* → backend) to avoid CORS.
 // WebSocket still connects directly to the backend.
 const BASE = "/api/scrapix";
-const WS_BASE =
-  (process.env.NEXT_PUBLIC_SCRAPIX_API_URL || "http://localhost:8080").replace(
-    /^http/,
-    "ws"
-  );
+
+/** Derive the WebSocket base URL at runtime, so it works on any deployment. */
+function getWsBase(): string {
+  // 1. Explicit env var (baked at build time for NEXT_PUBLIC_*)
+  const env = process.env.NEXT_PUBLIC_SCRAPIX_API_URL;
+  if (env) return env.replace(/^http/, "ws");
+
+  // 2. Browser: derive from current page URL
+  if (typeof window !== "undefined") {
+    const { protocol, hostname } = window.location;
+    const wsProtocol = protocol === "https:" ? "wss:" : "ws:";
+
+    // console.X → api.X (e.g. console.scrapix.meilisearch.net → api.scrapix.meilisearch.net)
+    if (hostname.startsWith("console.")) {
+      return `${wsProtocol}//${hostname.replace(/^console\./, "api.")}`;
+    }
+
+    // Local dev: API on port 8080
+    return `${wsProtocol}//${hostname}:8080`;
+  }
+
+  // 3. Server-side fallback
+  return "ws://localhost:8080";
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
@@ -86,5 +105,5 @@ export async function submitScrape(opts: ScrapeOptions): Promise<ScrapeResult> {
 
 /** WebSocket URL pointing directly at the backend (rewrites don't proxy WS). */
 export function wsUrl(path: string): string {
-  return `${WS_BASE}${path}`;
+  return `${getWsBase()}${path}`;
 }
