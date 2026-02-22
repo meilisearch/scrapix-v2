@@ -17,7 +17,7 @@ default:
 
 # Start infrastructure, wait for health, then run all services
 dev: infra _wait-healthy
-    overmind start -f Procfile.dev
+    overmind start -f Procfile.dev -N
 
 # ---------------------------------------------------------------------------
 # Infrastructure
@@ -45,7 +45,7 @@ infra-logs *ARGS:
 
 # Start all Rust services + console via overmind
 services:
-    overmind start -f Procfile.dev
+    overmind start -f Procfile.dev -N
 
 # Attach to a specific service's log output
 logs name:
@@ -65,7 +65,7 @@ stop-services:
 
 # Run API server with cargo-watch
 api:
-    cargo watch -w crates -w bins/scrapix-api -x 'run --bin scrapix-api -- --enable-cors'
+    cargo watch -w crates -w bins/scrapix-api -x 'run --bin scrapix-api'
 
 # Run frontier service with cargo-watch
 frontier:
