@@ -510,6 +510,7 @@ mod tests {
             webhooks: vec![],
             headers: HashMap::new(),
             user_agents: vec![],
+            replace_index: false,
         };
 
         assert_eq!(config.crawler_type, CrawlerType::Http);
