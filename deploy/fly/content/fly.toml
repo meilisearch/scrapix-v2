@@ -1,0 +1,23 @@
+app = "scrapix-content"
+primary_region = "cdg"
+
+[build]
+  dockerfile = "../../../Dockerfile"
+  build-target = "scrapix-worker-content"
+
+[processes]
+  app = ""
+
+# No HTTP service — this is a Kafka consumer
+# Disable auto-stop so it stays running to consume messages
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+  cpus = 1
+
+[env]
+  RUST_LOG = "info"
+  KAFKA_GROUP_ID = "scrapix-content"
+  BATCH_SIZE = "2000"
+  BATCH_TIMEOUT_SECS = "5"

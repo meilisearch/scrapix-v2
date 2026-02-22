@@ -1,0 +1,26 @@
+app = "scrapix-crawler"
+primary_region = "cdg"
+
+[build]
+  dockerfile = "../../../Dockerfile"
+  build-target = "scrapix-worker-crawler"
+
+[processes]
+  app = ""
+
+# No HTTP service — this is a Kafka consumer
+# Disable auto-stop so it stays running to consume messages
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+  cpus = 1
+
+[env]
+  RUST_LOG = "info"
+  KAFKA_GROUP_ID = "scrapix-crawlers"
+  CONCURRENCY = "50"
+  USER_AGENT = "Scrapix/1.0 (compatible; +https://github.com/quentindequelen/scrapix)"
+  REQUEST_TIMEOUT = "30"
+  MAX_RETRIES = "3"
+  RESPECT_ROBOTS = "true"

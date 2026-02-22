@@ -1,0 +1,40 @@
+app = "scrapix-redpanda"
+primary_region = "cdg"
+
+[build]
+  image = "redpandadata/redpanda:v25.3.4"
+
+[processes]
+  app = """redpanda start \
+    --smp 1 \
+    --memory 768M \
+    --reserve-memory 0M \
+    --overprovisioned \
+    --node-id 0 \
+    --kafka-addr internal://0.0.0.0:9092 \
+    --advertise-kafka-addr internal://scrapix-redpanda.internal:9092 \
+    --pandaproxy-addr internal://0.0.0.0:8082 \
+    --advertise-pandaproxy-addr internal://scrapix-redpanda.internal:8082 \
+    --schema-registry-addr internal://0.0.0.0:8081 \
+    --default-log-level warn \
+    --set redpanda.auto_create_topics_enabled=true"""
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 9092
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[services.ports]]
+    port = 9092
+    handlers = []
+
+[mounts]
+  source = "redpanda_data"
+  destination = "/var/lib/redpanda/data"
+
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "1024mb"
+  cpus = 2
