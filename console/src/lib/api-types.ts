@@ -104,6 +104,47 @@ export interface ErrorEntry {
   timestamp: string;
 }
 
+// From GET /configs, POST /configs, etc.
+export interface SavedConfig {
+  id: string;
+  account_id: string;
+  name: string;
+  description: string | null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  config: Record<string, any>;
+  cron_expression: string | null;
+  cron_enabled: boolean;
+  last_run_at: string | null;
+  next_run_at: string | null;
+  last_job_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateConfigRequest {
+  name: string;
+  description?: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  config: Record<string, any>;
+  cron_expression?: string;
+  cron_enabled?: boolean;
+}
+
+export interface UpdateConfigRequest {
+  name?: string;
+  description?: string | null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  config?: Record<string, any>;
+  cron_expression?: string | null;
+  cron_enabled?: boolean;
+}
+
+export interface TriggerResponse {
+  job_id: string;
+  config_id: string;
+  message: string;
+}
+
 // From POST /scrape
 export interface ScrapeResult {
   success: boolean;

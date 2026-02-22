@@ -11,6 +11,7 @@ import {
   CreditCard,
   Settings,
   LogOut,
+  FolderCog,
 } from "lucide-react";
 import { logout } from "@/lib/auth";
 import { useRouter } from "next/navigation";
@@ -21,6 +22,7 @@ const navigation = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
   { name: "Playground", href: "/playground", icon: Play },
   { name: "Jobs", href: "/jobs", icon: ListTodo },
+  { name: "Configs", href: "/configs", icon: FolderCog },
   { name: "API Keys", href: "/api-keys", icon: Key },
   { name: "Billing", href: "/billing", icon: CreditCard },
   { name: "Settings", href: "/settings", icon: Settings },

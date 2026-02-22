@@ -6,6 +6,10 @@ import type {
   RecentErrors,
   ScrapeResult,
   ServiceHealth,
+  SavedConfig,
+  CreateConfigRequest,
+  UpdateConfigRequest,
+  TriggerResponse,
 } from "./api-types";
 
 // API calls go through Next.js rewrites (/api/scrapix/* → backend) to avoid CORS.
@@ -100,6 +104,47 @@ export async function submitScrape(opts: ScrapeOptions): Promise<ScrapeResult> {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(opts),
+  });
+}
+
+// ============================================================================
+// Saved Configs
+// ============================================================================
+
+export async function fetchConfigs(): Promise<SavedConfig[]> {
+  return request("/configs");
+}
+
+export async function fetchConfig(id: string): Promise<SavedConfig> {
+  return request(`/configs/${encodeURIComponent(id)}`);
+}
+
+export async function createConfig(req: CreateConfigRequest): Promise<SavedConfig> {
+  return request("/configs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+}
+
+export async function updateConfig(id: string, req: UpdateConfigRequest): Promise<SavedConfig> {
+  return request(`/configs/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+}
+
+export async function deleteConfig(id: string): Promise<void> {
+  await fetch(`${BASE}/configs/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+}
+
+export async function triggerConfig(id: string): Promise<TriggerResponse> {
+  return request(`/configs/${encodeURIComponent(id)}/trigger`, {
+    method: "POST",
   });
 }
 
