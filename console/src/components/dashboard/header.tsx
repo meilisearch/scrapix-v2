@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
+import { useTheme } from "next-themes";
 import { getMe, logout, type AuthUser } from "@/lib/auth";
 import {
   DropdownMenu,
@@ -11,13 +13,42 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
+import {
+  Sheet,
+  SheetContent,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import { useRouter } from "next/navigation";
+import { Menu, Moon, Sun } from "lucide-react";
+import { SidebarContent } from "./sidebar";
+
+const pageTitles: Record<string, string> = {
+  "/": "Dashboard",
+  "/playground": "Playground",
+  "/jobs": "Jobs",
+  "/api-keys": "API Keys",
+  "/billing": "Billing",
+  "/settings": "Settings",
+};
+
+function getPageTitle(pathname: string): string {
+  if (pageTitles[pathname]) return pageTitles[pathname];
+  if (pathname.startsWith("/jobs/")) return "Job Details";
+  return "Console";
+}
 
 export function Header() {
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [mobileOpen, setMobileOpen] = useState(false);
   const router = useRouter();
+  const pathname = usePathname();
+  const { theme, setTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
+    setMounted(true);
     getMe().then(setUser).catch(() => {});
   }, []);
 
@@ -27,23 +58,48 @@ export function Header() {
     router.refresh();
   };
 
-  const initials = user?.full_name
-    ?.split(" ")
-    .map((n: string) => n[0])
-    .join("")
-    .toUpperCase() || user?.email?.[0].toUpperCase() || "U";
+  const initials =
+    user?.full_name
+      ?.split(" ")
+      .map((n: string) => n[0])
+      .join("")
+      .toUpperCase() || user?.email?.[0].toUpperCase() || "U";
 
   return (
-    <header className="flex h-16 items-center justify-between border-b px-6">
-      <div className="flex items-center gap-4">
-        <h1 className="text-lg font-semibold">Console</h1>
+    <header className="flex h-14 items-center justify-between border-b px-4 md:px-6">
+      <div className="flex items-center gap-3">
+        <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+          <SheetTrigger asChild>
+            <Button variant="ghost" size="icon" className="md:hidden">
+              <Menu className="h-5 w-5" />
+            </Button>
+          </SheetTrigger>
+          <SheetContent side="left" className="w-56 p-0">
+            <SheetTitle className="sr-only">Navigation</SheetTitle>
+            <SidebarContent onNavigate={() => setMobileOpen(false)} />
+          </SheetContent>
+        </Sheet>
+        <h1 className="text-lg font-semibold">{getPageTitle(pathname)}</h1>
       </div>
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-2">
+        {mounted && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+          >
+            {theme === "dark" ? (
+              <Sun className="h-4 w-4" />
+            ) : (
+              <Moon className="h-4 w-4" />
+            )}
+          </Button>
+        )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button className="flex items-center gap-2 rounded-full focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2">
               <Avatar className="h-8 w-8">
-                <AvatarFallback>{initials}</AvatarFallback>
+                <AvatarFallback className="text-xs">{initials}</AvatarFallback>
               </Avatar>
             </button>
           </DropdownMenuTrigger>
@@ -59,9 +115,6 @@ export function Header() {
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => router.push("/settings")}>
               Settings
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => router.push("/billing")}>
-              Billing
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={handleLogout}>Sign out</DropdownMenuItem>

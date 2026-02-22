@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
 import { getMe, type AuthUser } from "@/lib/auth";
 import {
   Card,
@@ -9,45 +11,69 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Globe, Zap, Database, TrendingUp, AlertCircle } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Globe,
+  Zap,
+  Database,
+  TrendingUp,
+  AlertCircle,
+  ArrowRight,
+  Play,
+} from "lucide-react";
 import { fetchStats, fetchErrors } from "@/lib/api";
-import type { SystemStats, RecentErrors } from "@/lib/api-types";
+import type { SystemStats } from "@/lib/api-types";
+
+function StatCard({
+  name,
+  value,
+  icon: Icon,
+  href,
+}: {
+  name: string;
+  value: string;
+  icon: React.ComponentType<{ className?: string }>;
+  href?: string;
+}) {
+  const content = (
+    <Card className={href ? "transition-colors hover:border-primary/50 cursor-pointer" : ""}>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <CardTitle className="text-sm font-medium">{name}</CardTitle>
+        <Icon className="h-4 w-4 text-muted-foreground" />
+      </CardHeader>
+      <CardContent>
+        <div className="text-2xl font-bold">{value}</div>
+      </CardContent>
+    </Card>
+  );
+  if (href) return <Link href={href}>{content}</Link>;
+  return content;
+}
 
 export default function DashboardPage() {
   const [user, setUser] = useState<AuthUser | null>(null);
-  const [stats, setStats] = useState<SystemStats | null>(null);
-  const [errors, setErrors] = useState<RecentErrors | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [apiError, setApiError] = useState<string | null>(null);
 
   useEffect(() => {
     getMe().then(setUser).catch(() => {});
   }, []);
 
-  const refreshData = useCallback(async () => {
-    try {
-      const [statsData, errorsData] = await Promise.all([
-        fetchStats(),
-        fetchErrors(5),
-      ]);
-      setStats(statsData);
-      setErrors(errorsData);
-      setApiError(null);
-    } catch (e) {
-      setApiError(
-        e instanceof Error ? e.message : "Failed to connect to API"
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const {
+    data: stats,
+    isLoading: statsLoading,
+    error: statsError,
+  } = useQuery({
+    queryKey: ["stats"],
+    queryFn: fetchStats,
+    refetchInterval: 10_000,
+  });
 
-  useEffect(() => {
-    refreshData();
-    const interval = setInterval(refreshData, 10_000);
-    return () => clearInterval(interval);
-  }, [refreshData]);
+  const { data: errors } = useQuery({
+    queryKey: ["errors", 5],
+    queryFn: () => fetchErrors(5),
+    refetchInterval: 10_000,
+  });
 
   const successRate =
     stats && stats.diagnostics.total_requests > 0
@@ -58,7 +84,12 @@ export default function DashboardPage() {
         ).toFixed(1)
       : "0.0";
 
-  const statCards = stats
+  const statCards: {
+    name: string;
+    value: string;
+    icon: React.ComponentType<{ className?: string }>;
+    href?: string;
+  }[] = stats
     ? [
         {
           name: "Total Requests",
@@ -69,6 +100,7 @@ export default function DashboardPage() {
           name: "Active Jobs",
           value: stats.jobs.running.toLocaleString(),
           icon: Zap,
+          href: "/jobs",
         },
         {
           name: "Domains Tracked",
@@ -87,161 +119,153 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold tracking-tight">Dashboard</h2>
-        <p className="text-muted-foreground">
-          Welcome back{account ? `, ${account.name}` : ""}! Here&apos;s your
-          usage overview.
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold tracking-tight">Dashboard</h2>
+          <p className="text-muted-foreground">
+            {account
+              ? `Welcome back, ${account.name}`
+              : "Your crawling overview"}
+          </p>
+        </div>
+        <Button asChild>
+          <Link href="/playground">
+            <Play className="h-4 w-4 mr-2" />
+            New Crawl
+          </Link>
+        </Button>
       </div>
 
-      {apiError && (
+      {statsError && (
         <Card className="border-destructive">
           <CardContent className="py-4 flex items-center gap-3">
             <AlertCircle className="h-5 w-5 text-destructive" />
             <p className="text-sm text-destructive">
-              Could not reach the Scrapix API: {apiError}
+              Could not reach the Scrapix API:{" "}
+              {statsError instanceof Error
+                ? statsError.message
+                : "Unknown error"}
             </p>
           </CardContent>
         </Card>
       )}
 
       {/* Stats Grid */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        {loading
+      <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
+        {statsLoading
           ? Array.from({ length: 4 }).map((_, i) => (
               <Card key={i}>
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <div className="h-4 w-24 bg-muted animate-pulse rounded" />
+                  <Skeleton className="h-4 w-24" />
                 </CardHeader>
                 <CardContent>
-                  <div className="h-8 w-16 bg-muted animate-pulse rounded" />
+                  <Skeleton className="h-8 w-16" />
                 </CardContent>
               </Card>
             ))
           : statCards.map((stat) => (
-              <Card key={stat.name}>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">
-                    {stat.name}
-                  </CardTitle>
-                  <stat.icon className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{stat.value}</div>
-                </CardContent>
-              </Card>
+              <StatCard key={stat.name} {...stat} />
             ))}
       </div>
 
-      {/* Recent Errors */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Recent Errors</CardTitle>
-          <CardDescription>
-            {errors
-              ? `${errors.total_count} total errors tracked`
-              : "Loading error data..."}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {errors && errors.errors.length > 0 ? (
-            <div className="space-y-3">
-              {errors.errors.map((err, i) => (
-                <div
-                  key={i}
-                  className="flex items-start justify-between gap-4 text-sm"
-                >
-                  <div className="min-w-0 flex-1">
-                    <p className="font-mono text-xs truncate">{err.url}</p>
-                    <p className="text-muted-foreground text-xs">{err.error}</p>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {err.status && (
-                      <Badge variant="outline">{err.status}</Badge>
-                    )}
-                    <span className="text-xs text-muted-foreground">
-                      {err.domain}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : errors ? (
-            <p className="text-sm text-muted-foreground">
-              No recent errors — looking good!
-            </p>
-          ) : (
-            <div className="h-20 flex items-center justify-center">
-              <div className="h-4 w-48 bg-muted animate-pulse rounded" />
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Quick Actions */}
-      <div className="grid gap-4 md:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Quick Start</CardTitle>
-            <CardDescription>
-              Get started with Scrapix in seconds
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              <div className="rounded-lg bg-muted p-4">
-                <p className="text-sm font-medium mb-2">Scrape a URL</p>
-                <code className="text-xs bg-background p-2 rounded block overflow-x-auto">
-                  curl -X POST{" "}
-                  {process.env.NEXT_PUBLIC_SCRAPIX_API_URL ||
-                    "https://api.scrapix.io"}
-                  /scrape \
-                  <br />
-                  &nbsp;&nbsp;-H &quot;X-API-Key: YOUR_API_KEY&quot; \
-                  <br />
-                  &nbsp;&nbsp;-H &quot;Content-Type: application/json&quot; \
-                  <br />
-                  &nbsp;&nbsp;-d &apos;
-                  {`{"url": "https://example.com"}`}&apos;
-                </code>
+      <div className="grid gap-4 lg:grid-cols-3">
+        {/* Recent Errors */}
+        <Card className="lg:col-span-2">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle>Recent Errors</CardTitle>
+                <CardDescription>
+                  {errors
+                    ? `${errors.total_count} total errors tracked`
+                    : "Loading..."}
+                </CardDescription>
               </div>
             </div>
+          </CardHeader>
+          <CardContent>
+            {errors && errors.errors.length > 0 ? (
+              <div className="space-y-3">
+                {errors.errors.map((err, i) => (
+                  <div
+                    key={i}
+                    className="flex items-start justify-between gap-4 text-sm"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="font-mono text-xs truncate">{err.url}</p>
+                      <p className="text-muted-foreground text-xs">
+                        {err.error}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {err.status && (
+                        <Badge variant="outline">{err.status}</Badge>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : errors ? (
+              <p className="text-sm text-muted-foreground py-4 text-center">
+                No recent errors
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <Skeleton key={i} className="h-8 w-full" />
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
 
+        {/* Quick Actions */}
         <Card>
           <CardHeader>
-            <CardTitle>Account Status</CardTitle>
-            <CardDescription>Your current plan and limits</CardDescription>
+            <CardTitle>Quick Actions</CardTitle>
           </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">Plan</span>
-                <span className="text-sm font-medium capitalize">
-                  {account?.tier || "Free"}
-                </span>
+          <CardContent className="space-y-3">
+            <Button asChild variant="outline" className="w-full justify-between">
+              <Link href="/playground">
+                Start a Crawl
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </Button>
+            <Button asChild variant="outline" className="w-full justify-between">
+              <Link href="/jobs">
+                View Jobs
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </Button>
+            <Button asChild variant="outline" className="w-full justify-between">
+              <Link href="/api-keys">
+                Manage API Keys
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </Button>
+
+            {stats && (
+              <div className="pt-3 border-t space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">Plan</span>
+                  <span className="font-medium capitalize">
+                    {account?.tier || "Free"}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">Total Jobs</span>
+                  <span className="font-medium">
+                    {stats.jobs.total.toLocaleString()}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">Completed</span>
+                  <span className="font-medium">
+                    {stats.jobs.completed.toLocaleString()}
+                  </span>
+                </div>
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">
-                  Total Jobs
-                </span>
-                <span className="text-sm font-medium">
-                  {stats?.jobs.total.toLocaleString() ?? "-"}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">
-                  Completed / Failed
-                </span>
-                <span className="text-sm font-medium">
-                  {stats
-                    ? `${stats.jobs.completed} / ${stats.jobs.failed}`
-                    : "-"}
-                </span>
-              </div>
-            </div>
+            )}
           </CardContent>
         </Card>
       </div>

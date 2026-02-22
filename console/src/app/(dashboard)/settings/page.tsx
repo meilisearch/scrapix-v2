@@ -22,7 +22,8 @@ const BASE = "/api/scrapix";
 export default function SettingsPage() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [savingAccount, setSavingAccount] = useState(false);
   const [fullName, setFullName] = useState("");
   const [accountName, setAccountName] = useState("");
 
@@ -38,7 +39,7 @@ export default function SettingsPage() {
   }, []);
 
   const saveProfile = async () => {
-    setSaving(true);
+    setSavingProfile(true);
     try {
       const res = await fetch(`${BASE}/auth/me`, {
         method: "PATCH",
@@ -52,11 +53,11 @@ export default function SettingsPage() {
     } catch {
       toast.error("Failed to update profile");
     }
-    setSaving(false);
+    setSavingProfile(false);
   };
 
   const saveAccount = async () => {
-    setSaving(true);
+    setSavingAccount(true);
     try {
       const res = await fetch(`${BASE}/account`, {
         method: "PATCH",
@@ -74,7 +75,7 @@ export default function SettingsPage() {
     } catch {
       toast.error("Failed to update account");
     }
-    setSaving(false);
+    setSavingAccount(false);
   };
 
   if (loading) {
@@ -128,9 +129,9 @@ export default function SettingsPage() {
         <CardFooter>
           <Button
             onClick={saveProfile}
-            disabled={saving || fullName === user?.full_name}
+            disabled={savingProfile || fullName === user?.full_name}
           >
-            {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {savingProfile && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Save Changes
           </Button>
         </CardFooter>
@@ -166,9 +167,9 @@ export default function SettingsPage() {
         <CardFooter>
           <Button
             onClick={saveAccount}
-            disabled={saving || accountName === user?.account?.name}
+            disabled={savingAccount || accountName === user?.account?.name}
           >
-            {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {savingAccount && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Save Changes
           </Button>
         </CardFooter>
@@ -192,7 +193,7 @@ export default function SettingsPage() {
                 Permanently delete your account and all associated data
               </p>
             </div>
-            <Button variant="destructive" disabled>
+            <Button variant="destructive" disabled title="Coming soon">
               Delete Account
             </Button>
           </div>

@@ -28,25 +28,46 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Trash2, ExternalLink, AlertCircle, RefreshCw } from "lucide-react";
+import {
+  Trash2,
+  ExternalLink,
+  AlertCircle,
+  RefreshCw,
+  Search,
+  Plus,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react";
 import { fetchJobs, deleteJob } from "@/lib/api";
 import type { Job } from "@/lib/api-types";
 import { formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
-const statusVariant: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
+const statusVariant: Record<
+  string,
+  "default" | "secondary" | "destructive" | "outline"
+> = {
   completed: "default",
   running: "secondary",
   pending: "outline",
   failed: "destructive",
-  cancelled: "destructive",
+  cancelled: "outline",
 };
 
-const STATUS_TABS = ["all", "running", "completed", "failed"] as const;
+const STATUS_TABS = [
+  "all",
+  "running",
+  "completed",
+  "failed",
+  "cancelled",
+] as const;
 type StatusTab = (typeof STATUS_TABS)[number];
+
+const PAGE_SIZE = 20;
 
 function getHostname(url: string): string | null {
   try {
@@ -66,6 +87,8 @@ function jobLabel(job: Job): string {
 export default function JobsPage() {
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState<StatusTab>("all");
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(0);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
   const {
@@ -85,19 +108,47 @@ export default function JobsPage() {
   };
 
   const countByStatus = useMemo(() => {
-    const counts: Record<string, number> = { all: jobs.length, running: 0, completed: 0, failed: 0 };
+    const counts: Record<string, number> = {
+      all: jobs.length,
+      running: 0,
+      completed: 0,
+      failed: 0,
+      cancelled: 0,
+    };
     for (const job of jobs) {
       if (job.status in counts) counts[job.status]++;
-      if (job.status === "cancelled") counts.failed++;
     }
     return counts;
   }, [jobs]);
 
   const filteredJobs = useMemo(() => {
-    if (statusFilter === "all") return jobs;
-    if (statusFilter === "failed") return jobs.filter((j) => j.status === "failed" || j.status === "cancelled");
-    return jobs.filter((j) => j.status === statusFilter);
-  }, [jobs, statusFilter]);
+    let result = jobs;
+
+    if (statusFilter !== "all") {
+      result = result.filter((j) => j.status === statusFilter);
+    }
+
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      result = result.filter(
+        (j) =>
+          j.job_id.toLowerCase().includes(q) ||
+          j.index_uid.toLowerCase().includes(q) ||
+          jobLabel(j).toLowerCase().includes(q) ||
+          j.start_urls?.some((u) => u.toLowerCase().includes(q))
+      );
+    }
+
+    return result;
+  }, [jobs, statusFilter, search]);
+
+  // Reset page when filters change
+  const totalPages = Math.max(1, Math.ceil(filteredJobs.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages - 1);
+  const pageJobs = filteredJobs.slice(
+    safePage * PAGE_SIZE,
+    (safePage + 1) * PAGE_SIZE
+  );
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
@@ -112,13 +163,25 @@ export default function JobsPage() {
     }
   };
 
+  const deleteLabel = deleteTarget
+    ? jobLabel(jobs.find((j) => j.job_id === deleteTarget) ?? { job_id: deleteTarget, index_uid: deleteTarget } as Job)
+    : "";
+
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold tracking-tight">Jobs</h2>
-        <p className="text-muted-foreground">
-          View and manage your crawl jobs
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold tracking-tight">Jobs</h2>
+          <p className="text-muted-foreground">
+            View and manage your crawl jobs
+          </p>
+        </div>
+        <Button asChild>
+          <Link href="/playground">
+            <Plus className="h-4 w-4 mr-2" />
+            New Crawl
+          </Link>
+        </Button>
       </div>
 
       {error && (
@@ -126,7 +189,8 @@ export default function JobsPage() {
           <CardContent className="py-4 flex items-center gap-3">
             <AlertCircle className="h-5 w-5 text-destructive" />
             <p className="text-sm text-destructive">
-              Could not reach the Scrapix API: {error instanceof Error ? error.message : "Unknown error"}
+              Could not reach the Scrapix API:{" "}
+              {error instanceof Error ? error.message : "Unknown error"}
             </p>
           </CardContent>
         </Card>
@@ -139,7 +203,10 @@ export default function JobsPage() {
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               {dataUpdatedAt > 0 && (
                 <span>
-                  Updated {formatDistanceToNow(new Date(dataUpdatedAt), { addSuffix: true })}
+                  Updated{" "}
+                  {formatDistanceToNow(new Date(dataUpdatedAt), {
+                    addSuffix: true,
+                  })}
                 </span>
               )}
               <Button
@@ -149,191 +216,267 @@ export default function JobsPage() {
                 onClick={handleManualRefresh}
                 disabled={isFetching}
               >
-                <RefreshCw className={cn("h-3.5 w-3.5", isFetching && "animate-spin")} />
+                <RefreshCw
+                  className={cn("h-3.5 w-3.5", isFetching && "animate-spin")}
+                />
               </Button>
             </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
           {!isLoading && jobs.length > 0 && (
-            <Tabs value={statusFilter} onValueChange={(v) => setStatusFilter(v as StatusTab)}>
-              <TabsList>
-                {STATUS_TABS.map((tab) => (
-                  <TabsTrigger key={tab} value={tab} className="capitalize gap-1.5">
-                    {tab}
-                    <Badge variant="outline" className="ml-1 h-5 min-w-5 px-1 text-[10px]">
-                      {countByStatus[tab] ?? 0}
-                    </Badge>
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            </Tabs>
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+              <Tabs
+                value={statusFilter}
+                onValueChange={(v) => {
+                  setStatusFilter(v as StatusTab);
+                  setPage(0);
+                }}
+              >
+                <TabsList>
+                  {STATUS_TABS.map((tab) => {
+                    const count = countByStatus[tab] ?? 0;
+                    if (tab !== "all" && count === 0) return null;
+                    return (
+                      <TabsTrigger
+                        key={tab}
+                        value={tab}
+                        className="capitalize gap-1.5"
+                      >
+                        {tab}
+                        <Badge
+                          variant="outline"
+                          className="ml-1 h-5 min-w-5 px-1 text-[10px]"
+                        >
+                          {count}
+                        </Badge>
+                      </TabsTrigger>
+                    );
+                  })}
+                </TabsList>
+              </Tabs>
+              <div className="relative sm:ml-auto">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search jobs..."
+                  value={search}
+                  onChange={(e) => {
+                    setSearch(e.target.value);
+                    setPage(0);
+                  }}
+                  className="pl-9 h-9 w-full sm:w-[200px]"
+                />
+              </div>
+            </div>
           )}
 
           {isLoading ? (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Job</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Index</TableHead>
-                  <TableHead>Progress</TableHead>
-                  <TableHead>Started</TableHead>
-                  <TableHead className="w-[100px]">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {Array.from({ length: 5 }).map((_, i) => (
-                  <TableRow key={i}>
-                    <TableCell>
-                      <Skeleton className="h-4 w-32" />
-                      <Skeleton className="h-3 w-16 mt-1" />
-                    </TableCell>
-                    <TableCell><Skeleton className="h-5 w-16 rounded-full" /></TableCell>
-                    <TableCell><Skeleton className="h-4 w-24" /></TableCell>
-                    <TableCell><Skeleton className="h-4 w-28" /></TableCell>
-                    <TableCell><Skeleton className="h-4 w-20" /></TableCell>
-                    <TableCell><Skeleton className="h-8 w-16" /></TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <div className="space-y-3">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="flex items-center gap-4 py-2">
+                  <Skeleton className="h-4 w-32" />
+                  <Skeleton className="h-5 w-16 rounded-full" />
+                  <Skeleton className="h-4 w-24" />
+                  <Skeleton className="h-4 w-20 ml-auto" />
+                </div>
+              ))}
+            </div>
           ) : filteredJobs.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-8 text-center">
+            <div className="text-center py-12">
               {jobs.length === 0 ? (
-                <>
-                  No jobs yet. Start a crawl from the{" "}
-                  <Link href="/playground" className="text-primary hover:underline">
-                    Playground
-                  </Link>
-                  .
-                </>
+                <div className="space-y-3">
+                  <p className="text-muted-foreground">No jobs yet</p>
+                  <Button asChild variant="outline">
+                    <Link href="/playground">
+                      <Plus className="h-4 w-4 mr-2" />
+                      Start your first crawl
+                    </Link>
+                  </Button>
+                </div>
               ) : (
-                <>No {statusFilter} jobs.</>
+                <p className="text-muted-foreground">
+                  No matching jobs found.
+                </p>
               )}
-            </p>
+            </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Job</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Index</TableHead>
-                  <TableHead>Progress</TableHead>
-                  <TableHead>Started</TableHead>
-                  <TableHead className="w-[100px]">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredJobs.map((job) => {
-                  const isRunning = job.status === "running";
-                  const progressPercent =
-                    isRunning && job.max_pages && job.max_pages > 0
-                      ? Math.min(100, Math.round((job.pages_crawled / job.max_pages) * 100))
-                      : null;
+            <>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Job</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="hidden md:table-cell">
+                      Index
+                    </TableHead>
+                    <TableHead>Progress</TableHead>
+                    <TableHead className="hidden sm:table-cell">
+                      Started
+                    </TableHead>
+                    <TableHead className="w-[80px]" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {pageJobs.map((job) => {
+                    const isRunning = job.status === "running";
+                    const progressPercent =
+                      isRunning && job.max_pages && job.max_pages > 0
+                        ? Math.min(
+                            100,
+                            Math.round(
+                              (job.pages_crawled / job.max_pages) * 100
+                            )
+                          )
+                        : null;
 
-                  return (
-                    <TableRow key={job.job_id}>
-                      <TableCell>
-                        <Link
-                          href={`/jobs/${job.job_id}`}
-                          className="hover:underline text-primary font-medium text-sm"
-                        >
-                          {jobLabel(job)}
-                        </Link>
-                        <p className="font-mono text-[11px] text-muted-foreground">
-                          {job.job_id.slice(0, 8)}...
-                        </p>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={statusVariant[job.status] || "outline"}>
-                          {isRunning && (
-                            <span className="relative mr-1.5 flex h-2 w-2">
-                              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-current opacity-75" />
-                              <span className="relative inline-flex h-2 w-2 rounded-full bg-current" />
-                            </span>
-                          )}
-                          {job.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-sm max-w-[200px] truncate">
-                        {job.index_uid}
-                      </TableCell>
-                      <TableCell>
-                        {isRunning ? (
-                          <div className="space-y-1">
-                            {progressPercent !== null ? (
-                              <div className="flex items-center gap-2">
-                                <Progress value={progressPercent} className="h-1.5 w-20" />
-                                <span className="text-xs text-muted-foreground">
-                                  {job.pages_crawled}/{job.max_pages}
+                    return (
+                      <TableRow key={job.job_id}>
+                        <TableCell>
+                          <Link
+                            href={`/jobs/${job.job_id}`}
+                            className="hover:underline text-primary font-medium text-sm"
+                          >
+                            {jobLabel(job)}
+                          </Link>
+                          <p className="font-mono text-[11px] text-muted-foreground">
+                            {job.job_id.slice(0, 8)}
+                          </p>
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant={statusVariant[job.status] || "outline"}
+                          >
+                            {isRunning && (
+                              <span className="relative mr-1.5 flex h-2 w-2">
+                                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-current opacity-75" />
+                                <span className="relative inline-flex h-2 w-2 rounded-full bg-current" />
+                              </span>
+                            )}
+                            {job.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-sm max-w-[200px] truncate hidden md:table-cell">
+                          {job.index_uid}
+                        </TableCell>
+                        <TableCell>
+                          {isRunning ? (
+                            <div className="space-y-1">
+                              {progressPercent !== null ? (
+                                <div className="flex items-center gap-2">
+                                  <Progress
+                                    value={progressPercent}
+                                    className="h-1.5 w-20"
+                                  />
+                                  <span className="text-xs text-muted-foreground">
+                                    {job.pages_crawled}/{job.max_pages}
+                                  </span>
+                                </div>
+                              ) : (
+                                <span className="text-sm">
+                                  {job.pages_crawled} pages
                                 </span>
-                              </div>
-                            ) : (
+                              )}
+                            </div>
+                          ) : (
+                            <div>
                               <span className="text-sm">
                                 {job.pages_crawled} pages
                               </span>
-                            )}
-                            {job.crawl_rate > 0 && (
-                              <p className="text-[11px] text-muted-foreground">
-                                {job.crawl_rate.toFixed(1)}/s
-                              </p>
-                            )}
-                          </div>
-                        ) : (
-                          <div>
-                            <span className="text-sm">
-                              {job.pages_crawled} pages
+                              {job.errors > 0 && (
+                                <span className="text-xs text-destructive ml-2">
+                                  {job.errors} err
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground hidden sm:table-cell">
+                          {job.started_at ? (
+                            <span
+                              title={new Date(job.started_at).toLocaleString()}
+                            >
+                              {formatDistanceToNow(new Date(job.started_at), {
+                                addSuffix: true,
+                              })}
                             </span>
-                            {job.errors > 0 && (
-                              <span className="text-xs text-destructive ml-2">
-                                {job.errors} errors
-                              </span>
-                            )}
+                          ) : (
+                            "—"
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-1">
+                            <Button variant="ghost" size="icon" asChild>
+                              <Link href={`/jobs/${job.job_id}`}>
+                                <ExternalLink className="h-4 w-4" />
+                              </Link>
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => setDeleteTarget(job.job_id)}
+                            >
+                              <Trash2 className="h-4 w-4 text-destructive" />
+                            </Button>
                           </div>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {job.started_at
-                          ? formatDistanceToNow(new Date(job.started_at), {
-                              addSuffix: true,
-                            })
-                          : "—"}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1">
-                          <Button variant="ghost" size="icon" asChild>
-                            <Link href={`/jobs/${job.job_id}`}>
-                              <ExternalLink className="h-4 w-4" />
-                            </Link>
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => setDeleteTarget(job.job_id)}
-                          >
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+
+              {/* Pagination */}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between pt-2">
+                  <p className="text-xs text-muted-foreground">
+                    Showing {safePage * PAGE_SIZE + 1}–
+                    {Math.min((safePage + 1) * PAGE_SIZE, filteredJobs.length)}{" "}
+                    of {filteredJobs.length}
+                  </p>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-8 w-8"
+                      disabled={safePage === 0}
+                      onClick={() => setPage(safePage - 1)}
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    <span className="text-sm text-muted-foreground px-2">
+                      {safePage + 1} / {totalPages}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-8 w-8"
+                      disabled={safePage >= totalPages - 1}
+                      onClick={() => setPage(safePage + 1)}
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </CardContent>
       </Card>
 
       {/* Delete confirmation dialog */}
-      <Dialog open={deleteTarget !== null} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
+      <Dialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null);
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Delete Job</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete job{" "}
-              <span className="font-mono">{deleteTarget?.slice(0, 8)}...</span>?
-              This action is permanent and cannot be undone.
+              Are you sure you want to delete{" "}
+              <span className="font-medium">{deleteLabel}</span>? This action is
+              permanent.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

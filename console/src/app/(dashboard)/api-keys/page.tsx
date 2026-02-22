@@ -52,6 +52,7 @@ export default function ApiKeysPage() {
   const [createdKey, setCreatedKey] = useState<string | null>(null);
   const [showKey, setShowKey] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [revokeTarget, setRevokeTarget] = useState<ApiKey | null>(null);
 
   useEffect(() => {
     fetchKeys();
@@ -289,7 +290,7 @@ export default function ApiKeysPage() {
                           variant="ghost"
                           size="icon"
                           className="text-destructive hover:text-destructive"
-                          onClick={() => revokeKey(key.id)}
+                          onClick={() => setRevokeTarget(key)}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -321,6 +322,39 @@ export default function ApiKeysPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Revoke confirmation dialog */}
+      <Dialog
+        open={revokeTarget !== null}
+        onOpenChange={(open) => { if (!open) setRevokeTarget(null); }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Revoke API Key</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to revoke{" "}
+              <span className="font-medium">{revokeTarget?.name}</span>? Any
+              applications using this key will lose access immediately.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRevokeTarget(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={async () => {
+                if (revokeTarget) {
+                  await revokeKey(revokeTarget.id);
+                  setRevokeTarget(null);
+                }
+              }}
+            >
+              Revoke Key
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

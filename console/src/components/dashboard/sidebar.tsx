@@ -20,13 +20,13 @@ import { Separator } from "@/components/ui/separator";
 const navigation = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
   { name: "Playground", href: "/playground", icon: Play },
-  { name: "API Keys", href: "/api-keys", icon: Key },
   { name: "Jobs", href: "/jobs", icon: ListTodo },
+  { name: "API Keys", href: "/api-keys", icon: Key },
   { name: "Billing", href: "/billing", icon: CreditCard },
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 
-export function Sidebar() {
+export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   const router = useRouter();
 
@@ -37,11 +37,11 @@ export function Sidebar() {
   };
 
   return (
-    <div className="flex h-full w-64 flex-col bg-gray-50 dark:bg-gray-900 border-r">
-      <div className="flex h-16 items-center px-6 border-b">
-        <Link href="/" className="flex items-center space-x-2">
+    <div className="flex h-full flex-col">
+      <div className="flex h-14 items-center px-6 border-b">
+        <Link href="/" className="flex items-center space-x-2" onClick={onNavigate}>
           <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
-            <span className="text-primary-foreground font-bold">S</span>
+            <span className="text-primary-foreground font-bold text-sm">S</span>
           </div>
           <span className="text-xl font-bold">Scrapix</span>
         </Link>
@@ -55,11 +55,12 @@ export function Sidebar() {
             <Link
               key={item.name}
               href={item.href}
+              onClick={onNavigate}
               className={cn(
                 "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
                 isActive
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-foreground"
+                  ? "bg-primary/10 text-primary"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
               )}
             >
               <item.icon className="h-4 w-4" />
@@ -80,5 +81,13 @@ export function Sidebar() {
         </Button>
       </div>
     </div>
+  );
+}
+
+export function Sidebar() {
+  return (
+    <aside className="hidden md:flex h-full w-56 flex-col border-r bg-card">
+      <SidebarContent />
+    </aside>
   );
 }
