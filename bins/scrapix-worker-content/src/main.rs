@@ -48,7 +48,7 @@ struct Args {
 
     /// Number of concurrent processors
     /// Higher concurrency enables faster document processing
-    #[arg(short, long, env = "CONCURRENCY", default_value = "20")]
+    #[arg(short, long, env = "CONCURRENCY", default_value = "40")]
     concurrency: usize,
 
     /// Meilisearch URL
@@ -97,7 +97,7 @@ struct Args {
 
     /// Batch size for Meilisearch indexing
     /// Larger batches reduce Meilisearch API call overhead
-    #[arg(long, env = "BATCH_SIZE", default_value = "500")]
+    #[arg(long, env = "BATCH_SIZE", default_value = "2000")]
     batch_size: usize,
 
     /// Worker ID (for logging/metrics)
@@ -109,20 +109,12 @@ struct Args {
     verbose: bool,
 
     // === AI ENRICHMENT OPTIONS ===
-    /// OpenAI API key (required for AI features)
-    #[arg(long, env = "OPENAI_API_KEY")]
-    openai_api_key: Option<String>,
-
-    /// OpenAI API base URL (for compatible APIs like Azure, local models)
-    #[arg(long, env = "OPENAI_API_BASE")]
-    openai_api_base: Option<String>,
-
     /// Enable AI summarization (generates ai_summary field)
     #[arg(long, env = "ENABLE_SUMMARY")]
     enable_summary: bool,
 
     /// Summary model to use
-    #[arg(long, env = "SUMMARY_MODEL", default_value = "gpt-4o-mini")]
+    #[arg(long, env = "SUMMARY_MODEL", default_value = "gpt-5-nano")]
     summary_model: String,
 
     /// Enable AI extraction with custom prompt (generates ai_extraction field)
@@ -135,20 +127,8 @@ struct Args {
     extraction_prompt: Option<String>,
 
     /// Extraction model to use
-    #[arg(long, env = "EXTRACTION_MODEL", default_value = "gpt-4o-mini")]
+    #[arg(long, env = "EXTRACTION_MODEL", default_value = "gpt-5-nano")]
     extraction_model: String,
-
-    /// Enable AI embeddings for semantic search (generates embeddings field)
-    #[arg(long, env = "ENABLE_EMBEDDINGS")]
-    enable_embeddings: bool,
-
-    /// Embedding model to use
-    #[arg(
-        long,
-        env = "EMBEDDING_MODEL",
-        default_value = "text-embedding-3-small"
-    )]
-    embedding_model: String,
 
     /// Maximum tokens for AI responses
     #[arg(long, env = "AI_MAX_TOKENS", default_value = "1000")]
@@ -285,11 +265,9 @@ struct MetricsSnapshot {
 struct AiConfig {
     enable_summary: bool,
     enable_extraction: bool,
-    enable_embeddings: bool,
     extraction_prompt: Option<String>,
     summary_model: String,
     extraction_model: String,
-    embedding_model: String,
     max_tokens: u32,
 }
 
@@ -398,27 +376,15 @@ impl ContentWorker {
         let ai_config = AiConfig {
             enable_summary: args.enable_summary,
             enable_extraction: args.enable_extraction,
-            enable_embeddings: args.enable_embeddings,
             extraction_prompt: args.extraction_prompt.clone(),
             summary_model: args.summary_model.clone(),
             extraction_model: args.extraction_model.clone(),
-            embedding_model: args.embedding_model.clone(),
             max_tokens: args.ai_max_tokens,
         };
 
-        // Create AI service if API key is provided and any AI feature is enabled
-        let ai_service = if (args.enable_summary || args.enable_extraction || args.enable_embeddings)
-            && args.openai_api_key.is_some()
-        {
-            let api_key = args.openai_api_key.clone().unwrap();
-            let ai_client_config = AiClientConfig {
-                api_key,
-                base_url: args.openai_api_base.clone(),
-                max_concurrent_requests: args.ai_concurrency,
-                ..Default::default()
-            };
-
-            match AiClient::new(ai_client_config) {
+        // Create AI service from environment if any AI feature is enabled
+        let ai_service = if args.enable_summary || args.enable_extraction {
+            match AiClient::from_env() {
                 Ok(client) => {
                     let client = Arc::new(client);
                     let mut service = AiService::minimal(client);
@@ -433,11 +399,6 @@ impl ContentWorker {
                         info!(model = %args.extraction_model, "AI extraction enabled");
                     }
 
-                    if args.enable_embeddings {
-                        service = service.with_embeddings();
-                        info!(model = %args.embedding_model, "AI embeddings enabled");
-                    }
-
                     Some(Arc::new(service))
                 }
                 Err(e) => {
@@ -446,9 +407,6 @@ impl ContentWorker {
                 }
             }
         } else {
-            if args.enable_summary || args.enable_extraction || args.enable_embeddings {
-                warn!("AI features enabled but no API key provided, AI features disabled");
-            }
             None
         };
 
@@ -1150,7 +1108,6 @@ impl ContentWorker {
             custom: None,
             ai_summary: None,
             ai_extraction: None,
-            embeddings: None,
         }
     }
 
@@ -1185,8 +1142,14 @@ impl ContentWorker {
             content
         };
 
-        // Generate AI summary if enabled
-        if self.ai_config.enable_summary {
+        // Run all AI enrichment calls in parallel for ~3x speedup.
+        // Each call is independent, so we use tokio::join! to run them concurrently.
+        // Individual failures are logged but don't affect the other calls.
+
+        let summary_fut = async {
+            if !self.ai_config.enable_summary {
+                return None;
+            }
             match ai_service.tldr(&content_for_ai).await {
                 Ok(summary) => {
                     debug!(
@@ -1194,7 +1157,7 @@ impl ContentWorker {
                         summary_len = summary.len(),
                         "Generated AI summary"
                     );
-                    document.ai_summary = Some(summary);
+                    Some(summary)
                 }
                 Err(e) => {
                     warn!(
@@ -1202,12 +1165,15 @@ impl ContentWorker {
                         error = %e,
                         "Failed to generate AI summary"
                     );
+                    None
                 }
             }
-        }
+        };
 
-        // Run AI extraction if enabled and prompt is provided
-        if self.ai_config.enable_extraction {
+        let extraction_fut = async {
+            if !self.ai_config.enable_extraction {
+                return None;
+            }
             if let Some(ref prompt) = self.ai_config.extraction_prompt {
                 match ai_service.extract(&content_for_ai, prompt).await {
                     Ok(result) => {
@@ -1215,7 +1181,7 @@ impl ContentWorker {
                             url = %document.url,
                             "Generated AI extraction"
                         );
-                        document.ai_extraction = Some(result.data);
+                        Some(result.data)
                     }
                     Err(e) => {
                         warn!(
@@ -1223,6 +1189,7 @@ impl ContentWorker {
                             error = %e,
                             "Failed to run AI extraction"
                         );
+                        None
                     }
                 }
             } else {
@@ -1230,28 +1197,18 @@ impl ContentWorker {
                     url = %document.url,
                     "AI extraction enabled but no prompt provided"
                 );
+                None
             }
-        }
+        };
 
-        // Generate embeddings if enabled
-        if self.ai_config.enable_embeddings {
-            match ai_service.embed(&content_for_ai).await {
-                Ok(embedding) => {
-                    debug!(
-                        url = %document.url,
-                        dimensions = embedding.dimensions,
-                        "Generated embeddings"
-                    );
-                    document.embeddings = Some(embedding.vector);
-                }
-                Err(e) => {
-                    warn!(
-                        url = %document.url,
-                        error = %e,
-                        "Failed to generate embeddings"
-                    );
-                }
-            }
+        let (summary, extraction) =
+            tokio::join!(summary_fut, extraction_fut);
+
+        if summary.is_some() {
+            document.ai_summary = summary;
+        }
+        if extraction.is_some() {
+            document.ai_extraction = extraction;
         }
 
         document

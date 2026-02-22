@@ -4,29 +4,32 @@
 //!
 //! This crate provides AI capabilities for the Scrapix crawler:
 //!
-//! - **Embeddings** - Generate vector embeddings for semantic search
 //! - **Extraction** - Extract structured data using custom prompts
 //! - **Summarization** - Generate summaries of varying lengths and styles
+//!
+//! Supports multiple LLM providers: OpenAI, Anthropic, Google Gemini, and Mistral.
 //!
 //! ## Quick Start
 //!
 //! ```rust,no_run
-//! use scrapix_ai::{AiClient, AiClientConfig, EmbeddingGenerator, Summarizer, AiExtractor};
+//! use scrapix_ai::{AiClient, AiClientConfig, Summarizer, AiExtractor};
 //! use std::sync::Arc;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     // Create the AI client
+//!     // Create the AI client (defaults to OpenAI)
 //!     let config = AiClientConfig {
 //!         api_key: std::env::var("OPENAI_API_KEY")?,
 //!         ..Default::default()
 //!     };
 //!     let client = Arc::new(AiClient::new(config)?);
 //!
-//!     // Generate embeddings
-//!     let embedder = EmbeddingGenerator::with_defaults(client.clone());
-//!     let embedding = embedder.embed("Some content to embed").await?;
-//!     println!("Embedding dimensions: {}", embedding.dimensions);
+//!     // Or use a different provider
+//!     // let config = AiClientConfig {
+//!     //     api_key: std::env::var("ANTHROPIC_API_KEY")?,
+//!     //     provider: "anthropic".to_string(),
+//!     //     ..Default::default()
+//!     // };
 //!
 //!     // Summarize content
 //!     let summarizer = Summarizer::with_defaults(client.clone());
@@ -44,56 +47,14 @@
 //!     Ok(())
 //! }
 //! ```
-//!
-//! ## Feature Modules
-//!
-//! ### Client
-//!
-//! The [`client`] module provides the core AI client with:
-//! - OpenAI API integration
-//! - Rate limiting and retry logic
-//! - Token counting and truncation
-//! - Support for OpenAI-compatible APIs
-//!
-//! ### Embeddings
-//!
-//! The [`embedding`] module generates vector embeddings for:
-//! - Document content
-//! - Batch processing
-//! - Similarity search
-//!
-//! ### Extraction
-//!
-//! The [`extraction`] module extracts structured data using:
-//! - Custom prompts
-//! - JSON schemas
-//! - Entity extraction
-//! - Classification
-//!
-//! ### Summarization
-//!
-//! The [`summary`] module generates summaries with:
-//! - Configurable lengths (short, medium, long)
-//! - Multiple styles (paragraph, bullet points, executive)
-//! - Headline generation
-//! - Multi-document summarization
 
 pub mod client;
-pub mod embedding;
 pub mod extraction;
+pub mod providers;
 pub mod summary;
 
 // Re-export main types from client
-pub use client::{
-    AiClient, AiClientConfig, AiClientError, BatchEmbeddingResponse, ChatResponse,
-    EmbeddingResponse,
-};
-
-// Re-export embedding types
-pub use embedding::{
-    similarity, BatchDocumentEmbedding, DocumentEmbedding, EmbeddingConfig, EmbeddingError,
-    EmbeddingGenerator, DEFAULT_EMBEDDING_MODEL, MAX_BATCH_SIZE, MAX_EMBEDDING_TOKENS,
-};
+pub use client::{AiClient, AiClientConfig, AiClientError, ChatResponse};
 
 // Re-export extraction types
 pub use extraction::{
@@ -116,9 +77,6 @@ pub enum AiError {
     #[error("Client error: {0}")]
     Client(#[from] AiClientError),
 
-    #[error("Embedding error: {0}")]
-    Embedding(#[from] EmbeddingError),
-
     #[error("Extraction error: {0}")]
     Extraction(#[from] ExtractionError),
 
@@ -128,10 +86,9 @@ pub enum AiError {
 
 /// Unified AI service providing all AI capabilities
 ///
-/// This struct combines embeddings, extraction, and summarization into a single service.
+/// This struct combines extraction and summarization into a single service.
 pub struct AiService {
     client: Arc<AiClient>,
-    embedder: Option<EmbeddingGenerator>,
     extractor: Option<AiExtractor>,
     summarizer: Option<Summarizer>,
 }
@@ -140,7 +97,6 @@ impl AiService {
     /// Create a new AI service with all features enabled
     pub fn new(client: Arc<AiClient>) -> Self {
         Self {
-            embedder: Some(EmbeddingGenerator::with_defaults(client.clone())),
             extractor: Some(AiExtractor::with_defaults(client.clone())),
             summarizer: Some(Summarizer::with_defaults(client.clone())),
             client,
@@ -151,22 +107,9 @@ impl AiService {
     pub fn minimal(client: Arc<AiClient>) -> Self {
         Self {
             client,
-            embedder: None,
             extractor: None,
             summarizer: None,
         }
-    }
-
-    /// Enable embeddings with default config
-    pub fn with_embeddings(mut self) -> Self {
-        self.embedder = Some(EmbeddingGenerator::with_defaults(self.client.clone()));
-        self
-    }
-
-    /// Enable embeddings with custom config
-    pub fn with_embedding_config(mut self, config: EmbeddingConfig) -> Self {
-        self.embedder = Some(EmbeddingGenerator::new(self.client.clone(), config));
-        self
     }
 
     /// Enable extraction with default config
@@ -198,11 +141,6 @@ impl AiService {
         &self.client
     }
 
-    /// Get the embedding generator (if enabled)
-    pub fn embedder(&self) -> Option<&EmbeddingGenerator> {
-        self.embedder.as_ref()
-    }
-
     /// Get the extractor (if enabled)
     pub fn extractor(&self) -> Option<&AiExtractor> {
         self.extractor.as_ref()
@@ -211,26 +149,6 @@ impl AiService {
     /// Get the summarizer (if enabled)
     pub fn summarizer(&self) -> Option<&Summarizer> {
         self.summarizer.as_ref()
-    }
-
-    /// Generate an embedding for text
-    pub async fn embed(&self, text: &str) -> Result<DocumentEmbedding, AiError> {
-        let embedder = self
-            .embedder
-            .as_ref()
-            .ok_or_else(|| AiError::Embedding(EmbeddingError::Config("Embeddings not enabled".to_string())))?;
-
-        embedder.embed(text).await.map_err(AiError::from)
-    }
-
-    /// Generate embeddings for multiple texts
-    pub async fn embed_batch(&self, texts: &[String]) -> Result<BatchDocumentEmbedding, AiError> {
-        let embedder = self
-            .embedder
-            .as_ref()
-            .ok_or_else(|| AiError::Embedding(EmbeddingError::Config("Embeddings not enabled".to_string())))?;
-
-        embedder.embed_batch(texts).await.map_err(AiError::from)
     }
 
     /// Extract data using a custom prompt
@@ -313,7 +231,6 @@ mod tests {
         let client = create_test_client();
         let service = AiService::new(client);
 
-        assert!(service.embedder().is_some());
         assert!(service.extractor().is_some());
         assert!(service.summarizer().is_some());
     }
@@ -323,7 +240,6 @@ mod tests {
         let client = create_test_client();
         let service = AiService::minimal(client);
 
-        assert!(service.embedder().is_none());
         assert!(service.extractor().is_none());
         assert!(service.summarizer().is_none());
     }
@@ -331,11 +247,8 @@ mod tests {
     #[test]
     fn test_ai_service_builder() {
         let client = create_test_client();
-        let service = AiService::minimal(client)
-            .with_embeddings()
-            .with_summarization();
+        let service = AiService::minimal(client).with_summarization();
 
-        assert!(service.embedder().is_some());
         assert!(service.extractor().is_none());
         assert!(service.summarizer().is_some());
     }

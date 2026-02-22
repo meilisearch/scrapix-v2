@@ -19,6 +19,9 @@ anyhow = { workspace = true }
 # OpenAI client
 async-openai = { workspace = true }
 
+# HTTP client for non-OpenAI providers
+reqwest = { workspace = true }
+
 # Token counting
 tiktoken-rs = { workspace = true }
 

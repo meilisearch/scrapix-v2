@@ -16,7 +16,7 @@ use thiserror::Error;
 use tracing::{debug, instrument};
 
 /// Default model for extraction
-pub const DEFAULT_EXTRACTION_MODEL: &str = "gpt-4o-mini";
+pub const DEFAULT_EXTRACTION_MODEL: &str = "gpt-5-nano";
 
 /// Maximum tokens to reserve for the response
 pub const DEFAULT_MAX_RESPONSE_TOKENS: u32 = 2048;

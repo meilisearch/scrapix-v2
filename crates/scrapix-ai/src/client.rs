@@ -1,19 +1,15 @@
-//! OpenAI/LLM client with rate limiting and retry logic
+//! Multi-provider LLM client with rate limiting and retry logic
 //!
-//! This module provides a wrapper around the OpenAI API client with:
+//! This module provides a provider-agnostic AI client with:
+//! - Support for OpenAI, Anthropic, Gemini, and Mistral
 //! - Automatic rate limiting
 //! - Exponential backoff retry logic
-//! - Token counting and budget management
-//! - Support for multiple models
+//! - Token counting and truncation
 
-use async_openai::{
-    config::OpenAIConfig,
-    types::{
-        ChatCompletionRequestMessage, ChatCompletionRequestSystemMessageArgs,
-        ChatCompletionRequestUserMessageArgs, CreateChatCompletionRequestArgs,
-        CreateEmbeddingRequestArgs, EmbeddingInput,
-    },
-    Client as OpenAIClient,
+use crate::providers::{
+    anthropic::AnthropicProvider, gemini::GeminiProvider, mistral::MistralProvider,
+    openai::OpenAiProvider, ChatResponse as ProviderChatResponse, LlmProvider, Message,
+    MessageRole,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -55,14 +51,18 @@ pub enum AiClientError {
 /// Configuration for the AI client
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiClientConfig {
-    /// OpenAI API key (or compatible API key)
+    /// API key for the selected provider
     pub api_key: String,
+
+    /// Provider name: "openai", "anthropic", "gemini", "mistral"
+    #[serde(default = "default_provider")]
+    pub provider: String,
 
     /// Base URL for API (for OpenAI-compatible APIs)
     #[serde(default)]
     pub base_url: Option<String>,
 
-    /// Organization ID (optional)
+    /// Organization ID (optional, OpenAI only)
     #[serde(default)]
     pub org_id: Option<String>,
 
@@ -83,6 +83,9 @@ pub struct AiClientConfig {
     pub timeout_ms: u64,
 }
 
+fn default_provider() -> String {
+    "openai".to_string()
+}
 fn default_max_concurrent() -> usize {
     10
 }
@@ -100,6 +103,7 @@ impl Default for AiClientConfig {
     fn default() -> Self {
         Self {
             api_key: String::new(),
+            provider: default_provider(),
             base_url: None,
             org_id: None,
             max_concurrent_requests: default_max_concurrent(),
@@ -132,35 +136,22 @@ pub struct ChatResponse {
     pub finish_reason: Option<String>,
 }
 
-/// Response from an embedding request
-#[derive(Debug, Clone)]
-pub struct EmbeddingResponse {
-    /// The embedding vector
-    pub embedding: Vec<f32>,
-
-    /// Model used for embedding
-    pub model: String,
-
-    /// Number of tokens in the input
-    pub tokens_used: u32,
-}
-
-/// Batch embedding response
-#[derive(Debug, Clone)]
-pub struct BatchEmbeddingResponse {
-    /// The embedding vectors (one per input)
-    pub embeddings: Vec<Vec<f32>>,
-
-    /// Model used for embedding
-    pub model: String,
-
-    /// Total tokens used
-    pub total_tokens: u32,
+impl From<ProviderChatResponse> for ChatResponse {
+    fn from(r: ProviderChatResponse) -> Self {
+        Self {
+            content: r.content,
+            model: r.model,
+            prompt_tokens: r.prompt_tokens,
+            completion_tokens: r.completion_tokens,
+            total_tokens: r.total_tokens,
+            finish_reason: r.finish_reason,
+        }
+    }
 }
 
 /// AI client wrapper with rate limiting and retries
 pub struct AiClient {
-    client: OpenAIClient<OpenAIConfig>,
+    provider: Box<dyn LlmProvider>,
     config: AiClientConfig,
     semaphore: Arc<Semaphore>,
 }
@@ -172,33 +163,61 @@ impl AiClient {
             return Err(AiClientError::Config("API key is required".to_string()));
         }
 
-        let mut openai_config = OpenAIConfig::new().with_api_key(&config.api_key);
+        let provider: Box<dyn LlmProvider> = match config.provider.as_str() {
+            "openai" => Box::new(OpenAiProvider::new(
+                &config.api_key,
+                config.base_url.as_deref(),
+            )),
+            "anthropic" => Box::new(AnthropicProvider::new(&config.api_key)),
+            "gemini" => Box::new(GeminiProvider::new(&config.api_key)),
+            "mistral" => Box::new(MistralProvider::new(&config.api_key)),
+            other => {
+                return Err(AiClientError::Config(format!(
+                    "Unknown provider '{}'. Supported: openai, anthropic, gemini, mistral",
+                    other
+                )));
+            }
+        };
 
-        if let Some(ref base_url) = config.base_url {
-            openai_config = openai_config.with_api_base(base_url);
-        }
-
-        if let Some(ref org_id) = config.org_id {
-            openai_config = openai_config.with_org_id(org_id);
-        }
-
-        let client = OpenAIClient::with_config(openai_config);
         let semaphore = Arc::new(Semaphore::new(config.max_concurrent_requests));
 
         Ok(Self {
-            client,
+            provider,
             config,
             semaphore,
         })
     }
 
-    /// Create a client from environment variables
+    /// Create a client from environment variables.
+    ///
+    /// Reads `AI_PROVIDER` (default: "openai") and the corresponding API key:
+    /// - openai: `OPENAI_API_KEY`
+    /// - anthropic: `ANTHROPIC_API_KEY`
+    /// - gemini: `GOOGLE_GEMINI_API_KEY`
+    /// - mistral: `MISTRAL_API_KEY`
     pub fn from_env() -> Result<Self, AiClientError> {
-        let api_key = std::env::var("OPENAI_API_KEY")
-            .map_err(|_| AiClientError::Config("OPENAI_API_KEY environment variable not set".to_string()))?;
+        let provider = std::env::var("AI_PROVIDER").unwrap_or_else(|_| "openai".to_string());
+
+        let api_key = match provider.as_str() {
+            "openai" => std::env::var("OPENAI_API_KEY")
+                .map_err(|_| AiClientError::Config("OPENAI_API_KEY not set".to_string()))?,
+            "anthropic" => std::env::var("ANTHROPIC_API_KEY")
+                .map_err(|_| AiClientError::Config("ANTHROPIC_API_KEY not set".to_string()))?,
+            "gemini" => std::env::var("GOOGLE_GEMINI_API_KEY")
+                .map_err(|_| AiClientError::Config("GOOGLE_GEMINI_API_KEY not set".to_string()))?,
+            "mistral" => std::env::var("MISTRAL_API_KEY")
+                .map_err(|_| AiClientError::Config("MISTRAL_API_KEY not set".to_string()))?,
+            other => {
+                return Err(AiClientError::Config(format!(
+                    "Unknown AI_PROVIDER '{}'. Supported: openai, anthropic, gemini, mistral",
+                    other
+                )));
+            }
+        };
 
         let config = AiClientConfig {
             api_key,
+            provider,
             base_url: std::env::var("OPENAI_API_BASE").ok(),
             org_id: std::env::var("OPENAI_ORG_ID").ok(),
             ..Default::default()
@@ -207,14 +226,13 @@ impl AiClient {
         Self::new(config)
     }
 
-    /// Get a tokenizer for a specific model
+    /// Get a tokenizer for a specific model.
+    /// Uses gpt-4 tokenizer as a reasonable approximation for all models.
     pub fn get_tokenizer(model: &str) -> Result<CoreBPE, AiClientError> {
-        // Map model names to tiktoken models
         let tiktoken_model = match model {
-            m if m.starts_with("gpt-4") => "gpt-4",
+            m if m.starts_with("gpt-4") || m.starts_with("gpt-5") => "gpt-4",
             m if m.starts_with("gpt-3.5") => "gpt-3.5-turbo",
-            m if m.contains("embedding") => "text-embedding-ada-002",
-            _ => "gpt-4", // Default to gpt-4 tokenizer
+            _ => "gpt-4", // Default to gpt-4 tokenizer for non-OpenAI models
         };
 
         get_bpe_from_model(tiktoken_model)
@@ -236,7 +254,6 @@ impl AiClient {
             return Ok(text.to_string());
         }
 
-        // Truncate tokens and decode
         let truncated_tokens: Vec<u32> = tokens.into_iter().take(max_tokens).collect();
         bpe.decode(truncated_tokens)
             .map_err(|e| AiClientError::TokenizerError(e.to_string()))
@@ -246,7 +263,7 @@ impl AiClient {
     #[instrument(skip(self, messages), fields(model = %model))]
     pub async fn chat(
         &self,
-        messages: Vec<ChatCompletionRequestMessage>,
+        messages: Vec<Message>,
         model: &str,
         max_tokens: Option<u32>,
         temperature: Option<f32>,
@@ -259,19 +276,21 @@ impl AiClient {
         while attempt < self.config.max_retries {
             attempt += 1;
 
-            match self.do_chat(&messages, model, max_tokens, temperature).await {
-                Ok(response) => return Ok(response),
+            match self
+                .provider
+                .chat(messages.clone(), model, max_tokens, temperature)
+                .await
+            {
+                Ok(response) => return Ok(response.into()),
                 Err(e) => {
                     warn!(attempt, error = %e, "Chat request failed");
 
-                    // Check if retryable
                     if !Self::is_retryable(&e) {
                         return Err(e);
                     }
 
                     last_error = Some(e);
 
-                    // Exponential backoff
                     let delay = self.config.retry_delay_ms * 2u64.pow(attempt - 1);
                     debug!(delay_ms = delay, "Retrying after delay");
                     sleep(Duration::from_millis(delay)).await;
@@ -280,53 +299,6 @@ impl AiClient {
         }
 
         Err(last_error.unwrap_or(AiClientError::MaxRetriesExceeded(self.config.max_retries)))
-    }
-
-    async fn do_chat(
-        &self,
-        messages: &[ChatCompletionRequestMessage],
-        model: &str,
-        max_tokens: Option<u32>,
-        temperature: Option<f32>,
-    ) -> Result<ChatResponse, AiClientError> {
-        let mut request_builder = CreateChatCompletionRequestArgs::default();
-        request_builder.model(model).messages(messages.to_vec());
-
-        if let Some(tokens) = max_tokens {
-            request_builder.max_tokens(tokens);
-        }
-
-        if let Some(temp) = temperature {
-            request_builder.temperature(temp);
-        }
-
-        let request = request_builder
-            .build()
-            .map_err(|e| AiClientError::Config(e.to_string()))?;
-
-        let response = self.client.chat().create(request).await?;
-
-        let choice = response
-            .choices
-            .first()
-            .ok_or(AiClientError::EmptyResponse)?;
-
-        let content = choice
-            .message
-            .content
-            .clone()
-            .unwrap_or_default();
-
-        let usage = response.usage.as_ref();
-
-        Ok(ChatResponse {
-            content,
-            model: response.model,
-            prompt_tokens: usage.map(|u| u.prompt_tokens).unwrap_or(0),
-            completion_tokens: usage.map(|u| u.completion_tokens).unwrap_or(0),
-            total_tokens: usage.map(|u| u.total_tokens).unwrap_or(0),
-            finish_reason: choice.finish_reason.as_ref().map(|r| format!("{:?}", r)),
-        })
     }
 
     /// Simple chat with system and user message
@@ -338,164 +310,17 @@ impl AiClient {
         max_tokens: Option<u32>,
     ) -> Result<ChatResponse, AiClientError> {
         let messages = vec![
-            ChatCompletionRequestMessage::System(
-                ChatCompletionRequestSystemMessageArgs::default()
-                    .content(system_prompt)
-                    .build()
-                    .map_err(|e| AiClientError::Config(e.to_string()))?,
-            ),
-            ChatCompletionRequestMessage::User(
-                ChatCompletionRequestUserMessageArgs::default()
-                    .content(user_message)
-                    .build()
-                    .map_err(|e| AiClientError::Config(e.to_string()))?,
-            ),
+            Message {
+                role: MessageRole::System,
+                content: system_prompt.to_string(),
+            },
+            Message {
+                role: MessageRole::User,
+                content: user_message.to_string(),
+            },
         ];
 
         self.chat(messages, model, max_tokens, None).await
-    }
-
-    /// Generate embeddings for a single text
-    #[instrument(skip(self, text), fields(model = %model, text_len = text.len()))]
-    pub async fn embed(
-        &self,
-        text: &str,
-        model: &str,
-        dimensions: Option<u32>,
-    ) -> Result<EmbeddingResponse, AiClientError> {
-        let _permit = self.semaphore.acquire().await.unwrap();
-
-        let mut attempt = 0;
-        let mut last_error: Option<AiClientError> = None;
-
-        while attempt < self.config.max_retries {
-            attempt += 1;
-
-            match self.do_embed(text, model, dimensions).await {
-                Ok(response) => return Ok(response),
-                Err(e) => {
-                    warn!(attempt, error = %e, "Embedding request failed");
-
-                    if !Self::is_retryable(&e) {
-                        return Err(e);
-                    }
-
-                    last_error = Some(e);
-
-                    let delay = self.config.retry_delay_ms * 2u64.pow(attempt - 1);
-                    debug!(delay_ms = delay, "Retrying after delay");
-                    sleep(Duration::from_millis(delay)).await;
-                }
-            }
-        }
-
-        Err(last_error.unwrap_or(AiClientError::MaxRetriesExceeded(self.config.max_retries)))
-    }
-
-    async fn do_embed(
-        &self,
-        text: &str,
-        model: &str,
-        dimensions: Option<u32>,
-    ) -> Result<EmbeddingResponse, AiClientError> {
-        let mut request_builder = CreateEmbeddingRequestArgs::default();
-        request_builder
-            .model(model)
-            .input(EmbeddingInput::String(text.to_string()));
-
-        if let Some(dims) = dimensions {
-            request_builder.dimensions(dims);
-        }
-
-        let request = request_builder
-            .build()
-            .map_err(|e| AiClientError::Config(e.to_string()))?;
-
-        let response = self.client.embeddings().create(request).await?;
-
-        let embedding_data = response
-            .data
-            .first()
-            .ok_or(AiClientError::EmptyResponse)?;
-
-        Ok(EmbeddingResponse {
-            embedding: embedding_data.embedding.clone(),
-            model: response.model,
-            tokens_used: response.usage.prompt_tokens,
-        })
-    }
-
-    /// Generate embeddings for multiple texts in a batch
-    #[instrument(skip(self, texts), fields(model = %model, batch_size = texts.len()))]
-    pub async fn embed_batch(
-        &self,
-        texts: &[String],
-        model: &str,
-        dimensions: Option<u32>,
-    ) -> Result<BatchEmbeddingResponse, AiClientError> {
-        let _permit = self.semaphore.acquire().await.unwrap();
-
-        let mut attempt = 0;
-        let mut last_error: Option<AiClientError> = None;
-
-        while attempt < self.config.max_retries {
-            attempt += 1;
-
-            match self.do_embed_batch(texts, model, dimensions).await {
-                Ok(response) => return Ok(response),
-                Err(e) => {
-                    warn!(attempt, error = %e, "Batch embedding request failed");
-
-                    if !Self::is_retryable(&e) {
-                        return Err(e);
-                    }
-
-                    last_error = Some(e);
-
-                    let delay = self.config.retry_delay_ms * 2u64.pow(attempt - 1);
-                    debug!(delay_ms = delay, "Retrying after delay");
-                    sleep(Duration::from_millis(delay)).await;
-                }
-            }
-        }
-
-        Err(last_error.unwrap_or(AiClientError::MaxRetriesExceeded(self.config.max_retries)))
-    }
-
-    async fn do_embed_batch(
-        &self,
-        texts: &[String],
-        model: &str,
-        dimensions: Option<u32>,
-    ) -> Result<BatchEmbeddingResponse, AiClientError> {
-        let mut request_builder = CreateEmbeddingRequestArgs::default();
-        request_builder
-            .model(model)
-            .input(EmbeddingInput::StringArray(texts.to_vec()));
-
-        if let Some(dims) = dimensions {
-            request_builder.dimensions(dims);
-        }
-
-        let request = request_builder
-            .build()
-            .map_err(|e| AiClientError::Config(e.to_string()))?;
-
-        let response = self.client.embeddings().create(request).await?;
-
-        // Sort by index to maintain order
-        let mut embeddings: Vec<(usize, Vec<f32>)> = response
-            .data
-            .into_iter()
-            .map(|e| (e.index as usize, e.embedding))
-            .collect();
-        embeddings.sort_by_key(|(idx, _)| *idx);
-
-        Ok(BatchEmbeddingResponse {
-            embeddings: embeddings.into_iter().map(|(_, e)| e).collect(),
-            model: response.model,
-            total_tokens: response.usage.prompt_tokens,
-        })
     }
 
     /// Check if an error is retryable
@@ -517,7 +342,7 @@ mod tests {
         let text = "Hello, world! This is a test.";
         let count = AiClient::count_tokens(text, "gpt-4").unwrap();
         assert!(count > 0);
-        assert!(count < 20); // Should be around 8 tokens
+        assert!(count < 20);
     }
 
     #[test]
@@ -535,6 +360,7 @@ mod tests {
     #[test]
     fn test_config_defaults() {
         let config = AiClientConfig::default();
+        assert_eq!(config.provider, "openai");
         assert_eq!(config.max_concurrent_requests, 10);
         assert_eq!(config.max_retries, 3);
         assert_eq!(config.retry_delay_ms, 1000);
@@ -556,5 +382,40 @@ mod tests {
         };
         let result = AiClient::new(config);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_unknown_provider() {
+        let config = AiClientConfig {
+            api_key: "test-key".to_string(),
+            provider: "unknown".to_string(),
+            ..Default::default()
+        };
+        let result = AiClient::new(config);
+        assert!(matches!(result, Err(AiClientError::Config(_))));
+    }
+
+    #[test]
+    fn test_all_providers_create() {
+        for provider in &["openai", "anthropic", "gemini", "mistral"] {
+            let config = AiClientConfig {
+                api_key: "test-key".to_string(),
+                provider: provider.to_string(),
+                ..Default::default()
+            };
+            let result = AiClient::new(config);
+            assert!(result.is_ok(), "Failed to create provider: {}", provider);
+        }
+    }
+
+    #[test]
+    fn test_tokenizer_for_non_openai_models() {
+        // All non-OpenAI models should fall back to gpt-4 tokenizer
+        let count = AiClient::count_tokens("Hello world", "claude-sonnet-4-6").unwrap();
+        assert!(count > 0);
+        let count = AiClient::count_tokens("Hello world", "gemini-3").unwrap();
+        assert!(count > 0);
+        let count = AiClient::count_tokens("Hello world", "mistral-3").unwrap();
+        assert!(count > 0);
     }
 }
