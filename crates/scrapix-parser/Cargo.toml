@@ -19,6 +19,7 @@ anyhow = { workspace = true }
 # HTML parsing
 scraper = { workspace = true }
 html5ever = { workspace = true }
+ego-tree = "0.10.0"
 
 # URL handling
 url = { workspace = true }

@@ -47,6 +47,7 @@
 pub mod html;
 pub mod language;
 pub mod markdown;
+pub mod minihtml;
 pub mod readability;
 
 // Re-exports for convenience
@@ -58,6 +59,7 @@ pub use markdown::{
     html_to_main_content_markdown, html_to_markdown, html_to_markdown_with_config,
     markdown_to_text, MarkdownConfig,
 };
+pub use minihtml::{html_to_main_content_minihtml, html_to_minihtml};
 pub use readability::{
     extract_content, extract_content_from_dom, extract_content_with_config, ReadabilityConfig,
 };

@@ -68,7 +68,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use scrapix_core::{CrawlConfig, CrawlUrl, JobState, JobStatus};
 use scrapix_extractor::{Extractor, ExtractedMetadata};
-use scrapix_parser::{extract_content, html_to_markdown, html_to_main_content_markdown, detect_language_info};
+use scrapix_parser::{extract_content, html_to_markdown, html_to_main_content_markdown, html_to_minihtml, html_to_main_content_minihtml, detect_language_info};
 use scrapix_queue::{topic_names, ConsumerBuilder, CrawlEvent, KafkaProducer, ProducerBuilder, UrlMessage};
 use scrapix_storage::clickhouse::{
     ClickHouseStorage, CrawlEvent as ClickHouseCrawlEvent, CrawlEventBatcher,
@@ -1016,7 +1016,15 @@ async fn scrape_url(
         success: true,
         url: final_url,
         markdown,
-        html: None, // TODO: cleaned HTML (content only, no boilerplate)
+        html: if formats.contains(&ScrapeFormat::Html) {
+            if request.only_main_content {
+                Some(html_to_main_content_minihtml(&raw_html))
+            } else {
+                Some(html_to_minihtml(&raw_html))
+            }
+        } else {
+            None
+        },
         raw_html: return_raw_html,
         content,
         metadata,
