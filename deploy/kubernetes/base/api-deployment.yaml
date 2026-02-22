@@ -37,13 +37,6 @@ spec:
               value: "0.0.0.0"
             - name: PORT
               value: "8080"
-            - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: scrapix-secrets
-                  key: POSTGRES_PASSWORD
-            - name: DATABASE_URL
-              value: "postgres://scrapix:$(POSTGRES_PASSWORD)@postgres:5432/scrapix"
           resources:
             requests:
               cpu: "100m"
