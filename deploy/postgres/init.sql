@@ -105,3 +105,31 @@ CREATE TRIGGER trg_users_updated_at
 CREATE TRIGGER trg_accounts_updated_at
     BEFORE UPDATE ON accounts
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- ============================================================================
+-- Saved Crawl Configs (with optional cron scheduling)
+-- ============================================================================
+
+CREATE TABLE crawl_configs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id UUID NOT NULL REFERENCES accounts (id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description TEXT,
+    config JSONB NOT NULL,
+    cron_expression TEXT,
+    cron_enabled BOOLEAN NOT NULL DEFAULT false,
+    last_run_at TIMESTAMPTZ,
+    next_run_at TIMESTAMPTZ,
+    last_job_id TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (account_id, name)
+);
+
+CREATE INDEX idx_crawl_configs_account_id ON crawl_configs (account_id);
+CREATE INDEX idx_crawl_configs_next_run ON crawl_configs (next_run_at)
+    WHERE cron_enabled = true AND cron_expression IS NOT NULL;
+
+CREATE TRIGGER trg_crawl_configs_updated_at
+    BEFORE UPDATE ON crawl_configs
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();

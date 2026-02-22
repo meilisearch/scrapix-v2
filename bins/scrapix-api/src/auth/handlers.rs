@@ -139,7 +139,7 @@ fn err(status: StatusCode, msg: &str, code: &str) -> ApiError {
 }
 
 /// Get the user's account_id via account_members
-async fn get_user_account_id(
+pub(crate) async fn get_user_account_id(
     pool: &sqlx::PgPool,
     user_id: uuid::Uuid,
 ) -> Result<uuid::Uuid, StatusCode> {
@@ -171,12 +171,11 @@ async fn signup(
     }
 
     // Check if email already taken
-    let exists: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)")
-            .bind(&req.email)
-            .fetch_one(&state.pool)
-            .await
-            .unwrap_or(true);
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)")
+        .bind(&req.email)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(true);
 
     if exists {
         return Err(err(
@@ -219,12 +218,7 @@ async fn signup(
         )
     })?;
 
-    let account_name = req
-        .full_name
-        .as_deref()
-        .unwrap_or(&req.email)
-        .to_string()
-        + "'s Account";
+    let account_name = req.full_name.as_deref().unwrap_or(&req.email).to_string() + "'s Account";
 
     let account_id: uuid::Uuid =
         sqlx::query_scalar("INSERT INTO accounts (name) VALUES ($1) RETURNING id")
@@ -371,7 +365,12 @@ async fn login(
 
 async fn logout(jar: CookieJar) -> (CookieJar, Json<MessageResponse>) {
     let jar = jar.add(clear_session_cookie());
-    (jar, Json(MessageResponse { message: "Logged out".to_string() }))
+    (
+        jar,
+        Json(MessageResponse {
+            message: "Logged out".to_string(),
+        }),
+    )
 }
 
 // ============================================================================
@@ -440,7 +439,9 @@ async fn update_me(
                 )
             })?;
     }
-    Ok(Json(MessageResponse { message: "Updated".to_string() }))
+    Ok(Json(MessageResponse {
+        message: "Updated".to_string(),
+    }))
 }
 
 async fn get_account(
@@ -496,7 +497,9 @@ async fn update_account(
                 )
             })?;
     }
-    Ok(Json(MessageResponse { message: "Updated".to_string() }))
+    Ok(Json(MessageResponse {
+        message: "Updated".to_string(),
+    }))
 }
 
 async fn list_api_keys(
@@ -612,23 +615,26 @@ async fn revoke_api_key(
         .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
 
     let key_uuid: uuid::Uuid = key_id.parse().map_err(|_| {
-        err(StatusCode::BAD_REQUEST, "Invalid key ID", "validation_error")
-    })?;
-
-    let result = sqlx::query(
-        "UPDATE api_keys SET active = false WHERE id = $1 AND account_id = $2",
-    )
-    .bind(key_uuid)
-    .bind(account_id)
-    .execute(&state.pool)
-    .await
-    .map_err(|_| {
         err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Failed to revoke key",
-            "internal_error",
+            StatusCode::BAD_REQUEST,
+            "Invalid key ID",
+            "validation_error",
         )
     })?;
+
+    let result =
+        sqlx::query("UPDATE api_keys SET active = false WHERE id = $1 AND account_id = $2")
+            .bind(key_uuid)
+            .bind(account_id)
+            .execute(&state.pool)
+            .await
+            .map_err(|_| {
+                err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Failed to revoke key",
+                    "internal_error",
+                )
+            })?;
 
     if result.rows_affected() == 0 {
         return Err(err(StatusCode::NOT_FOUND, "Key not found", "not_found"));

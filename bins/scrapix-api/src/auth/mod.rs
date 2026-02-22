@@ -8,6 +8,7 @@ mod middleware;
 mod password;
 
 pub use handlers::auth_routes;
+pub(crate) use handlers::get_user_account_id;
 pub use handlers::session_routes;
 pub use middleware::validate_api_key;
 pub use middleware::validate_api_key_or_session;

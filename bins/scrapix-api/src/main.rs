@@ -41,6 +41,7 @@ use std::time::Duration;
 
 mod analytics;
 mod auth;
+mod configs;
 
 use axum::{
     extract::{
@@ -62,19 +63,27 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
-use tower_http::{cors::{AllowOrigin, CorsLayer}, trace::TraceLayer};
+use tower_http::{
+    cors::{AllowOrigin, CorsLayer},
+    trace::TraceLayer,
+};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+use scrapix_ai::{AiClient, AiService, FieldDefinition as AiFieldDefinition, SchemaBuilder};
 use scrapix_core::{CrawlConfig, CrawlUrl, JobState, JobStatus};
 use scrapix_crawler::{HttpFetcher, HttpFetcherBuilder, RobotsCache, RobotsConfig};
-use scrapix_ai::{AiClient, AiService, FieldDefinition as AiFieldDefinition, SchemaBuilder};
 use scrapix_extractor::{
-    Extractor, ExtractedMetadata, ExtractedSchema, ContentBlock,
-    SelectorExtractor, SelectorDefinition,
+    ContentBlock, ExtractedMetadata, ExtractedSchema, Extractor, SelectorDefinition,
+    SelectorExtractor,
 };
-use scrapix_parser::{extract_content, html_to_markdown, html_to_main_content_markdown, html_to_minihtml, html_to_main_content_minihtml, detect_language_info};
-use scrapix_queue::{topic_names, ConsumerBuilder, CrawlEvent, KafkaProducer, ProducerBuilder, UrlMessage};
+use scrapix_parser::{
+    detect_language_info, extract_content, html_to_main_content_markdown,
+    html_to_main_content_minihtml, html_to_markdown, html_to_minihtml,
+};
+use scrapix_queue::{
+    topic_names, ConsumerBuilder, CrawlEvent, KafkaProducer, ProducerBuilder, UrlMessage,
+};
 use scrapix_storage::clickhouse::{
     AiUsageBatcher, AiUsageClickHouseEvent, ClickHouseStorage, CrawlEvent as ClickHouseCrawlEvent,
     CrawlEventBatcher,
@@ -102,7 +111,11 @@ struct Args {
     database_url: Option<String>,
 
     /// JWT secret for session tokens
-    #[arg(long, env = "JWT_SECRET", default_value = "dev-jwt-secret-change-in-production")]
+    #[arg(
+        long,
+        env = "JWT_SECRET",
+        default_value = "dev-jwt-secret-change-in-production"
+    )]
     jwt_secret: String,
 
     /// Maximum jobs to keep in memory
@@ -140,6 +153,8 @@ struct AppState {
     fetcher: Arc<HttpFetcher>,
     /// Optional AI service for /scrape enrichment
     ai_service: Option<Arc<AiService>>,
+    /// PostgreSQL connection pool (for saved configs, cron scheduling)
+    db_pool: Option<sqlx::PgPool>,
 }
 
 #[derive(Debug, Clone)]
@@ -155,6 +170,7 @@ impl AppState {
         ai_usage_batcher: Option<Arc<AiUsageBatcher>>,
         fetcher: Arc<HttpFetcher>,
         ai_service: Option<Arc<AiService>>,
+        db_pool: Option<sqlx::PgPool>,
     ) -> Self {
         let (event_tx, _) = broadcast::channel(1000);
         Self {
@@ -170,6 +186,7 @@ impl AppState {
             service_last_seen: RwLock::new(HashMap::new()),
             fetcher,
             ai_service,
+            db_pool,
         }
     }
 
@@ -237,7 +254,9 @@ impl AppState {
         // Track last activity for idle-based completion detection
         {
             let now = std::time::Instant::now();
-            self.job_last_activity.write().insert(job_id.to_string(), now);
+            self.job_last_activity
+                .write()
+                .insert(job_id.to_string(), now);
 
             // Track which services are alive based on event type
             let service = match event {
@@ -264,7 +283,9 @@ impl AppState {
         }
 
         match event {
-            CrawlEvent::PageCrawled { url, duration_ms, .. } => {
+            CrawlEvent::PageCrawled {
+                url, duration_ms, ..
+            } => {
                 self.update_job(job_id, |j| {
                     j.pages_crawled += 1;
                     // Update crawl rate based on elapsed time
@@ -287,7 +308,12 @@ impl AppState {
                     counter.total_response_time_ms += *duration_ms as u64;
                 }
             }
-            CrawlEvent::PageFailed { url, error, retry_count, .. } => {
+            CrawlEvent::PageFailed {
+                url,
+                error,
+                retry_count,
+                ..
+            } => {
                 self.update_job(job_id, |j| {
                     j.errors += 1;
                 });
@@ -326,7 +352,12 @@ impl AppState {
                     j.documents_sent += 1;
                 });
             }
-            CrawlEvent::JobCompleted { pages_crawled, documents_indexed, duration_secs, .. } => {
+            CrawlEvent::JobCompleted {
+                pages_crawled,
+                documents_indexed,
+                duration_secs,
+                ..
+            } => {
                 self.update_job(job_id, |j| {
                     j.status = JobStatus::Completed;
                     j.pages_crawled = *pages_crawled;
@@ -342,8 +373,14 @@ impl AppState {
                 let swap_info = {
                     let jobs = self.jobs.read();
                     jobs.get(job_id).and_then(|j| {
-                        if let (Some(temp), Some(url)) = (&j.swap_temp_index, &j.swap_meilisearch_url) {
-                            Some((temp.clone(), url.clone(), j.swap_meilisearch_api_key.clone()))
+                        if let (Some(temp), Some(url)) =
+                            (&j.swap_temp_index, &j.swap_meilisearch_url)
+                        {
+                            Some((
+                                temp.clone(),
+                                url.clone(),
+                                j.swap_meilisearch_api_key.clone(),
+                            ))
                         } else {
                             None
                         }
@@ -352,11 +389,14 @@ impl AppState {
 
                 if let Some((temp_index, ms_url, ms_key)) = swap_info {
                     tokio::spawn(async move {
-                        if let Err(e) = scrapix_storage::meilisearch::MeilisearchStorage::cleanup_temp_index(
-                            &ms_url,
-                            ms_key.as_deref(),
-                            &temp_index,
-                        ).await {
+                        if let Err(e) =
+                            scrapix_storage::meilisearch::MeilisearchStorage::cleanup_temp_index(
+                                &ms_url,
+                                ms_key.as_deref(),
+                                &temp_index,
+                            )
+                            .await
+                        {
                             warn!(temp = %temp_index, error = %e, "Failed to cleanup temp index after job failure");
                         } else {
                             info!(temp = %temp_index, "Cleaned up temp index after job failure");
@@ -398,14 +438,10 @@ fn extract_status_code(error: &str) -> Option<u16> {
     static PATTERNS: OnceLock<Vec<regex::Regex>> = OnceLock::new();
     let patterns = PATTERNS.get_or_init(|| {
         // Common patterns: "404 Not Found", "HTTP 500", "status: 503"
-        [
-            r"^(\d{3})\s",
-            r"HTTP\s+(\d{3})",
-            r"status[:\s]+(\d{3})",
-        ]
-        .iter()
-        .filter_map(|p| regex::Regex::new(p).ok())
-        .collect()
+        [r"^(\d{3})\s", r"HTTP\s+(\d{3})", r"status[:\s]+(\d{3})"]
+            .iter()
+            .filter_map(|p| regex::Regex::new(p).ok())
+            .collect()
     });
 
     for re in patterns {
@@ -423,7 +459,14 @@ fn extract_status_code(error: &str) -> Option<u16> {
 /// Convert a Kafka CrawlEvent to a ClickHouse CrawlEvent for analytics persistence
 fn kafka_event_to_clickhouse(job_id: &str, event: &CrawlEvent) -> Option<ClickHouseCrawlEvent> {
     match event {
-        CrawlEvent::PageCrawled { url, status, content_length, duration_ms, account_id, .. } => {
+        CrawlEvent::PageCrawled {
+            url,
+            status,
+            content_length,
+            duration_ms,
+            account_id,
+            ..
+        } => {
             let domain = extract_domain(url).unwrap_or_default();
             Some(ClickHouseCrawlEvent {
                 url: url.clone(),
@@ -443,7 +486,12 @@ fn kafka_event_to_clickhouse(job_id: &str, event: &CrawlEvent) -> Option<ClickHo
                 content_changed: false,
             })
         }
-        CrawlEvent::PageFailed { url, error, account_id, .. } => {
+        CrawlEvent::PageFailed {
+            url,
+            error,
+            account_id,
+            ..
+        } => {
             let domain = extract_domain(url).unwrap_or_default();
             let status_code = extract_status_code(error).unwrap_or(0);
             Some(ClickHouseCrawlEvent {
@@ -953,17 +1001,33 @@ async fn health_services(State(state): State<Arc<AppState>>) -> Json<ServiceHeal
         if let Some(last) = seen.get(name) {
             let ago = now.duration_since(*last).as_secs();
             if ago < 60 {
-                ServiceStatus { name: name.to_string(), status: "up".to_string(), last_seen_secs_ago: Some(ago) }
+                ServiceStatus {
+                    name: name.to_string(),
+                    status: "up".to_string(),
+                    last_seen_secs_ago: Some(ago),
+                }
             } else {
-                ServiceStatus { name: name.to_string(), status: "idle".to_string(), last_seen_secs_ago: Some(ago) }
+                ServiceStatus {
+                    name: name.to_string(),
+                    status: "idle".to_string(),
+                    last_seen_secs_ago: Some(ago),
+                }
             }
         } else {
-            ServiceStatus { name: name.to_string(), status: "down".to_string(), last_seen_secs_ago: None }
+            ServiceStatus {
+                name: name.to_string(),
+                status: "down".to_string(),
+                last_seen_secs_ago: None,
+            }
         }
     };
 
     let services = vec![
-        ServiceStatus { name: "api".to_string(), status: "up".to_string(), last_seen_secs_ago: Some(0) },
+        ServiceStatus {
+            name: "api".to_string(),
+            status: "up".to_string(),
+            last_seen_secs_ago: Some(0),
+        },
         ServiceStatus {
             name: "kafka".to_string(),
             status: if kafka_connected { "up" } else { "down" }.to_string(),
@@ -1038,9 +1102,8 @@ async fn scrape_url(
     let start_time = std::time::Instant::now();
 
     // Validate URL
-    let parsed_url = url::Url::parse(&request.url).map_err(|e| {
-        ApiError::new(&format!("Invalid URL: {}", e), "validation_error")
-    })?;
+    let parsed_url = url::Url::parse(&request.url)
+        .map_err(|e| ApiError::new(&format!("Invalid URL: {}", e), "validation_error"))?;
 
     // Only allow http/https
     if !matches!(parsed_url.scheme(), "http" | "https") {
@@ -1057,9 +1120,11 @@ async fn scrape_url(
 
     let raw_page = if request.headers.is_empty() {
         // Use the shared fetcher (connection pooling, DNS cache, retries)
-        state.fetcher.fetch(&crawl_url).await.map_err(|e| {
-            ApiError::new(&format!("Failed to fetch URL: {}", e), "fetch_error")
-        })?
+        state
+            .fetcher
+            .fetch(&crawl_url)
+            .await
+            .map_err(|e| ApiError::new(&format!("Failed to fetch URL: {}", e), "fetch_error"))?
     } else {
         // Build a one-off fetcher with custom headers
         let robots_config = RobotsConfig {
@@ -1067,16 +1132,26 @@ async fn scrape_url(
             ..Default::default()
         };
         let robots_cache = Arc::new(RobotsCache::new(robots_config).map_err(|e| {
-            ApiError::new(&format!("Failed to create robots cache: {}", e), "internal_error")
+            ApiError::new(
+                &format!("Failed to create robots cache: {}", e),
+                "internal_error",
+            )
         })?);
 
-        let mut builder = HttpFetcherBuilder::new()
-            .timeout(Duration::from_millis(request.timeout_ms));
+        let mut builder =
+            HttpFetcherBuilder::new().timeout(Duration::from_millis(request.timeout_ms));
 
         // Add custom headers (block sensitive headers to prevent injection attacks)
         const BLOCKED_HEADERS: &[&str] = &[
-            "host", "transfer-encoding", "content-length", "connection",
-            "upgrade", "proxy-authorization", "proxy-connection", "te", "trailer",
+            "host",
+            "transfer-encoding",
+            "content-length",
+            "connection",
+            "upgrade",
+            "proxy-authorization",
+            "proxy-connection",
+            "te",
+            "trailer",
         ];
         for (key, value) in &request.headers {
             let key_lower = key.to_lowercase();
@@ -1088,12 +1163,16 @@ async fn scrape_url(
         }
 
         let fetcher = builder.build(robots_cache).map_err(|e| {
-            ApiError::new(&format!("Failed to create HTTP client: {}", e), "internal_error")
+            ApiError::new(
+                &format!("Failed to create HTTP client: {}", e),
+                "internal_error",
+            )
         })?;
 
-        fetcher.fetch(&crawl_url).await.map_err(|e| {
-            ApiError::new(&format!("Failed to fetch URL: {}", e), "fetch_error")
-        })?
+        fetcher
+            .fetch(&crawl_url)
+            .await
+            .map_err(|e| ApiError::new(&format!("Failed to fetch URL: {}", e), "fetch_error"))?
     };
 
     let status_code = raw_page.status;
@@ -1175,9 +1254,7 @@ async fn scrape_url(
         .and_then(|r| r.metadata.clone())
         .map(ScrapeMetadata::from);
 
-    let schema = extraction_result
-        .as_ref()
-        .and_then(|r| r.schema.clone());
+    let schema = extraction_result.as_ref().and_then(|r| r.schema.clone());
 
     let blocks = extraction_result
         .as_ref()
@@ -1246,10 +1323,7 @@ async fn scrape_url(
     if let Some(ref ai_opts) = request.ai {
         if let Some(ref ai_service) = state.ai_service {
             // Use content or markdown as input text for AI
-            let ai_text = content
-                .as_deref()
-                .or(markdown.as_deref())
-                .unwrap_or("");
+            let ai_text = content.as_deref().or(markdown.as_deref()).unwrap_or("");
 
             if !ai_text.is_empty() {
                 // Run AI operations concurrently
@@ -1297,8 +1371,7 @@ async fn scrape_url(
                     }
                 };
 
-                let (ai_summary, ai_extract) =
-                    tokio::join!(summary_fut, extract_fut);
+                let (ai_summary, ai_extract) = tokio::join!(summary_fut, extract_fut);
 
                 if ai_summary.is_some() || ai_extract.is_some() {
                     ai_result = Some(AiResult {
@@ -1381,11 +1454,11 @@ fn extract_links_from_html(html: &str, base_url: &str) -> Vec<String> {
     urls
 }
 
-/// Create a new async crawl job
-async fn create_crawl(
-    State(state): State<Arc<AppState>>,
-    Json(config): Json<CrawlConfig>,
-) -> Result<Json<CreateCrawlResponse>, ApiError> {
+/// Core crawl creation logic, reusable from handler, trigger, and cron scheduler
+pub(crate) async fn do_create_crawl(
+    state: &Arc<AppState>,
+    config: CrawlConfig,
+) -> Result<CreateCrawlResponse, ApiError> {
     // Validate config
     if config.start_urls.is_empty() {
         return Err(ApiError::new(
@@ -1479,7 +1552,12 @@ async fn create_crawl(
         let crawl_url = CrawlUrl::seed(url);
         // Use pipeline_index_uid (temp index if replace_index, otherwise target)
         let msg = if has_patterns {
-            UrlMessage::with_patterns(crawl_url, &job_id, &pipeline_index_uid, url_patterns.clone())
+            UrlMessage::with_patterns(
+                crawl_url,
+                &job_id,
+                &pipeline_index_uid,
+                url_patterns.clone(),
+            )
         } else {
             UrlMessage::new(crawl_url, &job_id, &pipeline_index_uid)
         }
@@ -1524,9 +1602,21 @@ async fn create_crawl(
 
     // Update job state (write back config, start_urls, max_pages, swap metadata)
     let replace_index = config.replace_index;
-    let swap_temp = if replace_index { Some(pipeline_index_uid.clone()) } else { None };
-    let swap_url = if replace_index { Some(config.meilisearch.url.clone()) } else { None };
-    let swap_key = if replace_index { Some(config.meilisearch.api_key.clone()) } else { None };
+    let swap_temp = if replace_index {
+        Some(pipeline_index_uid.clone())
+    } else {
+        None
+    };
+    let swap_url = if replace_index {
+        Some(config.meilisearch.url.clone())
+    } else {
+        None
+    };
+    let swap_key = if replace_index {
+        Some(config.meilisearch.api_key.clone())
+    } else {
+        None
+    };
     state.update_job(&job_id, |j| {
         j.status = JobStatus::Running;
         j.start_urls = config.start_urls.clone();
@@ -1544,13 +1634,21 @@ async fn create_crawl(
         "Crawl job created successfully"
     );
 
-    Ok(Json(CreateCrawlResponse {
+    Ok(CreateCrawlResponse {
         job_id: job_id.clone(),
         status: "running".to_string(),
         index_uid: target_index_uid,
         start_urls_count: urls_published,
         message: format!("Crawl job started with {} seed URLs", urls_published),
-    }))
+    })
+}
+
+/// Create a new async crawl job
+async fn create_crawl(
+    State(state): State<Arc<AppState>>,
+    Json(config): Json<CrawlConfig>,
+) -> Result<Json<CreateCrawlResponse>, ApiError> {
+    Ok(Json(do_create_crawl(&state, config).await?))
 }
 
 /// Create a sync crawl job (waits for completion)
@@ -1559,7 +1657,7 @@ async fn create_crawl_sync(
     Json(config): Json<CrawlConfig>,
 ) -> Result<Json<JobStatusResponse>, ApiError> {
     // First create the async job
-    let response = create_crawl(State(state.clone()), Json(config)).await?;
+    let response = do_create_crawl(&state, config).await?;
     let job_id = response.job_id.clone();
 
     // Subscribe to events
@@ -1712,10 +1810,12 @@ async fn handle_stats(State(state): State<Arc<AppState>>) -> Json<SystemStatsRes
     };
 
     // Meilisearch status (we don't have direct access, just indicate availability from env)
-    let meilisearch = std::env::var("MEILISEARCH_URL").ok().map(|url| MeilisearchStats {
-        available: true,
-        url,
-    });
+    let meilisearch = std::env::var("MEILISEARCH_URL")
+        .ok()
+        .map(|url| MeilisearchStats {
+            available: true,
+            url,
+        });
 
     Json(SystemStatsResponse {
         meilisearch,
@@ -1746,11 +1846,7 @@ async fn handle_errors(
     let total_count = filtered.len();
 
     // Take last N errors (most recent)
-    let recent: Vec<ErrorRecord> = filtered
-        .into_iter()
-        .rev()
-        .take(params.last)
-        .collect();
+    let recent: Vec<ErrorRecord> = filtered.into_iter().rev().take(params.last).collect();
 
     // Compute status code distribution
     let mut by_status: HashMap<u16, u64> = HashMap::new();
@@ -1852,10 +1948,7 @@ enum WsClientMessage {
 #[serde(tag = "type", rename_all = "snake_case")]
 enum WsServerMessage {
     /// Job event notification
-    Event {
-        job_id: String,
-        event: CrawlEvent,
-    },
+    Event { job_id: String, event: CrawlEvent },
     /// Job status response
     Status {
         job_id: String,
@@ -1876,10 +1969,7 @@ enum WsServerMessage {
 // ============================================================================
 
 /// WebSocket upgrade handler for real-time events
-async fn ws_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_ws_connection(socket, state))
 }
 
@@ -1902,10 +1992,7 @@ async fn handle_ws_connection(socket: WebSocket, state: Arc<AppState>) {
                 Ok((job_id, event)) => {
                     // Only send if subscribed to this job
                     if subs.read().contains(&job_id) {
-                        let msg = WsServerMessage::Event {
-                            job_id,
-                            event,
-                        };
+                        let msg = WsServerMessage::Event { job_id, event };
                         if let Ok(json) = serde_json::to_string(&msg) {
                             if sender.send(Message::Text(json.into())).await.is_err() {
                                 break;
@@ -2149,7 +2236,10 @@ fn start_event_consumer(
                 info!("Event consumer shutting down");
                 break;
             }
-            match consumer.poll_one::<CrawlEvent>(Duration::from_millis(100)).await {
+            match consumer
+                .poll_one::<CrawlEvent>(Duration::from_millis(100))
+                .await
+            {
                 Ok(Some(event)) => {
                     // Extract job_id from event
                     let job_id = match &event {
@@ -2296,7 +2386,8 @@ async fn main() -> anyhow::Result<()> {
         respect_robots: false, // /scrape is user-directed, not a crawler
         ..Default::default()
     };
-    let robots_cache = Arc::new(RobotsCache::new(robots_config).expect("Failed to create robots cache"));
+    let robots_cache =
+        Arc::new(RobotsCache::new(robots_config).expect("Failed to create robots cache"));
     let fetcher = Arc::new(
         HttpFetcherBuilder::new()
             .with_dns_cache()
@@ -2310,7 +2401,8 @@ async fn main() -> anyhow::Result<()> {
     let (ai_service, ai_usage_rx) = if ai_usage_batcher.is_some() {
         match AiClient::from_env_with_tracking() {
             Ok((client, rx)) => {
-                let provider = std::env::var("AI_PROVIDER").unwrap_or_else(|_| "openai".to_string());
+                let provider =
+                    std::env::var("AI_PROVIDER").unwrap_or_else(|_| "openai".to_string());
                 info!(provider = %provider, "AI service initialized with usage tracking");
                 (Some(Arc::new(AiService::new(Arc::new(client)))), Some(rx))
             }
@@ -2322,7 +2414,8 @@ async fn main() -> anyhow::Result<()> {
     } else {
         match AiClient::from_env() {
             Ok(client) => {
-                let provider = std::env::var("AI_PROVIDER").unwrap_or_else(|_| "openai".to_string());
+                let provider =
+                    std::env::var("AI_PROVIDER").unwrap_or_else(|_| "openai".to_string());
                 info!(provider = %provider, "AI service initialized");
                 (Some(Arc::new(AiService::new(Arc::new(client)))), None)
             }
@@ -2337,7 +2430,16 @@ async fn main() -> anyhow::Result<()> {
     let config = AppConfig {
         max_jobs: args.max_jobs,
     };
-    let state = Arc::new(AppState::new(producer, config, clickhouse_batcher.clone(), ai_usage_batcher.clone(), fetcher, ai_service));
+    let db_pool = auth_state.as_ref().map(|a| a.pool.clone());
+    let state = Arc::new(AppState::new(
+        producer,
+        config,
+        clickhouse_batcher.clone(),
+        ai_usage_batcher.clone(),
+        fetcher,
+        ai_service,
+        db_pool,
+    ));
 
     // Shutdown coordination
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
@@ -2347,33 +2449,34 @@ async fn main() -> anyhow::Result<()> {
     info!("Event consumer started for centralized job tracking");
 
     // Spawn AI usage receiver task: drains events from the AiClient channel into the ClickHouse batcher
-    let ai_receiver_handle = if let (Some(mut rx), Some(ref batcher)) = (ai_usage_rx, &ai_usage_batcher) {
-        let batcher = batcher.clone();
-        let handle = tokio::spawn(async move {
-            while let Some(event) = rx.recv().await {
-                let ch_event = AiUsageClickHouseEvent {
-                    provider: event.provider,
-                    model: event.model,
-                    operation: String::new(), // API /scrape doesn't have operation context
-                    prompt_tokens: event.prompt_tokens,
-                    completion_tokens: event.completion_tokens,
-                    total_tokens: event.total_tokens,
-                    duration_ms: event.duration_ms as u32,
-                    job_id: String::new(),
-                    account_id: String::new(),
-                    url: String::new(),
-                    timestamp: time::OffsetDateTime::now_utc(),
-                };
-                if let Err(e) = batcher.add(ch_event).await {
-                    debug!(error = %e, "Failed to add AI usage event to batcher");
+    let ai_receiver_handle =
+        if let (Some(mut rx), Some(ref batcher)) = (ai_usage_rx, &ai_usage_batcher) {
+            let batcher = batcher.clone();
+            let handle = tokio::spawn(async move {
+                while let Some(event) = rx.recv().await {
+                    let ch_event = AiUsageClickHouseEvent {
+                        provider: event.provider,
+                        model: event.model,
+                        operation: String::new(), // API /scrape doesn't have operation context
+                        prompt_tokens: event.prompt_tokens,
+                        completion_tokens: event.completion_tokens,
+                        total_tokens: event.total_tokens,
+                        duration_ms: event.duration_ms as u32,
+                        job_id: String::new(),
+                        account_id: String::new(),
+                        url: String::new(),
+                        timestamp: time::OffsetDateTime::now_utc(),
+                    };
+                    if let Err(e) = batcher.add(ch_event).await {
+                        debug!(error = %e, "Failed to add AI usage event to batcher");
+                    }
                 }
-            }
-        });
-        info!("AI usage tracking receiver started");
-        Some(handle)
-    } else {
-        None
-    };
+            });
+            info!("AI usage tracking receiver started");
+            Some(handle)
+        } else {
+            None
+        };
 
     // Start periodic ClickHouse flush task if enabled
     let flush_handle = if clickhouse_batcher.is_some() || ai_usage_batcher.is_some() {
@@ -2546,6 +2649,15 @@ async fn main() -> anyhow::Result<()> {
     });
     info!("Idle job completion detector started (30s threshold)");
 
+    // Start cron scheduler if database is configured
+    let cron_handle = if let Some(ref pool) = state.db_pool {
+        let handle = configs::spawn_cron_scheduler(state.clone(), pool.clone(), shutdown_rx.clone());
+        info!("Cron scheduler started (30s tick interval)");
+        Some(handle)
+    } else {
+        None
+    };
+
     // Build router
     // Public routes (no auth required)
     let public_routes = Router::new()
@@ -2558,7 +2670,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/ws/job/{id}", get(ws_job_handler));
 
     // Protected routes (API key auth required when enabled)
-    let protected_routes = Router::new()
+    let mut protected_routes = Router::new()
         .route("/scrape", post(scrape_url))
         .route("/crawl", post(create_crawl))
         .route("/crawl/sync", post(create_crawl_sync))
@@ -2566,6 +2678,19 @@ async fn main() -> anyhow::Result<()> {
         .route("/job/{id}/status", get(job_status))
         .route("/job/{id}/events", get(job_events))
         .route("/job/{id}", delete(cancel_job));
+
+    // Add saved config routes if database is available
+    if state.db_pool.is_some() {
+        protected_routes = protected_routes
+            .route("/configs", post(configs::create_config).get(configs::list_configs))
+            .route(
+                "/configs/{id}",
+                get(configs::get_config)
+                    .patch(configs::update_config)
+                    .delete(configs::delete_config),
+            )
+            .route("/configs/{id}/trigger", post(configs::trigger_config));
+    }
 
     // Apply auth middleware if configured (accepts API key or session cookie)
     let protected_routes = if let Some(ref auth) = auth_state {
@@ -2593,7 +2718,10 @@ async fn main() -> anyhow::Result<()> {
 
     // Add analytics routes if ClickHouse is available
     if let Some(analytics) = analytics_state {
-        app = app.nest("/analytics/v0", analytics::create_analytics_router(analytics));
+        app = app.nest(
+            "/analytics/v0",
+            analytics::create_analytics_router(analytics),
+        );
         info!("Analytics API enabled at /analytics/v0/pipes");
     } else {
         info!("Analytics API disabled (CLICKHOUSE_URL not set)");
@@ -2634,7 +2762,10 @@ async fn main() -> anyhow::Result<()> {
                 Ok(l) => break l,
                 Err(e) if retries < 10 => {
                     retries += 1;
-                    warn!("Port {} busy, retrying in 500ms ({}/10): {}", args.port, retries, e);
+                    warn!(
+                        "Port {} busy, retrying in 500ms ({}/10): {}",
+                        args.port, retries, e
+                    );
                     tokio::time::sleep(Duration::from_millis(500)).await;
                 }
                 Err(e) => return Err(e.into()),
@@ -2656,6 +2787,9 @@ async fn main() -> anyhow::Result<()> {
     info!("Waiting for background tasks to shut down...");
     let _ = consumer_handle.await;
     let _ = idle_handle.await;
+    if let Some(handle) = cron_handle {
+        let _ = handle.await;
+    }
     if let Some(handle) = flush_handle {
         let _ = handle.await;
     }
