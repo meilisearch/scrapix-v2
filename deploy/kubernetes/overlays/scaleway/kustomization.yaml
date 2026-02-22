@@ -7,8 +7,7 @@ resources:
   - keda/crawler-scaledobject.yaml
   - keda/content-scaledobject.yaml
   - keda/frontier-scaledobject.yaml
-  # Scaleway storage class
-  - patches/storage-class.yaml
+  # Scaleway storage class (scw-bssd already exists on Kapsule — skip)
   # Ingress + TLS
   - patches/ingress.yaml
   - patches/cert-manager-issuer.yaml
@@ -29,20 +28,21 @@ patches:
   - path: patches/scaleway-config.yaml
   - path: patches/scaleway-resources.yaml
   - path: patches/node-selectors.yaml
+  - path: patches/image-pull-secrets.yaml
 
 images:
   - name: scrapix-api
-    newName: ghcr.io/quentindequelen/scrapix-api
+    newName: rg.fr-par.scw.cloud/scrapix/scrapix-api
     newTag: latest
   - name: scrapix-frontier-service
-    newName: ghcr.io/quentindequelen/scrapix-frontier-service
+    newName: rg.fr-par.scw.cloud/scrapix/scrapix-frontier-service
     newTag: latest
   - name: scrapix-worker-crawler
-    newName: ghcr.io/quentindequelen/scrapix-worker-crawler
+    newName: rg.fr-par.scw.cloud/scrapix/scrapix-worker-crawler
     newTag: latest
   - name: scrapix-worker-content
-    newName: ghcr.io/quentindequelen/scrapix-worker-content
+    newName: rg.fr-par.scw.cloud/scrapix/scrapix-worker-content
     newTag: latest
   - name: scrapix-console
-    newName: ghcr.io/quentindequelen/scrapix-console
+    newName: rg.fr-par.scw.cloud/scrapix/scrapix-console
     newTag: latest

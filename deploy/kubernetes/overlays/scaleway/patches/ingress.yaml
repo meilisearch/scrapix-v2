@@ -11,9 +11,8 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
     # WebSocket support for API
     nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      proxy_set_header Upgrade $http_upgrade;
-      proxy_set_header Connection "upgrade";
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$request_uri"
+    nginx.ingress.kubernetes.io/enable-websocket: "true"
 spec:
   ingressClassName: nginx
   tls:

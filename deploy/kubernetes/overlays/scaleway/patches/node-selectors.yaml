@@ -6,7 +6,7 @@
 #   system pool  (DEV1-S: 2 vCPU, 2GB) x 2   — API, console, ingress
 #
 # Label your Scaleway node pools with:
-#   scrapix.io/pool=infra | workers | system
+#   k8s.scaleway.com/pool-name=infra | workers | system
 
 # System pool: API
 apiVersion: apps/v1
@@ -18,7 +18,7 @@ spec:
   template:
     spec:
       nodeSelector:
-        scrapix.io/pool: system
+        k8s.scaleway.com/pool-name: system
 ---
 # System pool: Console
 apiVersion: apps/v1
@@ -30,7 +30,7 @@ spec:
   template:
     spec:
       nodeSelector:
-        scrapix.io/pool: system
+        k8s.scaleway.com/pool-name: system
 ---
 # Workers pool: Frontier
 apiVersion: apps/v1
@@ -42,7 +42,7 @@ spec:
   template:
     spec:
       nodeSelector:
-        scrapix.io/pool: workers
+        k8s.scaleway.com/pool-name: workers
 ---
 # Workers pool: Crawler
 apiVersion: apps/v1
@@ -54,7 +54,7 @@ spec:
   template:
     spec:
       nodeSelector:
-        scrapix.io/pool: workers
+        k8s.scaleway.com/pool-name: workers
 ---
 # Workers pool: Content
 apiVersion: apps/v1
@@ -66,7 +66,7 @@ spec:
   template:
     spec:
       nodeSelector:
-        scrapix.io/pool: workers
+        k8s.scaleway.com/pool-name: workers
 ---
 # Infra pool: Redpanda
 apiVersion: apps/v1
@@ -78,7 +78,7 @@ spec:
   template:
     spec:
       nodeSelector:
-        scrapix.io/pool: infra
+        k8s.scaleway.com/pool-name: infra
 ---
 # Infra pool: Meilisearch
 apiVersion: apps/v1
@@ -90,7 +90,7 @@ spec:
   template:
     spec:
       nodeSelector:
-        scrapix.io/pool: infra
+        k8s.scaleway.com/pool-name: infra
 ---
 # Infra pool: PostgreSQL
 apiVersion: apps/v1
@@ -102,7 +102,7 @@ spec:
   template:
     spec:
       nodeSelector:
-        scrapix.io/pool: infra
+        k8s.scaleway.com/pool-name: infra
 ---
 # Infra pool: ClickHouse
 apiVersion: apps/v1
@@ -114,7 +114,7 @@ spec:
   template:
     spec:
       nodeSelector:
-        scrapix.io/pool: infra
+        k8s.scaleway.com/pool-name: infra
 ---
 # Infra pool: Dragonfly
 apiVersion: apps/v1
@@ -126,4 +126,4 @@ spec:
   template:
     spec:
       nodeSelector:
-        scrapix.io/pool: infra
+        k8s.scaleway.com/pool-name: infra
