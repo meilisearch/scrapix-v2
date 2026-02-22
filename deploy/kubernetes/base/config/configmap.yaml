@@ -15,9 +15,6 @@ data:
   # Redis/Dragonfly configuration
   REDIS_URL: "redis://dragonfly:6379"
 
-  # PostgreSQL configuration
-  DATABASE_URL: "postgres://scrapix:$(POSTGRES_PASSWORD)@postgres:5432/scrapix"
-
   # ClickHouse configuration
   CLICKHOUSE_URL: "http://clickhouse:8123"
   CLICKHOUSE_DATABASE: "scrapix"
