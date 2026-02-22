@@ -6,12 +6,13 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use meilisearch_sdk::{
-    client::Client,
+    client::{Client, SwapIndexes},
     indexes::Index,
     settings::{PaginationSetting, Settings},
     task_info::TaskInfo,
+    tasks::TasksSearchQuery,
 };
-use tracing::{debug, info, instrument};
+use tracing::{debug, info, warn, instrument};
 
 use scrapix_core::{Document, Result, ScrapixError};
 
@@ -220,14 +221,18 @@ impl MeilisearchStorage {
         Ok(count)
     }
 
-    /// Index documents (internal)
+    /// Index documents (internal, fire-and-forget)
+    ///
+    /// Submits documents to Meilisearch and returns immediately without waiting
+    /// for the indexing task to complete. Meilisearch processes tasks asynchronously.
+    /// Use `wait_for_task()` if you need to confirm completion.
     async fn index_documents(&self, docs: Vec<Document>) -> Result<()> {
         if docs.is_empty() {
             return Ok(());
         }
 
         let count = docs.len();
-        debug!(count, "Indexing documents");
+        debug!(count, "Submitting documents to Meilisearch");
 
         let task = self
             .index
@@ -235,9 +240,12 @@ impl MeilisearchStorage {
             .await
             .map_err(|e| ScrapixError::Storage(format!("Failed to add documents: {}", e)))?;
 
-        self.wait_for_task(task).await?;
-
-        info!(count, "Documents indexed successfully");
+        info!(
+            count,
+            task_uid = task.task_uid,
+            index = %self.config.index_uid,
+            "Documents submitted to Meilisearch (fire-and-forget)"
+        );
 
         Ok(())
     }
@@ -272,15 +280,17 @@ impl MeilisearchStorage {
 
         let _ = index.set_settings(&settings).await;
 
-        // Index the document
+        // Index the document (fire-and-forget)
         let task = index
             .add_documents(&[doc], Some(&self.config.primary_key))
             .await
             .map_err(|e| ScrapixError::Storage(format!("Failed to add document to {}: {}", index_uid, e)))?;
 
-        self.wait_for_task(task).await?;
-
-        debug!(index = %index_uid, "Document indexed to specific index");
+        debug!(
+            task_uid = task.task_uid,
+            index = %index_uid,
+            "Document submitted to specific index (fire-and-forget)"
+        );
 
         Ok(())
     }
@@ -307,21 +317,28 @@ impl MeilisearchStorage {
             .create_index(index_uid, Some(&self.config.primary_key))
             .await;
 
-        // Index the documents
+        // Index the documents (fire-and-forget)
         let task = index
             .add_documents(&docs, Some(&self.config.primary_key))
             .await
             .map_err(|e| ScrapixError::Storage(format!("Failed to add documents to {}: {}", index_uid, e)))?;
 
-        self.wait_for_task(task).await?;
-
-        info!(count, index = %index_uid, "Documents indexed to specific index");
+        info!(
+            count,
+            task_uid = task.task_uid,
+            index = %index_uid,
+            "Documents submitted to specific index (fire-and-forget)"
+        );
 
         Ok(())
     }
 
-    /// Wait for a task to complete
-    async fn wait_for_task(&self, task_info: TaskInfo) -> Result<()> {
+    /// Wait for a Meilisearch task to complete by polling.
+    ///
+    /// This is public so callers can optionally wait for task completion
+    /// in cases where it matters (e.g., shutdown flushes, index initialization).
+    /// For normal indexing operations, tasks are submitted fire-and-forget.
+    pub async fn wait_for_task(&self, task_info: TaskInfo) -> Result<()> {
         loop {
             let task =
                 self.client.get_task(&task_info).await.map_err(|e| {
@@ -413,6 +430,143 @@ impl MeilisearchStorage {
         match self.client.health().await {
             Ok(_) => Ok(true),
             Err(_) => Ok(false),
+        }
+    }
+
+    /// Perform an atomic index swap between two indexes, then delete the old one.
+    ///
+    /// This is a static helper that creates a throwaway Meilisearch client,
+    /// waits for all pending tasks on the temp index to settle, performs the
+    /// atomic swap, and deletes the temp index (which now holds old data).
+    pub async fn perform_swap(
+        meilisearch_url: &str,
+        api_key: Option<&str>,
+        target_index: &str,
+        temp_index: &str,
+    ) -> Result<()> {
+        let client = Client::new(meilisearch_url, api_key).map_err(|e| {
+            ScrapixError::Storage(format!("Failed to create Meilisearch client for swap: {}", e))
+        })?;
+
+        // Ensure the target index exists (first crawl case)
+        let _ = client.create_index(target_index, Some("uid")).await;
+
+        // Wait for all pending indexing tasks on the temp index to complete
+        Self::wait_for_index_idle_with_client(&client, temp_index, Duration::from_secs(300))
+            .await?;
+
+        info!(
+            target = %target_index,
+            temp = %temp_index,
+            "All indexing tasks settled, performing atomic swap"
+        );
+
+        // Perform the atomic swap
+        let swap = SwapIndexes {
+            indexes: (target_index.to_string(), temp_index.to_string()),
+        };
+        let task_info = client.swap_indexes([&swap]).await.map_err(|e| {
+            ScrapixError::Storage(format!(
+                "Failed to swap indexes {} <-> {}: {}",
+                target_index, temp_index, e
+            ))
+        })?;
+
+        // Wait for swap to complete
+        task_info
+            .wait_for_completion(&client, Some(Duration::from_millis(200)), Some(Duration::from_secs(60)))
+            .await
+            .map_err(|e| {
+                ScrapixError::Storage(format!("Swap task failed: {}", e))
+            })?;
+
+        info!(
+            target = %target_index,
+            temp = %temp_index,
+            "Index swap completed successfully"
+        );
+
+        // Delete the temp index (which now holds old data)
+        if let Err(e) = Self::delete_index_with_client(&client, temp_index).await {
+            warn!(
+                temp = %temp_index,
+                error = %e,
+                "Failed to delete temp index after swap (non-fatal)"
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Delete a temp index (best-effort cleanup, e.g. on job failure).
+    pub async fn cleanup_temp_index(
+        meilisearch_url: &str,
+        api_key: Option<&str>,
+        index_uid: &str,
+    ) -> Result<()> {
+        let client = Client::new(meilisearch_url, api_key).map_err(|e| {
+            ScrapixError::Storage(format!("Failed to create Meilisearch client for cleanup: {}", e))
+        })?;
+
+        Self::delete_index_with_client(&client, index_uid).await
+    }
+
+    /// Delete an index via the given client.
+    async fn delete_index_with_client(client: &Client, index_uid: &str) -> Result<()> {
+        let task_info = client
+            .index(index_uid)
+            .delete()
+            .await
+            .map_err(|e| ScrapixError::Storage(format!("Failed to delete index {}: {}", index_uid, e)))?;
+
+        task_info
+            .wait_for_completion(client, Some(Duration::from_millis(200)), Some(Duration::from_secs(30)))
+            .await
+            .map_err(|e| {
+                ScrapixError::Storage(format!("Delete index task failed for {}: {}", index_uid, e))
+            })?;
+
+        info!(index = %index_uid, "Index deleted");
+        Ok(())
+    }
+
+    /// Wait until all tasks for a specific index are finished (no enqueued/processing tasks).
+    async fn wait_for_index_idle_with_client(
+        client: &Client,
+        index_uid: &str,
+        timeout: Duration,
+    ) -> Result<()> {
+        let deadline = tokio::time::Instant::now() + timeout;
+
+        loop {
+            if tokio::time::Instant::now() > deadline {
+                return Err(ScrapixError::Storage(format!(
+                    "Timed out waiting for index {} tasks to settle ({}s)",
+                    index_uid,
+                    timeout.as_secs()
+                )));
+            }
+
+            let mut query = TasksSearchQuery::new(client);
+            query
+                .with_index_uids([index_uid])
+                .with_statuses(["enqueued", "processing"]);
+
+            let result = client.get_tasks_with(&query).await.map_err(|e| {
+                ScrapixError::Storage(format!("Failed to query tasks for index {}: {}", index_uid, e))
+            })?;
+
+            let pending_count = result.results.len();
+            if pending_count == 0 {
+                return Ok(());
+            }
+
+            debug!(
+                index = %index_uid,
+                pending = pending_count,
+                "Waiting for index tasks to settle"
+            );
+            tokio::time::sleep(Duration::from_millis(500)).await;
         }
     }
 }

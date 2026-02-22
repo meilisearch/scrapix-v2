@@ -72,6 +72,11 @@ pub struct CrawlConfig {
     /// User agents to rotate
     #[serde(default)]
     pub user_agents: Vec<String>,
+
+    /// When true, crawl indexes into a temporary index then atomically
+    /// swaps it with the target index_uid on completion.
+    #[serde(default)]
+    pub replace_index: bool,
 }
 
 /// Type of crawler to use

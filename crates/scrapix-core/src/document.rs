@@ -348,6 +348,18 @@ pub struct JobState {
     /// Original crawl config (for display in UI)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config: Option<serde_json::Value>,
+
+    /// If set, this job uses atomic index swap. Contains the temp index name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub swap_temp_index: Option<String>,
+
+    /// Meilisearch URL for performing the swap (from job's CrawlConfig)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub swap_meilisearch_url: Option<String>,
+
+    /// Meilisearch API key for performing the swap
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub swap_meilisearch_api_key: Option<String>,
 }
 
 impl JobState {
@@ -370,6 +382,9 @@ impl JobState {
             start_urls: Vec::new(),
             max_pages: None,
             config: None,
+            swap_temp_index: None,
+            swap_meilisearch_url: None,
+            swap_meilisearch_api_key: None,
         }
     }
 
