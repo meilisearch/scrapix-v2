@@ -18,7 +18,7 @@ use thiserror::Error;
 use tiktoken_rs::{get_bpe_from_model, CoreBPE};
 use tokio::sync::Semaphore;
 use tokio::time::sleep;
-use tracing::{debug, instrument, warn};
+use tracing::{debug, info, instrument, warn};
 
 /// Errors that can occur during AI operations
 #[derive(Debug, Error)]
@@ -281,7 +281,16 @@ impl AiClient {
                 .chat(messages.clone(), model, max_tokens, temperature)
                 .await
             {
-                Ok(response) => return Ok(response.into()),
+                Ok(response) => {
+                    info!(
+                        model = %response.model,
+                        prompt_tokens = response.prompt_tokens,
+                        completion_tokens = response.completion_tokens,
+                        total_tokens = response.total_tokens,
+                        "LLM call completed"
+                    );
+                    return Ok(response.into());
+                }
                 Err(e) => {
                     warn!(attempt, error = %e, "Chat request failed");
 
