@@ -110,9 +110,9 @@ async fn resolve_account_id(
 /// Compute the next run time from a cron expression.
 pub fn compute_next_run(cron_expr: &str) -> Result<chrono::DateTime<chrono::Utc>, String> {
     use croner::Cron;
+    use std::str::FromStr;
 
-    let cron = Cron::new(cron_expr)
-        .parse()
+    let cron = Cron::from_str(cron_expr)
         .map_err(|e| format!("Invalid cron expression: {e}"))?;
 
     cron.find_next_occurrence(&chrono::Utc::now(), false)

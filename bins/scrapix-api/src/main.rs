@@ -305,7 +305,7 @@ impl AppState {
                     let counter = counters.entry(domain).or_default();
                     counter.requests += 1;
                     counter.successes += 1;
-                    counter.total_response_time_ms += *duration_ms as u64;
+                    counter.total_response_time_ms += *duration_ms;
                 }
             }
             CrawlEvent::PageFailed {
@@ -1103,7 +1103,7 @@ async fn scrape_url(
 
     // Validate URL
     let parsed_url = url::Url::parse(&request.url)
-        .map_err(|e| ApiError::new(&format!("Invalid URL: {}", e), "validation_error"))?;
+        .map_err(|e| ApiError::new(format!("Invalid URL: {}", e), "validation_error"))?;
 
     // Only allow http/https
     if !matches!(parsed_url.scheme(), "http" | "https") {
@@ -1124,7 +1124,7 @@ async fn scrape_url(
             .fetcher
             .fetch(&crawl_url)
             .await
-            .map_err(|e| ApiError::new(&format!("Failed to fetch URL: {}", e), "fetch_error"))?
+            .map_err(|e| ApiError::new(format!("Failed to fetch URL: {}", e), "fetch_error"))?
     } else {
         // Build a one-off fetcher with custom headers
         let robots_config = RobotsConfig {
@@ -1133,7 +1133,7 @@ async fn scrape_url(
         };
         let robots_cache = Arc::new(RobotsCache::new(robots_config).map_err(|e| {
             ApiError::new(
-                &format!("Failed to create robots cache: {}", e),
+                format!("Failed to create robots cache: {}", e),
                 "internal_error",
             )
         })?);
@@ -1164,7 +1164,7 @@ async fn scrape_url(
 
         let fetcher = builder.build(robots_cache).map_err(|e| {
             ApiError::new(
-                &format!("Failed to create HTTP client: {}", e),
+                format!("Failed to create HTTP client: {}", e),
                 "internal_error",
             )
         })?;
@@ -1172,14 +1172,14 @@ async fn scrape_url(
         fetcher
             .fetch(&crawl_url)
             .await
-            .map_err(|e| ApiError::new(&format!("Failed to fetch URL: {}", e), "fetch_error"))?
+            .map_err(|e| ApiError::new(format!("Failed to fetch URL: {}", e), "fetch_error"))?
     };
 
     let status_code = raw_page.status;
     let final_url = raw_page.final_url.clone();
 
     // Check for success status
-    if status_code < 200 || status_code >= 300 {
+    if !(200..300).contains(&status_code) {
         return Ok(Json(ScrapeResponse {
             success: false,
             url: final_url,
