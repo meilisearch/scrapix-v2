@@ -538,6 +538,35 @@ impl ClickHouseStorage {
             .execute()
             .await?;
 
+        // AI usage events table
+        let ai_usage_events_table = self.table_name("ai_usage_events");
+        self.client
+            .query(&format!(
+                r#"
+                CREATE TABLE IF NOT EXISTS {} (
+                    provider LowCardinality(String),
+                    model LowCardinality(String),
+                    operation LowCardinality(String),
+                    prompt_tokens UInt32,
+                    completion_tokens UInt32,
+                    total_tokens UInt32,
+                    duration_ms UInt32,
+                    job_id String,
+                    account_id LowCardinality(String),
+                    url String,
+                    timestamp DateTime64(3),
+                    INDEX idx_account_id account_id TYPE bloom_filter GRANULARITY 1,
+                    INDEX idx_model model TYPE bloom_filter GRANULARITY 1
+                ) ENGINE = MergeTree()
+                PARTITION BY toYYYYMM(timestamp)
+                ORDER BY (account_id, model, timestamp)
+                TTL toDateTime(timestamp) + INTERVAL 90 DAY
+                "#,
+                ai_usage_events_table
+            ))
+            .execute()
+            .await?;
+
         info!("ClickHouse tables created successfully");
         Ok(())
     }
@@ -829,6 +858,115 @@ impl ClickHouseStorage {
     }
 
     // ========================================================================
+    // AI Usage Events
+    // ========================================================================
+
+    /// Insert multiple AI usage events in batch.
+    #[instrument(skip(self, events), fields(count = events.len()))]
+    pub async fn insert_ai_usage_events(
+        &self,
+        events: Vec<AiUsageClickHouseEvent>,
+    ) -> Result<(), ClickHouseError> {
+        if events.is_empty() {
+            return Ok(());
+        }
+
+        let table = self.table_name("ai_usage_events");
+        let mut insert = self.client.insert(&table)?;
+
+        for event in &events {
+            insert.write(event).await?;
+        }
+
+        insert.end().await?;
+        debug!(count = events.len(), "Inserted AI usage events batch");
+        Ok(())
+    }
+
+    /// Get AI usage statistics grouped by model.
+    #[instrument(skip(self))]
+    pub async fn get_ai_usage_stats(
+        &self,
+        hours: u32,
+        account_id: Option<&str>,
+    ) -> Result<Vec<AiUsageStats>, ClickHouseError> {
+        let table = self.table_name("ai_usage_events");
+
+        let (query, needs_account_bind) = if let Some(acct) = account_id {
+            if acct.is_empty() {
+                (
+                    format!(
+                        r#"
+                        SELECT
+                            model,
+                            count() as total_calls,
+                            sum(prompt_tokens) as total_prompt_tokens,
+                            sum(completion_tokens) as total_completion_tokens,
+                            sum(total_tokens) as total_tokens,
+                            avg(duration_ms) as avg_duration_ms
+                        FROM {}
+                        WHERE timestamp >= now() - INTERVAL ? HOUR
+                        GROUP BY model
+                        ORDER BY total_tokens DESC
+                        "#,
+                        table
+                    ),
+                    false,
+                )
+            } else {
+                (
+                    format!(
+                        r#"
+                        SELECT
+                            model,
+                            count() as total_calls,
+                            sum(prompt_tokens) as total_prompt_tokens,
+                            sum(completion_tokens) as total_completion_tokens,
+                            sum(total_tokens) as total_tokens,
+                            avg(duration_ms) as avg_duration_ms
+                        FROM {}
+                        WHERE timestamp >= now() - INTERVAL ? HOUR
+                            AND account_id = ?
+                        GROUP BY model
+                        ORDER BY total_tokens DESC
+                        "#,
+                        table
+                    ),
+                    true,
+                )
+            }
+        } else {
+            (
+                format!(
+                    r#"
+                    SELECT
+                        model,
+                        count() as total_calls,
+                        sum(prompt_tokens) as total_prompt_tokens,
+                        sum(completion_tokens) as total_completion_tokens,
+                        sum(total_tokens) as total_tokens,
+                        avg(duration_ms) as avg_duration_ms
+                    FROM {}
+                    WHERE timestamp >= now() - INTERVAL ? HOUR
+                    GROUP BY model
+                    ORDER BY total_tokens DESC
+                    "#,
+                    table
+                ),
+                false,
+            )
+        };
+
+        let mut q = self.client.query(&query).bind(hours);
+        if needs_account_bind {
+            q = q.bind(account_id.unwrap_or(""));
+        }
+
+        let stats = q.fetch_all::<AiUsageStats>().await?;
+        Ok(stats)
+    }
+
+    // ========================================================================
     // Billing Analytics
     // ========================================================================
 
@@ -1114,6 +1252,140 @@ impl Drop for CrawlEventBatcher {
             warn!(
                 count = batch.len(),
                 "CrawlEventBatcher dropped with pending events"
+            );
+        }
+    }
+}
+
+// ============================================================================
+// AI Usage Events
+// ============================================================================
+
+/// A single AI usage event for per-LLM-call tracking.
+#[derive(Debug, Clone, Serialize, Deserialize, Row)]
+pub struct AiUsageClickHouseEvent {
+    /// LLM provider name (openai, anthropic, etc.).
+    pub provider: String,
+    /// Model used for the call.
+    pub model: String,
+    /// Type of AI operation (summary, extraction, chat, etc.).
+    pub operation: String,
+    /// Number of prompt/input tokens.
+    pub prompt_tokens: u32,
+    /// Number of completion/output tokens.
+    pub completion_tokens: u32,
+    /// Total tokens (prompt + completion).
+    pub total_tokens: u32,
+    /// Call duration in milliseconds.
+    pub duration_ms: u32,
+    /// Job ID (empty for /scrape calls).
+    #[serde(default)]
+    pub job_id: String,
+    /// Account ID for billing attribution.
+    #[serde(default)]
+    pub account_id: String,
+    /// URL being processed when the AI call was made.
+    #[serde(default)]
+    pub url: String,
+    /// When the call occurred.
+    #[serde(with = "clickhouse::serde::time::datetime")]
+    pub timestamp: time::OffsetDateTime,
+}
+
+impl Default for AiUsageClickHouseEvent {
+    fn default() -> Self {
+        Self {
+            provider: String::new(),
+            model: String::new(),
+            operation: String::new(),
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+            duration_ms: 0,
+            job_id: String::new(),
+            account_id: String::new(),
+            url: String::new(),
+            timestamp: time::OffsetDateTime::now_utc(),
+        }
+    }
+}
+
+/// Per-model AI usage statistics.
+#[derive(Debug, Clone, Serialize, Deserialize, Row)]
+pub struct AiUsageStats {
+    /// Model name.
+    pub model: String,
+    /// Total number of LLM calls.
+    pub total_calls: u64,
+    /// Total prompt tokens.
+    pub total_prompt_tokens: u64,
+    /// Total completion tokens.
+    pub total_completion_tokens: u64,
+    /// Total tokens (prompt + completion).
+    pub total_tokens: u64,
+    /// Average call duration in milliseconds.
+    pub avg_duration_ms: f64,
+}
+
+/// Batches AI usage events for efficient bulk inserts.
+pub struct AiUsageBatcher {
+    storage: ClickHouseStorage,
+    batch: parking_lot::Mutex<Vec<AiUsageClickHouseEvent>>,
+    batch_size: usize,
+}
+
+impl AiUsageBatcher {
+    /// Create a new AI usage event batcher.
+    pub fn new(storage: ClickHouseStorage, batch_size: usize) -> Self {
+        Self {
+            storage,
+            batch: parking_lot::Mutex::new(Vec::with_capacity(batch_size)),
+            batch_size,
+        }
+    }
+
+    /// Add an event to the batch. Flushes automatically when batch is full.
+    pub async fn add(&self, event: AiUsageClickHouseEvent) -> Result<(), ClickHouseError> {
+        let should_flush = {
+            let mut batch = self.batch.lock();
+            batch.push(event);
+            batch.len() >= self.batch_size
+        };
+
+        if should_flush {
+            self.flush().await?;
+        }
+
+        Ok(())
+    }
+
+    /// Flush all pending events.
+    pub async fn flush(&self) -> Result<(), ClickHouseError> {
+        let events = {
+            let mut batch = self.batch.lock();
+            std::mem::take(&mut *batch)
+        };
+
+        if !events.is_empty() {
+            self.storage.insert_ai_usage_events(events).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Get the number of pending events.
+    pub fn pending_count(&self) -> usize {
+        self.batch.lock().len()
+    }
+}
+
+impl Drop for AiUsageBatcher {
+    fn drop(&mut self) {
+        let batch = std::mem::take(&mut *self.batch.lock());
+        if !batch.is_empty() {
+            warn!(
+                count = batch.len(),
+                "AiUsageBatcher dropped with pending events"
             );
         }
     }

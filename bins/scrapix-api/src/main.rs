@@ -76,7 +76,8 @@ use scrapix_extractor::{
 use scrapix_parser::{extract_content, html_to_markdown, html_to_main_content_markdown, html_to_minihtml, html_to_main_content_minihtml, detect_language_info};
 use scrapix_queue::{topic_names, ConsumerBuilder, CrawlEvent, KafkaProducer, ProducerBuilder, UrlMessage};
 use scrapix_storage::clickhouse::{
-    ClickHouseStorage, CrawlEvent as ClickHouseCrawlEvent, CrawlEventBatcher,
+    AiUsageBatcher, AiUsageClickHouseEvent, ClickHouseStorage, CrawlEvent as ClickHouseCrawlEvent,
+    CrawlEventBatcher,
 };
 
 /// Scrapix API Server
@@ -129,6 +130,8 @@ struct AppState {
     domain_counters: RwLock<HashMap<String, DomainCounter>>,
     /// ClickHouse event batcher (optional - for analytics persistence)
     clickhouse_batcher: Option<Arc<CrawlEventBatcher>>,
+    /// ClickHouse AI usage batcher (optional)
+    ai_usage_batcher: Option<Arc<AiUsageBatcher>>,
     /// Last activity time per job (for idle-based completion detection)
     job_last_activity: RwLock<HashMap<String, std::time::Instant>>,
     /// Last time each service type was seen (for health monitoring)
@@ -149,6 +152,7 @@ impl AppState {
         producer: KafkaProducer,
         config: AppConfig,
         clickhouse_batcher: Option<Arc<CrawlEventBatcher>>,
+        ai_usage_batcher: Option<Arc<AiUsageBatcher>>,
         fetcher: Arc<HttpFetcher>,
         ai_service: Option<Arc<AiService>>,
     ) -> Self {
@@ -161,6 +165,7 @@ impl AppState {
             recent_errors: RwLock::new(VecDeque::with_capacity(1000)),
             domain_counters: RwLock::new(HashMap::new()),
             clickhouse_batcher,
+            ai_usage_batcher,
             job_last_activity: RwLock::new(HashMap::new()),
             service_last_seen: RwLock::new(HashMap::new()),
             fetcher,
@@ -2181,18 +2186,19 @@ fn start_event_consumer(
 // ClickHouse Initialization
 // ============================================================================
 
-/// Initialize ClickHouse storage and event batcher.
-/// Returns (AnalyticsState for API, CrawlEventBatcher for event persistence).
+/// Initialize ClickHouse storage and event batchers.
+/// Returns (AnalyticsState for API, CrawlEventBatcher for event persistence, AiUsageBatcher for AI tracking).
 async fn init_clickhouse() -> (
     Option<Arc<analytics::AnalyticsState>>,
     Option<Arc<CrawlEventBatcher>>,
+    Option<Arc<AiUsageBatcher>>,
 ) {
     // Check if ClickHouse is configured
     let config = match analytics::AnalyticsConfig::from_env() {
         Some(c) => c,
         None => {
             info!("ClickHouse not configured (CLICKHOUSE_URL not set)");
-            return (None, None);
+            return (None, None, None);
         }
     };
 
@@ -2210,7 +2216,7 @@ async fn init_clickhouse() -> (
         Ok(s) => s,
         Err(e) => {
             warn!(error = %e, "Failed to connect to ClickHouse. Analytics and event persistence disabled.");
-            return (None, None);
+            return (None, None, None);
         }
     };
 
@@ -2223,10 +2229,13 @@ async fn init_clickhouse() -> (
     // Create event batcher (batch size of 100 events)
     let batcher = Arc::new(CrawlEventBatcher::new(storage.clone(), 100));
 
+    // Create AI usage batcher (batch size of 50 events)
+    let ai_batcher = Arc::new(AiUsageBatcher::new(storage.clone(), 50));
+
     // Create analytics state (sharing the same storage connection)
     let analytics_state = Arc::new(analytics::AnalyticsState::with_storage(storage));
 
-    (Some(analytics_state), Some(batcher))
+    (Some(analytics_state), Some(batcher), Some(ai_batcher))
 }
 
 // ============================================================================
@@ -2263,7 +2272,7 @@ async fn main() -> anyhow::Result<()> {
     info!(brokers = %args.brokers, "Connected to Kafka");
 
     // Initialize ClickHouse for analytics (optional)
-    let (analytics_state, clickhouse_batcher) = init_clickhouse().await;
+    let (analytics_state, clickhouse_batcher, ai_usage_batcher) = init_clickhouse().await;
 
     // Initialize auth state if DATABASE_URL is provided
     let auth_state = if let Some(ref db_url) = args.database_url {
@@ -2297,15 +2306,30 @@ async fn main() -> anyhow::Result<()> {
     info!("Shared HTTP fetcher initialized for /scrape endpoint");
 
     // Initialize AI service from environment (supports multiple providers via AI_PROVIDER)
-    let ai_service = match AiClient::from_env() {
-        Ok(client) => {
-            let provider = std::env::var("AI_PROVIDER").unwrap_or_else(|_| "openai".to_string());
-            info!(provider = %provider, "AI service initialized");
-            Some(Arc::new(AiService::new(Arc::new(client))))
+    // Use with_tracking when ClickHouse is available for per-call token tracking
+    let (ai_service, ai_usage_rx) = if ai_usage_batcher.is_some() {
+        match AiClient::from_env_with_tracking() {
+            Ok((client, rx)) => {
+                let provider = std::env::var("AI_PROVIDER").unwrap_or_else(|_| "openai".to_string());
+                info!(provider = %provider, "AI service initialized with usage tracking");
+                (Some(Arc::new(AiService::new(Arc::new(client)))), Some(rx))
+            }
+            Err(e) => {
+                info!(reason = %e, "AI enrichment disabled");
+                (None, None)
+            }
         }
-        Err(e) => {
-            info!(reason = %e, "AI enrichment disabled");
-            None
+    } else {
+        match AiClient::from_env() {
+            Ok(client) => {
+                let provider = std::env::var("AI_PROVIDER").unwrap_or_else(|_| "openai".to_string());
+                info!(provider = %provider, "AI service initialized");
+                (Some(Arc::new(AiService::new(Arc::new(client)))), None)
+            }
+            Err(e) => {
+                info!(reason = %e, "AI enrichment disabled");
+                (None, None)
+            }
         }
     };
 
@@ -2313,7 +2337,7 @@ async fn main() -> anyhow::Result<()> {
     let config = AppConfig {
         max_jobs: args.max_jobs,
     };
-    let state = Arc::new(AppState::new(producer, config, clickhouse_batcher.clone(), fetcher, ai_service));
+    let state = Arc::new(AppState::new(producer, config, clickhouse_batcher.clone(), ai_usage_batcher.clone(), fetcher, ai_service));
 
     // Shutdown coordination
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
@@ -2322,30 +2346,74 @@ async fn main() -> anyhow::Result<()> {
     let consumer_handle = start_event_consumer(&args.brokers, state.clone(), shutdown_rx.clone())?;
     info!("Event consumer started for centralized job tracking");
 
+    // Spawn AI usage receiver task: drains events from the AiClient channel into the ClickHouse batcher
+    let ai_receiver_handle = if let (Some(mut rx), Some(ref batcher)) = (ai_usage_rx, &ai_usage_batcher) {
+        let batcher = batcher.clone();
+        let handle = tokio::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                let ch_event = AiUsageClickHouseEvent {
+                    provider: event.provider,
+                    model: event.model,
+                    operation: String::new(), // API /scrape doesn't have operation context
+                    prompt_tokens: event.prompt_tokens,
+                    completion_tokens: event.completion_tokens,
+                    total_tokens: event.total_tokens,
+                    duration_ms: event.duration_ms as u32,
+                    job_id: String::new(),
+                    account_id: String::new(),
+                    url: String::new(),
+                    timestamp: time::OffsetDateTime::now_utc(),
+                };
+                if let Err(e) = batcher.add(ch_event).await {
+                    debug!(error = %e, "Failed to add AI usage event to batcher");
+                }
+            }
+        });
+        info!("AI usage tracking receiver started");
+        Some(handle)
+    } else {
+        None
+    };
+
     // Start periodic ClickHouse flush task if enabled
-    let flush_handle = if let Some(ref batcher) = clickhouse_batcher {
-        let batcher_clone = batcher.clone();
+    let flush_handle = if clickhouse_batcher.is_some() || ai_usage_batcher.is_some() {
+        let crawl_batcher = clickhouse_batcher.clone();
+        let ai_batcher = ai_usage_batcher.clone();
         let mut shutdown_rx = shutdown_rx.clone();
         let handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(5));
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        if let Err(e) = batcher_clone.flush().await {
-                            warn!(error = %e, "Failed to flush ClickHouse batcher");
+                        if let Some(ref b) = crawl_batcher {
+                            if let Err(e) = b.flush().await {
+                                warn!(error = %e, "Failed to flush ClickHouse crawl batcher");
+                            }
+                        }
+                        if let Some(ref b) = ai_batcher {
+                            if let Err(e) = b.flush().await {
+                                warn!(error = %e, "Failed to flush ClickHouse AI usage batcher");
+                            }
                         }
                     }
                     _ = shutdown_rx.changed() => {
                         info!("ClickHouse flush task shutting down, performing final flush");
-                        if let Err(e) = batcher_clone.flush().await {
-                            warn!(error = %e, "Failed final ClickHouse flush");
+                        if let Some(ref b) = crawl_batcher {
+                            if let Err(e) = b.flush().await {
+                                warn!(error = %e, "Failed final ClickHouse crawl flush");
+                            }
+                        }
+                        if let Some(ref b) = ai_batcher {
+                            if let Err(e) = b.flush().await {
+                                warn!(error = %e, "Failed final ClickHouse AI usage flush");
+                            }
                         }
                         break;
                     }
                 }
             }
         });
-        info!("ClickHouse event persistence enabled (batch size: 100, flush interval: 5s)");
+        info!("ClickHouse event persistence enabled (flush interval: 5s)");
         Some(handle)
     } else {
         None
@@ -2590,6 +2658,9 @@ async fn main() -> anyhow::Result<()> {
     let _ = idle_handle.await;
     if let Some(handle) = flush_handle {
         let _ = handle.await;
+    }
+    if let Some(handle) = ai_receiver_handle {
+        handle.abort();
     }
     info!("Shutdown complete");
 

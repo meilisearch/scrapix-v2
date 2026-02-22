@@ -13,7 +13,7 @@ use crate::providers::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use thiserror::Error;
 use tiktoken_rs::{get_bpe_from_model, CoreBPE};
 use tokio::sync::Semaphore;
@@ -149,11 +149,27 @@ impl From<ProviderChatResponse> for ChatResponse {
     }
 }
 
+/// Emitted on every successful LLM call for usage tracking.
+#[derive(Debug, Clone)]
+pub struct AiUsageEvent {
+    pub provider: String,
+    pub model: String,
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    pub total_tokens: u32,
+    pub duration_ms: u64,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+}
+
+/// Receiver end of the AI usage tracking channel.
+pub type AiUsageReceiver = tokio::sync::mpsc::UnboundedReceiver<AiUsageEvent>;
+
 /// AI client wrapper with rate limiting and retries
 pub struct AiClient {
     provider: Box<dyn LlmProvider>,
     config: AiClientConfig,
     semaphore: Arc<Semaphore>,
+    usage_tx: Option<tokio::sync::mpsc::UnboundedSender<AiUsageEvent>>,
 }
 
 impl AiClient {
@@ -185,7 +201,17 @@ impl AiClient {
             provider,
             config,
             semaphore,
+            usage_tx: None,
         })
+    }
+
+    /// Create a new AI client with usage tracking enabled.
+    /// Returns the client and a receiver that emits an `AiUsageEvent` for every successful LLM call.
+    pub fn with_usage_tracking(config: AiClientConfig) -> Result<(Self, AiUsageReceiver), AiClientError> {
+        let mut client = Self::new(config)?;
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        client.usage_tx = Some(tx);
+        Ok((client, rx))
     }
 
     /// Create a client from environment variables.
@@ -224,6 +250,15 @@ impl AiClient {
         };
 
         Self::new(config)
+    }
+
+    /// Create a client from environment variables with usage tracking enabled.
+    /// Returns the client and a receiver for `AiUsageEvent`s.
+    pub fn from_env_with_tracking() -> Result<(Self, AiUsageReceiver), AiClientError> {
+        let mut client = Self::from_env()?;
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        client.usage_tx = Some(tx);
+        Ok((client, rx))
     }
 
     /// Get a tokenizer for a specific model.
@@ -269,6 +304,7 @@ impl AiClient {
         temperature: Option<f32>,
     ) -> Result<ChatResponse, AiClientError> {
         let _permit = self.semaphore.acquire().await.unwrap();
+        let call_start = Instant::now();
 
         let mut attempt = 0;
         let mut last_error: Option<AiClientError> = None;
@@ -282,13 +318,29 @@ impl AiClient {
                 .await
             {
                 Ok(response) => {
+                    let duration_ms = call_start.elapsed().as_millis() as u64;
                     info!(
                         model = %response.model,
                         prompt_tokens = response.prompt_tokens,
                         completion_tokens = response.completion_tokens,
                         total_tokens = response.total_tokens,
+                        duration_ms,
                         "LLM call completed"
                     );
+
+                    // Emit usage event if tracking is enabled
+                    if let Some(ref tx) = self.usage_tx {
+                        let _ = tx.send(AiUsageEvent {
+                            provider: self.config.provider.clone(),
+                            model: response.model.clone(),
+                            prompt_tokens: response.prompt_tokens,
+                            completion_tokens: response.completion_tokens,
+                            total_tokens: response.total_tokens,
+                            duration_ms,
+                            timestamp: chrono::Utc::now(),
+                        });
+                    }
+
                     return Ok(response.into());
                 }
                 Err(e) => {

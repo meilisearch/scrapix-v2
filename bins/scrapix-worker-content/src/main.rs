@@ -22,7 +22,7 @@ use tokio::sync::Semaphore;
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use scrapix_ai::{AiClient, AiClientConfig, AiService};
+use scrapix_ai::{AiClient, AiService};
 use scrapix_core::{Document, RawPage, ScrapixError};
 use scrapix_extractor::{BlockConfig, BlockSplitter, ContentBlock};
 use scrapix_frontier::{NearDuplicateConfig, NearDuplicateDetector};
@@ -383,9 +383,10 @@ impl ContentWorker {
         };
 
         // Create AI service from environment if any AI feature is enabled
-        let ai_service = if args.enable_summary || args.enable_extraction {
-            match AiClient::from_env() {
-                Ok(client) => {
+        // Uses from_env_with_tracking() to emit per-call usage events
+        let (ai_service, ai_usage_rx) = if args.enable_summary || args.enable_extraction {
+            match AiClient::from_env_with_tracking() {
+                Ok((client, rx)) => {
                     let client = Arc::new(client);
                     let mut service = AiService::minimal(client);
 
@@ -399,16 +400,35 @@ impl ContentWorker {
                         info!(model = %args.extraction_model, "AI extraction enabled");
                     }
 
-                    Some(Arc::new(service))
+                    (Some(Arc::new(service)), Some(rx))
                 }
                 Err(e) => {
                     warn!(error = %e, "Failed to create AI client, AI features disabled");
-                    None
+                    (None, None)
                 }
             }
         } else {
-            None
+            (None, None)
         };
+
+        // Spawn a background task to drain AI usage events (logs them for now;
+        // could be wired to a ClickHouse batcher if CLICKHOUSE_URL is configured)
+        if let Some(mut rx) = ai_usage_rx {
+            tokio::spawn(async move {
+                while let Some(event) = rx.recv().await {
+                    debug!(
+                        provider = %event.provider,
+                        model = %event.model,
+                        prompt_tokens = event.prompt_tokens,
+                        completion_tokens = event.completion_tokens,
+                        total_tokens = event.total_tokens,
+                        duration_ms = event.duration_ms,
+                        "AI usage event"
+                    );
+                }
+            });
+            info!("AI usage tracking receiver started (drain mode)");
+        }
 
         // Create near-duplicate detector if enabled
         let dedup_detector = if args.enable_dedup {

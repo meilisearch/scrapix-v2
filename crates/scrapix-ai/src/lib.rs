@@ -54,7 +54,7 @@ pub mod providers;
 pub mod summary;
 
 // Re-export main types from client
-pub use client::{AiClient, AiClientConfig, AiClientError, ChatResponse};
+pub use client::{AiClient, AiClientConfig, AiClientError, AiUsageEvent, AiUsageReceiver, ChatResponse};
 
 // Re-export extraction types
 pub use extraction::{

@@ -25,5 +25,8 @@ reqwest = { workspace = true }
 # Token counting
 tiktoken-rs = { workspace = true }
 
+# Time
+chrono = { workspace = true }
+
 # Tracing
 tracing = { workspace = true }
