@@ -9,6 +9,7 @@ resources:
 
   # Configuration
   - config/configmap.yaml
+  - config/secrets.yaml
 
   # Infrastructure
   - redpanda-statefulset.yaml

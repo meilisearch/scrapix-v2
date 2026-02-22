@@ -44,25 +44,3 @@ data:
   # Content worker configuration
   BATCH_SIZE: "100"
   BATCH_TIMEOUT_SECS: "5"
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: scrapix-secrets
-  namespace: scrapix
-  labels:
-    app.kubernetes.io/name: scrapix
-type: Opaque
-stringData:
-  # Meilisearch master key (change in production!)
-  MEILISEARCH_API_KEY: "masterKey"
-  # PostgreSQL password (change in production!)
-  POSTGRES_PASSWORD: "scrapix"
-  # ClickHouse password (change in production!)
-  CLICKHOUSE_PASSWORD: "scrapix"
-  # JWT secret (change in production!)
-  JWT_SECRET: "dev-jwt-secret-change-in-production"
-  # Optional: API authentication key
-  # API_KEY: "your-api-key-here"
-  # Optional: OpenAI API key for AI enrichment
-  # OPENAI_API_KEY: "your-openai-key-here"

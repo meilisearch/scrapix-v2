@@ -29,6 +29,7 @@ patches:
   - path: patches/scaleway-resources.yaml
   - path: patches/node-selectors.yaml
   - path: patches/image-pull-secrets.yaml
+  - path: patches/statefulset-fixes.yaml
 
 images:
   - name: scrapix-api

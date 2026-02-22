@@ -1,0 +1,71 @@
+# Fixes for StatefulSets on Scaleway Kapsule PVCs
+#
+# - Postgres: PGDATA subdirectory to avoid lost+found conflict
+# - Redpanda: fsGroup for PVC write permissions
+# - Meilisearch: fsGroup for PVC write permissions
+
+# PostgreSQL: Use a subdirectory for PGDATA
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: scrapix
+spec:
+  template:
+    spec:
+      securityContext:
+        fsGroup: 999  # postgres group
+      containers:
+        - name: postgres
+          env:
+            - name: POSTGRES_DB
+              value: scrapix
+            - name: POSTGRES_USER
+              value: scrapix
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: scrapix-secrets
+                  key: POSTGRES_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+---
+# Redpanda: Set fsGroup so the redpanda user can write to PVC
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redpanda
+  namespace: scrapix
+spec:
+  template:
+    spec:
+      securityContext:
+        fsGroup: 101  # redpanda group
+        runAsUser: 101
+        runAsGroup: 101
+---
+# Meilisearch: fsGroup + subdirectory to avoid lost+found conflict
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: meilisearch
+  namespace: scrapix
+spec:
+  template:
+    spec:
+      securityContext:
+        fsGroup: 1000  # meilisearch group
+      containers:
+        - name: meilisearch
+          env:
+            - name: MEILI_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: scrapix-secrets
+                  key: MEILISEARCH_API_KEY
+            - name: MEILI_ENV
+              value: production
+            - name: MEILI_LOG_LEVEL
+              value: INFO
+            - name: MEILI_DB_PATH
+              value: /meili_data/db
