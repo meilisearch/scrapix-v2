@@ -22,6 +22,7 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     libsasl2-dev \
     libclang-dev \
+    libcurl4-openssl-dev \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
@@ -90,6 +91,7 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
     libsasl2-2 \
+    libcurl4 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
