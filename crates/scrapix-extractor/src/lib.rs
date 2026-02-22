@@ -89,7 +89,7 @@ pub use blocks::{BlockConfig, BlockError, BlockSplitter, ContentBlock, Extracted
 pub use metadata::{ExtractedMetadata, FeedLink, MetadataError, MetadataExtractor};
 pub use schema::{ExtractedSchema, SchemaConfig, SchemaError, SchemaExtractor, SchemaItem};
 pub use selectors::{
-    ExtractionMode, ExtractedSelectors, FieldDefinition, SelectorDefinition, SelectorError,
+    ExtractedSelectors, ExtractionMode, FieldDefinition, SelectorDefinition, SelectorError,
     SelectorExtractor, SelectorInput, Transform,
 };
 
@@ -152,14 +152,25 @@ impl ExtractionResult {
             if !meta.keywords.is_empty() {
                 fields.insert(
                     "keywords".to_string(),
-                    Value::Array(meta.keywords.iter().map(|k| Value::String(k.clone())).collect()),
+                    Value::Array(
+                        meta.keywords
+                            .iter()
+                            .map(|k| Value::String(k.clone()))
+                            .collect(),
+                    ),
                 );
             }
             if let Some(ref canonical) = meta.canonical_url {
-                fields.insert("canonical_url".to_string(), Value::String(canonical.clone()));
+                fields.insert(
+                    "canonical_url".to_string(),
+                    Value::String(canonical.clone()),
+                );
             }
             if let Some(ref published) = meta.published_date {
-                fields.insert("published_date".to_string(), Value::String(published.clone()));
+                fields.insert(
+                    "published_date".to_string(),
+                    Value::String(published.clone()),
+                );
             }
 
             // Add Open Graph as nested object
@@ -269,10 +280,7 @@ impl Extractor {
     }
 
     /// Extract all enabled features from a pre-parsed DOM, avoiding redundant parsing
-    pub fn extract_from_dom(
-        &self,
-        document: &Html,
-    ) -> Result<ExtractionResult, ExtractorError> {
+    pub fn extract_from_dom(&self, document: &Html) -> Result<ExtractionResult, ExtractorError> {
         let mut result = ExtractionResult::default();
 
         if let Some(ref extractor) = self.metadata_extractor {
@@ -383,7 +391,10 @@ mod tests {
         let result = extractor.extract(html).unwrap();
         let fields = result.to_document_fields();
 
-        assert_eq!(fields.get("title"), Some(&Value::String("Test".to_string())));
+        assert_eq!(
+            fields.get("title"),
+            Some(&Value::String("Test".to_string()))
+        );
         assert_eq!(
             fields.get("description"),
             Some(&Value::String("Description".to_string()))

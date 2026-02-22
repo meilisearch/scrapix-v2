@@ -27,13 +27,13 @@ use tracing::{debug, error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use scrapix_core::{CrawlUrl, ScrapixError, UrlPatterns};
+#[cfg(feature = "browser")]
+use scrapix_crawler::{CdpRenderer, CdpRendererBuilder};
 use scrapix_crawler::{
     ConditionalRequestHeaders, ExtractorConfig, HttpFetcher, HttpFetcherBuilder,
     PersistentRobotsCache, RobotsCache, RobotsConfig, RobotsPersistence, SitemapParser,
     UrlExtractor,
 };
-#[cfg(feature = "browser")]
-use scrapix_crawler::{CdpRenderer, CdpRendererBuilder};
 use scrapix_frontier::LinkGraph;
 use scrapix_queue::{
     topic_names, ConsumerBuilder, CrawlEvent, KafkaConsumer, KafkaProducer, LinksMessage,
@@ -55,7 +55,10 @@ impl RocksRobotsPersistenceAdapter {
 }
 
 impl RobotsPersistence for RocksRobotsPersistenceAdapter {
-    fn get(&self, domain: &str) -> scrapix_core::Result<Option<scrapix_crawler::PersistentRobotsEntry>> {
+    fn get(
+        &self,
+        domain: &str,
+    ) -> scrapix_core::Result<Option<scrapix_crawler::PersistentRobotsEntry>> {
         let key = format!("robots:{}", domain).into_bytes();
         match self.storage.get_cf("robots_cache", &key)? {
             Some(data) => {
@@ -67,7 +70,11 @@ impl RobotsPersistence for RocksRobotsPersistenceAdapter {
         }
     }
 
-    fn put(&self, domain: &str, entry: &scrapix_crawler::PersistentRobotsEntry) -> scrapix_core::Result<()> {
+    fn put(
+        &self,
+        domain: &str,
+        entry: &scrapix_crawler::PersistentRobotsEntry,
+    ) -> scrapix_core::Result<()> {
         let key = format!("robots:{}", domain).into_bytes();
         let data = serde_json::to_vec(entry)
             .map_err(|e| ScrapixError::Storage(format!("Failed to serialize: {}", e)))?;
@@ -124,7 +131,7 @@ struct Args {
     group_id: String,
 
     /// Number of concurrent fetchers
-    #[arg(short, long, env = "CONCURRENCY", default_value = "10")]
+    #[arg(short, long, env = "CONCURRENCY", default_value = "50")]
     concurrency: usize,
 
     /// User agent string
@@ -333,7 +340,9 @@ struct MetricsSnapshot {
     dns_cache_misses: u64,
     browser_renders: u64,
     http_fetches: u64,
+    #[allow(dead_code)]
     sitemap_urls_discovered: u64,
+    #[allow(dead_code)]
     domains_with_sitemaps: u64,
 }
 
@@ -349,6 +358,7 @@ struct CrawlerWorker {
     #[cfg(feature = "browser")]
     browser_patterns: Vec<regex::Regex>,
     extractor: UrlExtractor,
+    #[allow(dead_code)]
     semaphore: Arc<Semaphore>,
     concurrency: usize,
     metrics: Arc<WorkerMetrics>,
@@ -408,10 +418,7 @@ impl CrawlerWorker {
         info!(path = %args.rocksdb_path, "Initializing RocksDB storage");
         let rocks_config = RocksConfig {
             path: args.rocksdb_path.clone(),
-            column_families: vec![
-                "default".to_string(),
-                "robots_cache".to_string(),
-            ],
+            column_families: vec!["default".to_string(), "robots_cache".to_string()],
             ..Default::default()
         };
         let rocks_storage = RocksStorage::new(rocks_config)?;
@@ -420,13 +427,19 @@ impl CrawlerWorker {
         // Create RocksDB-backed persistence for persistent robots cache (used for sitemap discovery)
         let robots_persistence: Arc<dyn RobotsPersistence> =
             Arc::new(RocksRobotsPersistenceAdapter::new(rocks_adapter));
-        let persistent_robots_cache = Arc::new(PersistentRobotsCache::new(robots_config, robots_persistence)?);
+        let persistent_robots_cache = Arc::new(PersistentRobotsCache::new(
+            robots_config,
+            robots_persistence,
+        )?);
 
         // Warm up persistent robots cache from storage
         match persistent_robots_cache.warm_memory_cache() {
             Ok(loaded) => {
                 if loaded > 0 {
-                    info!(count = loaded, "Loaded robots.txt entries from persistent cache");
+                    info!(
+                        count = loaded,
+                        "Loaded robots.txt entries from persistent cache"
+                    );
                 }
             }
             Err(e) => warn!(error = %e, "Failed to warm robots cache"),
@@ -448,11 +461,9 @@ impl CrawlerWorker {
             .max_body_size(args.max_body_size_mb * 1024 * 1024);
 
         if args.dns_cache {
-            fetcher_builder = fetcher_builder.dns_cache_ttl(Duration::from_secs(args.dns_cache_ttl));
-            info!(
-                ttl_secs = args.dns_cache_ttl,
-                "DNS caching enabled"
-            );
+            fetcher_builder =
+                fetcher_builder.dns_cache_ttl(Duration::from_secs(args.dns_cache_ttl));
+            info!(ttl_secs = args.dns_cache_ttl, "DNS caching enabled");
         }
 
         let fetcher = fetcher_builder.build(fetcher_robots_cache)?;
@@ -776,13 +787,11 @@ impl CrawlerWorker {
                 }
             };
 
-            debug!(
-                sitemap_url,
-                url_count = urls.len(),
-                "Parsed sitemap"
-            );
+            debug!(sitemap_url, url_count = urls.len(), "Parsed sitemap");
 
-            let urls_to_publish = urls.into_iter().take(self.max_sitemap_urls - discovered_count);
+            let urls_to_publish = urls
+                .into_iter()
+                .take(self.max_sitemap_urls - discovered_count);
 
             for sitemap_entry in urls_to_publish {
                 // Filter sitemap URLs using allowed_domains whitelist first (strictest check)
@@ -811,7 +820,8 @@ impl CrawlerWorker {
                                 let parts: Vec<&str> = p.split("**").collect();
                                 parts.len() == 2
                                     && sitemap_entry.loc.starts_with(parts[0])
-                                    && (parts[1].is_empty() || sitemap_entry.loc.ends_with(parts[1]))
+                                    && (parts[1].is_empty()
+                                        || sitemap_entry.loc.ends_with(parts[1]))
                             } else {
                                 sitemap_entry.loc == *p
                             }
@@ -880,11 +890,11 @@ impl CrawlerWorker {
         }
 
         if discovered_count > 0 {
-            self.metrics.record_sitemap_discovery(discovered_count as u64);
+            self.metrics
+                .record_sitemap_discovery(discovered_count as u64);
             info!(
                 domain,
-                discovered_count,
-                "Published sitemap URLs to frontier"
+                discovered_count, "Published sitemap URLs to frontier"
             );
         }
 
@@ -964,7 +974,11 @@ impl CrawlerWorker {
             self.metrics.record_http_fetch();
 
             // Fetch the page with conditional headers
-            match self.fetcher.fetch_conditional(url, &conditional_headers).await {
+            match self
+                .fetcher
+                .fetch_conditional(url, &conditional_headers)
+                .await
+            {
                 Ok(result) => match result {
                     scrapix_crawler::FetchResult::Fetched(page) => page,
                     scrapix_crawler::FetchResult::NotModified {
@@ -1012,7 +1026,8 @@ impl CrawlerWorker {
 
         // Update DNS cache stats
         if let Some(dns_stats) = self.fetcher.dns_cache_stats() {
-            self.metrics.record_dns_stats(dns_stats.hits, dns_stats.misses);
+            self.metrics
+                .record_dns_stats(dns_stats.hits, dns_stats.misses);
         }
 
         self.metrics.record_success(page_size);
@@ -1058,10 +1073,7 @@ impl CrawlerWorker {
             let processed = self.metrics.urls_processed.load(Ordering::Relaxed);
             if processed > 0 && processed % self.link_graph_interval == 0 {
                 graph.compute_scores_if_dirty();
-                debug!(
-                    processed = processed,
-                    "Recomputed link graph scores"
-                );
+                debug!(processed = processed, "Recomputed link graph scores");
             }
         }
 
@@ -1123,7 +1135,7 @@ impl CrawlerWorker {
             // Apply link graph priority boost if enabled
             if let Some(ref graph) = self.link_graph {
                 let boost = graph.get_priority_boost(&discovered_url.url);
-                discovered_url.priority += boost as i32;
+                discovered_url.priority += boost;
             }
 
             // Propagate URL patterns and account_id from parent message so child URLs are filtered correctly

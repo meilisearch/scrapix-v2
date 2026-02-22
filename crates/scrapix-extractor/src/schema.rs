@@ -264,13 +264,9 @@ impl SchemaExtractor {
                             // Try to parse ISO date and convert to timestamp
                             if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
                                 *val = Value::Number(dt.timestamp().into());
-                            } else if let Ok(dt) =
-                                chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                            } else if let Ok(dt) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
                             {
-                                let datetime = dt
-                                    .and_hms_opt(0, 0, 0)
-                                    .unwrap()
-                                    .and_utc();
+                                let datetime = dt.and_hms_opt(0, 0, 0).unwrap().and_utc();
                                 *val = Value::Number(datetime.timestamp().into());
                             }
                         }
@@ -340,7 +336,10 @@ impl SchemaExtractor {
 
         // Add @type
         if let Some(itemtype) = element.value().attr("itemtype") {
-            props.insert("@type".to_string(), Value::String(self.normalize_type(itemtype)));
+            props.insert(
+                "@type".to_string(),
+                Value::String(self.normalize_type(itemtype)),
+            );
         }
 
         // Find all itemprop elements within this itemscope
@@ -420,7 +419,11 @@ impl SchemaExtractor {
     }
 
     /// Get a specific schema type from extracted data
-    pub fn get_by_type<'a>(&self, result: &'a ExtractedSchema, schema_type: &str) -> Vec<&'a SchemaItem> {
+    pub fn get_by_type<'a>(
+        &self,
+        result: &'a ExtractedSchema,
+        schema_type: &str,
+    ) -> Vec<&'a SchemaItem> {
         result
             .items
             .iter()
@@ -430,7 +433,12 @@ impl SchemaExtractor {
     }
 
     /// Extract a specific property from schema items of a given type
-    pub fn get_property(&self, result: &ExtractedSchema, schema_type: &str, property: &str) -> Option<Value> {
+    pub fn get_property(
+        &self,
+        result: &ExtractedSchema,
+        schema_type: &str,
+        property: &str,
+    ) -> Option<Value> {
         for item in self.get_by_type(result, schema_type) {
             if let Value::Object(obj) = &item.data {
                 if let Some(value) = obj.get(property) {

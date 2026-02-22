@@ -96,12 +96,16 @@ async fn test_dns_negative_cache() {
     let resolver = CachingDnsResolver::new(config).unwrap();
 
     // Try to resolve a non-existent domain (should fail and be cached)
-    let result = resolver.resolve("this-domain-definitely-does-not-exist-12345.invalid").await;
+    let result = resolver
+        .resolve("this-domain-definitely-does-not-exist-12345.invalid")
+        .await;
     assert!(result.is_err());
     assert_eq!(resolver.cache_stats().misses, 1);
 
     // Second attempt should hit the negative cache
-    let result = resolver.resolve("this-domain-definitely-does-not-exist-12345.invalid").await;
+    let result = resolver
+        .resolve("this-domain-definitely-does-not-exist-12345.invalid")
+        .await;
     assert!(result.is_err());
     assert_eq!(resolver.cache_stats().hits, 1);
 }
@@ -326,8 +330,7 @@ async fn test_fetcher_with_defaults_and_dns() {
     };
     let robots_cache = Arc::new(RobotsCache::new(robots_config).unwrap());
 
-    let fetcher =
-        scrapix_crawler::HttpFetcher::with_defaults_and_dns(robots_cache).unwrap();
+    let fetcher = scrapix_crawler::HttpFetcher::with_defaults_and_dns(robots_cache).unwrap();
 
     assert!(fetcher.has_dns_cache());
 }

@@ -113,7 +113,7 @@ pub enum ChangeFrequency {
 
 impl ChangeFrequency {
     /// Parse from string
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "always" => Some(Self::Always),
             "hourly" => Some(Self::Hourly),
@@ -419,7 +419,7 @@ impl SitemapParser {
                                 url.lastmod = parse_datetime(&text);
                             }
                             "changefreq" => {
-                                url.changefreq = ChangeFrequency::from_str(&text);
+                                url.changefreq = ChangeFrequency::parse(&text);
                             }
                             "priority" => {
                                 url.priority = text.parse().ok();
@@ -628,14 +628,14 @@ mod tests {
     #[test]
     fn test_change_frequency() {
         assert_eq!(
-            ChangeFrequency::from_str("daily"),
+            ChangeFrequency::parse("daily"),
             Some(ChangeFrequency::Daily)
         );
         assert_eq!(
-            ChangeFrequency::from_str("WEEKLY"),
+            ChangeFrequency::parse("WEEKLY"),
             Some(ChangeFrequency::Weekly)
         );
-        assert_eq!(ChangeFrequency::from_str("invalid"), None);
+        assert_eq!(ChangeFrequency::parse("invalid"), None);
 
         assert_eq!(ChangeFrequency::Daily.to_seconds(), Some(86400));
         assert_eq!(ChangeFrequency::Never.to_seconds(), None);

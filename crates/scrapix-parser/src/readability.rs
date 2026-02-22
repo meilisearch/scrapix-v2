@@ -395,6 +395,10 @@ mod tests {
 
         let content = extract_content(html);
         // The code content should be extracted (may or may not have backticks depending on extraction path)
-        assert!(content.contains("fn main()"), "Expected 'fn main()' in content: {}", content);
+        assert!(
+            content.contains("fn main()"),
+            "Expected 'fn main()' in content: {}",
+            content
+        );
     }
 }

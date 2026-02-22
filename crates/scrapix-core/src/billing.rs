@@ -83,12 +83,14 @@ impl Account {
 
     /// Get effective rate limit (override or tier default)
     pub fn rate_limit(&self) -> u32 {
-        self.rate_limit_override.unwrap_or_else(|| self.tier.rate_limit())
+        self.rate_limit_override
+            .unwrap_or_else(|| self.tier.rate_limit())
     }
 
     /// Get effective monthly quota (override or tier default)
     pub fn monthly_quota(&self) -> u64 {
-        self.quota_override.unwrap_or_else(|| self.tier.monthly_quota())
+        self.quota_override
+            .unwrap_or_else(|| self.tier.monthly_quota())
     }
 
     /// Get effective monthly bandwidth quota in bytes
@@ -216,9 +218,9 @@ impl BillingTier {
     /// Monthly bandwidth quota in bytes
     pub fn bandwidth_quota(&self) -> u64 {
         match self {
-            BillingTier::Free => 100 * 1024 * 1024,           // 100 MB
-            BillingTier::Starter => 5 * 1024 * 1024 * 1024,   // 5 GB
-            BillingTier::Pro => 50 * 1024 * 1024 * 1024,      // 50 GB
+            BillingTier::Free => 100 * 1024 * 1024,              // 100 MB
+            BillingTier::Starter => 5 * 1024 * 1024 * 1024,      // 5 GB
+            BillingTier::Pro => 50 * 1024 * 1024 * 1024,         // 50 GB
             BillingTier::Enterprise => 500 * 1024 * 1024 * 1024, // 500 GB
         }
     }
@@ -332,8 +334,7 @@ impl UsageMetrics {
 
     /// Calculate estimated cost in cents based on tier pricing
     pub fn estimated_cost(&self, tier: BillingTier) -> u64 {
-        let pages_cost = (self.pages_crawled / 1000) * tier.price_per_1k_pages() as u64;
-        pages_cost
+        (self.pages_crawled / 1000) * tier.price_per_1k_pages() as u64
     }
 
     /// Check if usage exceeds quota

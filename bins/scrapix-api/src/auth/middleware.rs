@@ -34,6 +34,7 @@ fn hash_api_key(key: &str) -> String {
 }
 
 /// Middleware: validate API key from X-API-Key header
+#[allow(dead_code)]
 pub async fn validate_api_key(
     State(auth_state): State<Arc<AuthState>>,
     mut request: Request,

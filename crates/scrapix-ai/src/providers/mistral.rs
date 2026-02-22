@@ -121,15 +121,11 @@ impl LlmProvider for MistralProvider {
             )));
         }
 
-        let resp: MistralResponse = response
-            .json()
-            .await
-            .map_err(|e| AiClientError::Config(format!("Failed to parse Mistral response: {}", e)))?;
+        let resp: MistralResponse = response.json().await.map_err(|e| {
+            AiClientError::Config(format!("Failed to parse Mistral response: {}", e))
+        })?;
 
-        let choice = resp
-            .choices
-            .first()
-            .ok_or(AiClientError::EmptyResponse)?;
+        let choice = resp.choices.first().ok_or(AiClientError::EmptyResponse)?;
 
         Ok(ChatResponse {
             content: choice.message.content.clone(),

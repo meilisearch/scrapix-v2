@@ -137,7 +137,10 @@ mod tests {
         assert_eq!(doc.markdown, Some(markdown.to_string()));
         assert!(doc.content.is_some());
         assert!(doc.content.as_ref().unwrap().contains("Hello World"));
-        assert_eq!(doc.urls_tags, Some(vec!["/docs".to_string(), "/docs/test".to_string()]));
+        assert_eq!(
+            doc.urls_tags,
+            Some(vec!["/docs".to_string(), "/docs/test".to_string()])
+        );
     }
 
     #[test]

@@ -648,7 +648,8 @@ mod tests {
 
     #[test]
     fn test_crawl_event_constructors() {
-        let started = CrawlEvent::job_started("job-1", "index-1", vec!["https://example.com".to_string()]);
+        let started =
+            CrawlEvent::job_started("job-1", "index-1", vec!["https://example.com".to_string()]);
         match started {
             CrawlEvent::JobStarted {
                 job_id,

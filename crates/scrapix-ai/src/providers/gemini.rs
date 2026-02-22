@@ -182,10 +182,9 @@ impl LlmProvider for GeminiProvider {
             )));
         }
 
-        let resp: GeminiResponse = response
-            .json()
-            .await
-            .map_err(|e| AiClientError::Config(format!("Failed to parse Gemini response: {}", e)))?;
+        let resp: GeminiResponse = response.json().await.map_err(|e| {
+            AiClientError::Config(format!("Failed to parse Gemini response: {}", e))
+        })?;
 
         let candidate = resp
             .candidates

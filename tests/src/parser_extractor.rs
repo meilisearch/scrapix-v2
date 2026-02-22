@@ -226,7 +226,7 @@ fn test_selector_extraction() {
         result.values.get("heading"),
         Some(&serde_json::json!("Test Article Title"))
     );
-    assert!(result.values.get("author").is_some());
+    assert!(result.values.contains_key("author"));
 
     // Nav links should be a list
     let nav_links = result.values.get("nav_links").unwrap();
@@ -268,7 +268,7 @@ fn test_extractor_with_custom_selectors() {
     assert!(result.custom.is_some());
 
     let custom = result.custom.unwrap();
-    assert!(custom.values.get("main_heading").is_some());
+    assert!(custom.values.contains_key("main_heading"));
 }
 
 // ============================================================================
@@ -337,7 +337,7 @@ fn test_link_extraction_from_page() {
     assert!(link_texts.len() >= 5);
     assert!(link_texts
         .iter()
-        .any(|t| t.as_str().map_or(false, |s| s.contains("Internal Page"))));
+        .any(|t| t.as_str().is_some_and(|s| s.contains("Internal Page"))));
 
     // First link href should be extracted
     let first_link = result.values.get("first_link").unwrap().as_str().unwrap();

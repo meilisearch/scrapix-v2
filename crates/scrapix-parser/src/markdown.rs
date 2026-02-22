@@ -38,8 +38,10 @@ pub fn html_to_markdown(html: &str) -> String {
 
 /// Convert HTML to clean Markdown, stripping boilerplate (nav, footer, etc.)
 pub fn html_to_main_content_markdown(html: &str) -> String {
-    let mut config = MarkdownConfig::default();
-    config.only_main_content = true;
+    let config = MarkdownConfig {
+        only_main_content: true,
+        ..MarkdownConfig::default()
+    };
     html_to_markdown_with_config(html, &config)
 }
 
@@ -69,9 +71,7 @@ fn strip_non_content_tags(html: &str) -> String {
     let patterns = PATTERNS.get_or_init(|| {
         ["script", "style", "noscript", "svg", "head"]
             .iter()
-            .map(|tag| {
-                Regex::new(&format!(r"(?si)<{tag}[\s>].*?</{tag}\s*>")).unwrap()
-            })
+            .map(|tag| Regex::new(&format!(r"(?si)<{tag}[\s>].*?</{tag}\s*>")).unwrap())
             .collect()
     });
 
@@ -88,9 +88,7 @@ fn strip_boilerplate_tags(html: &str) -> String {
     let patterns = PATTERNS.get_or_init(|| {
         ["nav", "footer", "header", "aside"]
             .iter()
-            .map(|tag| {
-                Regex::new(&format!(r"(?si)<{tag}[\s>].*?</{tag}\s*>")).unwrap()
-            })
+            .map(|tag| Regex::new(&format!(r"(?si)<{tag}[\s>].*?</{tag}\s*>")).unwrap())
             .collect()
     });
 
@@ -146,28 +144,24 @@ fn clean_markdown(markdown: &str) -> String {
     // [\n\nText\n\n](url) → [Text](url)
     // ![\n\nAlt\n\n](url) → ![Alt](url)
     static MULTILINE_LINK_RE: OnceLock<Regex> = OnceLock::new();
-    let multiline_link_re = MULTILINE_LINK_RE.get_or_init(|| {
-        Regex::new(r"(!?\[)\s*\n\s*(.*?)\s*\n\s*\]\(([^)]*)\)").unwrap()
-    });
+    let multiline_link_re = MULTILINE_LINK_RE
+        .get_or_init(|| Regex::new(r"(!?\[)\s*\n\s*(.*?)\s*\n\s*\]\(([^)]*)\)").unwrap());
     let markdown = multiline_link_re.replace_all(markdown, "$1$2]($3)");
 
     // Remove empty links: [](url)
     static EMPTY_LINK_RE: OnceLock<Regex> = OnceLock::new();
-    let empty_link_re =
-        EMPTY_LINK_RE.get_or_init(|| Regex::new(r"\[]\([^)]*\)").unwrap());
+    let empty_link_re = EMPTY_LINK_RE.get_or_init(|| Regex::new(r"\[]\([^)]*\)").unwrap());
     let markdown = empty_link_re.replace_all(&markdown, "");
 
     // Remove images with relative/asset URLs (decorative)
     static DECORATIVE_IMG_RE: OnceLock<Regex> = OnceLock::new();
-    let decorative_img_re = DECORATIVE_IMG_RE.get_or_init(|| {
-        Regex::new(r"!\[[^\]]*\]\(/_next/[^)]*\)").unwrap()
-    });
+    let decorative_img_re =
+        DECORATIVE_IMG_RE.get_or_init(|| Regex::new(r"!\[[^\]]*\]\(/_next/[^)]*\)").unwrap());
     let markdown = decorative_img_re.replace_all(&markdown, "");
 
     // Remove images with no alt text
     static NO_ALT_IMG_RE: OnceLock<Regex> = OnceLock::new();
-    let no_alt_img_re =
-        NO_ALT_IMG_RE.get_or_init(|| Regex::new(r"!\[\]\([^)]*\)").unwrap());
+    let no_alt_img_re = NO_ALT_IMG_RE.get_or_init(|| Regex::new(r"!\[\]\([^)]*\)").unwrap());
     let markdown = no_alt_img_re.replace_all(&markdown, "");
 
     // Second pass: line-by-line cleanup

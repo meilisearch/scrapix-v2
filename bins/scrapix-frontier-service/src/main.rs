@@ -69,21 +69,21 @@ struct Args {
 
     /// Default delay between requests to the same domain (ms)
     /// Lower values = faster crawling for same domain, but may trigger rate limits
-    #[arg(long, env = "DOMAIN_DELAY_MS", default_value = "100")]
+    #[arg(long, env = "DOMAIN_DELAY_MS", default_value = "50")]
     domain_delay_ms: u64,
 
     /// Maximum concurrent requests per domain
     /// Higher values enable faster single-domain crawls like Wikipedia
-    #[arg(long, env = "CONCURRENT_PER_DOMAIN", default_value = "20")]
+    #[arg(long, env = "CONCURRENT_PER_DOMAIN", default_value = "50")]
     concurrent_per_domain: usize,
 
     /// URL dispatch batch size
     /// Larger batches reduce overhead for high-throughput crawls
-    #[arg(long, env = "DISPATCH_BATCH_SIZE", default_value = "500")]
+    #[arg(long, env = "DISPATCH_BATCH_SIZE", default_value = "2000")]
     dispatch_batch_size: usize,
 
     /// Dispatch interval (ms)
-    #[arg(long, env = "DISPATCH_INTERVAL_MS", default_value = "100")]
+    #[arg(long, env = "DISPATCH_INTERVAL_MS", default_value = "20")]
     dispatch_interval_ms: u64,
 
     /// Maximum pending URLs per job
@@ -388,10 +388,11 @@ impl FrontierService {
             );
 
             // Create links consumer
-            let links_consumer = ConsumerBuilder::new(&args.brokers, &format!("{}-links", args.group_id))
-                .client_id(format!("scrapix-frontier-{}-links", instance_id))
-                .auto_offset_reset("earliest")
-                .build()?;
+            let links_consumer =
+                ConsumerBuilder::new(&args.brokers, format!("{}-links", args.group_id))
+                    .client_id(format!("scrapix-frontier-{}-links", instance_id))
+                    .auto_offset_reset("earliest")
+                    .build()?;
             links_consumer.subscribe(&[topic_names::LINKS])?;
             info!(topic = topic_names::LINKS, "Subscribed to links topic");
 
@@ -425,12 +426,16 @@ impl FrontierService {
             );
 
             // Create history consumer
-            let history_consumer = ConsumerBuilder::new(&args.brokers, &format!("{}-history", args.group_id))
-                .client_id(format!("scrapix-frontier-{}-history", instance_id))
-                .auto_offset_reset("earliest")
-                .build()?;
+            let history_consumer =
+                ConsumerBuilder::new(&args.brokers, format!("{}-history", args.group_id))
+                    .client_id(format!("scrapix-frontier-{}-history", instance_id))
+                    .auto_offset_reset("earliest")
+                    .build()?;
             history_consumer.subscribe(&[topic_names::CRAWL_HISTORY])?;
-            info!(topic = topic_names::CRAWL_HISTORY, "Subscribed to crawl history topic");
+            info!(
+                topic = topic_names::CRAWL_HISTORY,
+                "Subscribed to crawl history topic"
+            );
 
             (Some(scheduler), Some(history), Some(history_consumer))
         } else {
@@ -549,7 +554,7 @@ impl FrontierService {
         });
 
         // Channel for URLs ready to dispatch
-        let (dispatch_tx, dispatch_rx) = mpsc::channel::<ReadyUrl>(10000);
+        let (dispatch_tx, dispatch_rx) = mpsc::channel::<ReadyUrl>(50000);
 
         // Start dispatcher task
         let dispatcher_handle = self.start_dispatcher(dispatch_rx);
@@ -612,7 +617,11 @@ impl FrontierService {
                 let mut url = msg.url.clone();
                 if let Some(ref scheduler) = self.recrawl_scheduler {
                     match scheduler.should_crawl(&url) {
-                        RecrawlDecision::Crawl { priority_boost, reason, .. } => {
+                        RecrawlDecision::Crawl {
+                            priority_boost,
+                            reason,
+                            ..
+                        } => {
                             // Apply priority boost from recrawl decision
                             url.priority += priority_boost;
                             debug!(
@@ -622,8 +631,13 @@ impl FrontierService {
                                 "Recrawl decision: crawl"
                             );
                         }
-                        RecrawlDecision::Skip { reason, retry_after } => {
-                            self.metrics.urls_recrawl_skipped.fetch_add(1, Ordering::Relaxed);
+                        RecrawlDecision::Skip {
+                            reason,
+                            retry_after,
+                        } => {
+                            self.metrics
+                                .urls_recrawl_skipped
+                                .fetch_add(1, Ordering::Relaxed);
                             debug!(
                                 url = %url.url,
                                 reason = %reason,
@@ -818,7 +832,7 @@ impl FrontierService {
         // Since KafkaConsumer doesn't impl Clone, we'll use a different approach:
         // Process in a loop with timeout
         let brokers = links_consumer.brokers().to_string();
-        let group_id = format!("{}", links_consumer.group_id());
+        let group_id = links_consumer.group_id().to_string();
 
         Some(tokio::spawn(async move {
             // Create a dedicated consumer for this task
@@ -840,11 +854,16 @@ impl FrontierService {
 
             while !shutdown.load(Ordering::Relaxed) {
                 // Poll for messages with timeout
-                match consumer.poll_one::<LinksMessage>(Duration::from_millis(100)).await {
+                match consumer
+                    .poll_one::<LinksMessage>(Duration::from_millis(100))
+                    .await
+                {
                     Ok(Some(msg)) => {
                         // Record links in the graph
                         link_graph.record_links(&msg.source_url, msg.target_urls.clone());
-                        metrics.links_recorded.fetch_add(msg.target_urls.len() as u64, Ordering::Relaxed);
+                        metrics
+                            .links_recorded
+                            .fetch_add(msg.target_urls.len() as u64, Ordering::Relaxed);
                         debug!(
                             source = %msg.source_url,
                             links_count = msg.target_urls.len(),
@@ -870,7 +889,7 @@ impl FrontierService {
         let shutdown = Arc::clone(&self.shutdown);
 
         let brokers = history_consumer.brokers().to_string();
-        let group_id = format!("{}", history_consumer.group_id());
+        let group_id = history_consumer.group_id().to_string();
 
         Some(tokio::spawn(async move {
             // Create a dedicated consumer for this task
@@ -892,11 +911,13 @@ impl FrontierService {
 
             while !shutdown.load(Ordering::Relaxed) {
                 // Poll for messages with timeout
-                match consumer.poll_one::<CrawlHistoryMessage>(Duration::from_millis(100)).await {
+                match consumer
+                    .poll_one::<CrawlHistoryMessage>(Duration::from_millis(100))
+                    .await
+                {
                     Ok(Some(msg)) => {
                         // Create crawl record from message
-                        let mut record = CrawlRecord::new()
-                            .with_status(msg.status);
+                        let mut record = CrawlRecord::new().with_status(msg.status);
 
                         if let Some(etag) = msg.etag {
                             record = record.with_etag(etag);

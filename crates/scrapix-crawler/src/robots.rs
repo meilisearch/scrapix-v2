@@ -378,8 +378,9 @@ impl RobotsPersistence for RocksRobotsPersistence {
         let key = Self::domain_key(domain);
         match self.storage.get_cf(&self.column_family, &key)? {
             Some(data) => {
-                let entry: PersistentRobotsEntry = serde_json::from_slice(&data)
-                    .map_err(|e| ScrapixError::Storage(format!("Failed to deserialize robots entry: {}", e)))?;
+                let entry: PersistentRobotsEntry = serde_json::from_slice(&data).map_err(|e| {
+                    ScrapixError::Storage(format!("Failed to deserialize robots entry: {}", e))
+                })?;
                 Ok(Some(entry))
             }
             None => Ok(None),
@@ -388,8 +389,9 @@ impl RobotsPersistence for RocksRobotsPersistence {
 
     fn put(&self, domain: &str, entry: &PersistentRobotsEntry) -> Result<()> {
         let key = Self::domain_key(domain);
-        let data = serde_json::to_vec(entry)
-            .map_err(|e| ScrapixError::Storage(format!("Failed to serialize robots entry: {}", e)))?;
+        let data = serde_json::to_vec(entry).map_err(|e| {
+            ScrapixError::Storage(format!("Failed to serialize robots entry: {}", e))
+        })?;
         self.storage.put_cf(&self.column_family, &key, &data)
     }
 

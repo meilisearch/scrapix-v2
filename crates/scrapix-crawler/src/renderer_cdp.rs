@@ -26,11 +26,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use chrono::Utc;
 use chromiumoxide::browser::{Browser, BrowserConfig};
 use chromiumoxide::cdp::browser_protocol::network::CookieParam;
 use chromiumoxide::page::ScreenshotParams;
 use chromiumoxide::Page;
+use chrono::Utc;
 use futures::StreamExt;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};

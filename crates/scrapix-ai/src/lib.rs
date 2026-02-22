@@ -54,7 +54,9 @@ pub mod providers;
 pub mod summary;
 
 // Re-export main types from client
-pub use client::{AiClient, AiClientConfig, AiClientError, AiUsageEvent, AiUsageReceiver, ChatResponse};
+pub use client::{
+    AiClient, AiClientConfig, AiClientError, AiUsageEvent, AiUsageReceiver, ChatResponse,
+};
 
 // Re-export extraction types
 pub use extraction::{
@@ -153,10 +155,11 @@ impl AiService {
 
     /// Extract data using a custom prompt
     pub async fn extract(&self, content: &str, prompt: &str) -> Result<ExtractionResult, AiError> {
-        let extractor = self
-            .extractor
-            .as_ref()
-            .ok_or_else(|| AiError::Extraction(ExtractionError::Config("Extraction not enabled".to_string())))?;
+        let extractor = self.extractor.as_ref().ok_or_else(|| {
+            AiError::Extraction(ExtractionError::Config(
+                "Extraction not enabled".to_string(),
+            ))
+        })?;
 
         extractor
             .extract_with_prompt(content, prompt)
@@ -170,10 +173,11 @@ impl AiService {
         content: &str,
         schema: &ExtractionSchema,
     ) -> Result<ExtractionResult, AiError> {
-        let extractor = self
-            .extractor
-            .as_ref()
-            .ok_or_else(|| AiError::Extraction(ExtractionError::Config("Extraction not enabled".to_string())))?;
+        let extractor = self.extractor.as_ref().ok_or_else(|| {
+            AiError::Extraction(ExtractionError::Config(
+                "Extraction not enabled".to_string(),
+            ))
+        })?;
 
         extractor
             .extract_with_schema(content, schema)
@@ -183,32 +187,38 @@ impl AiService {
 
     /// Summarize content
     pub async fn summarize(&self, content: &str) -> Result<SummaryResult, AiError> {
-        let summarizer = self
-            .summarizer
-            .as_ref()
-            .ok_or_else(|| AiError::Summary(SummaryError::Config("Summarization not enabled".to_string())))?;
+        let summarizer = self.summarizer.as_ref().ok_or_else(|| {
+            AiError::Summary(SummaryError::Config(
+                "Summarization not enabled".to_string(),
+            ))
+        })?;
 
         summarizer.summarize(content).await.map_err(AiError::from)
     }
 
     /// Generate a TL;DR
     pub async fn tldr(&self, content: &str) -> Result<String, AiError> {
-        let summarizer = self
-            .summarizer
-            .as_ref()
-            .ok_or_else(|| AiError::Summary(SummaryError::Config("Summarization not enabled".to_string())))?;
+        let summarizer = self.summarizer.as_ref().ok_or_else(|| {
+            AiError::Summary(SummaryError::Config(
+                "Summarization not enabled".to_string(),
+            ))
+        })?;
 
         summarizer.tldr(content).await.map_err(AiError::from)
     }
 
     /// Generate a headline
     pub async fn headline(&self, content: &str) -> Result<String, AiError> {
-        let summarizer = self
-            .summarizer
-            .as_ref()
-            .ok_or_else(|| AiError::Summary(SummaryError::Config("Summarization not enabled".to_string())))?;
+        let summarizer = self.summarizer.as_ref().ok_or_else(|| {
+            AiError::Summary(SummaryError::Config(
+                "Summarization not enabled".to_string(),
+            ))
+        })?;
 
-        summarizer.generate_headline(content).await.map_err(AiError::from)
+        summarizer
+            .generate_headline(content)
+            .await
+            .map_err(AiError::from)
     }
 }
 

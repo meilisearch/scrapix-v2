@@ -504,8 +504,7 @@ impl ContentWorker {
 
         // Use default storage when no override or matches default
         let is_default = msg_url.is_empty()
-            || (msg_url == self.default_meilisearch_url
-                && msg_key == self.default_meilisearch_key);
+            || (msg_url == self.default_meilisearch_url && msg_key == self.default_meilisearch_key);
 
         if is_default {
             return self.storage.clone();
@@ -570,7 +569,9 @@ impl ContentWorker {
                     self.metrics.record_indexed(count as u64);
                     debug!(count, url = %url, "Flushed per-job Meilisearch storage");
                 }
-                Err(e) => warn!(error = %e, url = %url, "Failed to flush per-job Meilisearch storage"),
+                Err(e) => {
+                    warn!(error = %e, url = %url, "Failed to flush per-job Meilisearch storage")
+                }
                 _ => {}
             }
         }
@@ -1221,8 +1222,7 @@ impl ContentWorker {
             }
         };
 
-        let (summary, extraction) =
-            tokio::join!(summary_fut, extraction_fut);
+        let (summary, extraction) = tokio::join!(summary_fut, extraction_fut);
 
         if summary.is_some() {
             document.ai_summary = summary;

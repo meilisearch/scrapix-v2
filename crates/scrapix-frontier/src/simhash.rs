@@ -83,11 +83,11 @@ impl SimHash {
         for token in tokens {
             let hash = self.hash_token(&token);
 
-            for i in 0..self.bits {
-                if (hash >> i) & 1 == 1 {
-                    v[i] += 1;
+            for (idx, val) in v.iter_mut().enumerate() {
+                if (hash >> idx) & 1 == 1 {
+                    *val += 1;
                 } else {
-                    v[i] -= 1;
+                    *val -= 1;
                 }
             }
         }
@@ -114,11 +114,11 @@ impl SimHash {
         for token in tokens {
             let hash = self.hash_token(token);
 
-            for i in 0..self.bits {
-                if (hash >> i) & 1 == 1 {
-                    v[i] += 1;
+            for (idx, val) in v.iter_mut().enumerate() {
+                if (hash >> idx) & 1 == 1 {
+                    *val += 1;
                 } else {
-                    v[i] -= 1;
+                    *val -= 1;
                 }
             }
         }
@@ -156,10 +156,7 @@ impl SimHash {
         }
 
         // Create 3-word shingles
-        words
-            .windows(3)
-            .map(|w| w.join(" "))
-            .collect()
+        words.windows(3).map(|w| w.join(" ")).collect()
     }
 
     /// Normalize text for consistent hashing
@@ -284,10 +281,7 @@ impl MinHash {
             return words.iter().map(|s| s.to_string()).collect();
         }
 
-        words
-            .windows(3)
-            .map(|w| w.join(" "))
-            .collect()
+        words.windows(3).map(|w| w.join(" ")).collect()
     }
 
     /// Hash a string with two seeds using SipHash variant
@@ -333,6 +327,8 @@ impl Default for NearDuplicateConfig {
     }
 }
 
+type MinHashBuckets = Vec<HashMap<u64, Vec<(String, Vec<u64>)>>>;
+
 /// Near-duplicate detector using LSH (Locality-Sensitive Hashing)
 ///
 /// Uses either SimHash or MinHash with LSH for efficient near-duplicate detection.
@@ -343,7 +339,7 @@ pub struct NearDuplicateDetector {
     /// SimHash fingerprints: hash -> list of (url, original_hash)
     simhash_buckets: RwLock<HashMap<u64, Vec<(String, u64)>>>,
     /// MinHash LSH buckets: band_hash -> list of (url, signature)
-    minhash_buckets: RwLock<Vec<HashMap<u64, Vec<(String, Vec<u64>)>>>>,
+    minhash_buckets: RwLock<MinHashBuckets>,
     /// Total fingerprints stored
     fingerprint_count: AtomicU64,
     /// Statistics
@@ -473,7 +469,7 @@ impl NearDuplicateDetector {
             let similarity = 1.0 - (distance as f64 / 64.0);
             stats.avg_duplicate_similarity =
                 (stats.avg_duplicate_similarity * (stats.duplicates_found - 1) as f64 + similarity)
-                / stats.duplicates_found as f64;
+                    / stats.duplicates_found as f64;
             return Some(dup_url);
         }
 
@@ -510,7 +506,7 @@ impl NearDuplicateDetector {
         let mut buckets = self.simhash_buckets.write();
         buckets
             .entry(bucket_key)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push((url.to_string(), hash));
         self.fingerprint_count.fetch_add(1, Ordering::Relaxed);
     }
@@ -530,7 +526,7 @@ impl NearDuplicateDetector {
             stats.duplicates_found += 1;
             stats.avg_duplicate_similarity =
                 (stats.avg_duplicate_similarity * (stats.duplicates_found - 1) as f64 + similarity)
-                / stats.duplicates_found as f64;
+                    / stats.duplicates_found as f64;
             return Some(dup_url);
         }
 
@@ -568,7 +564,7 @@ impl NearDuplicateDetector {
         for (band_idx, band_hash) in band_hashes.into_iter().enumerate() {
             buckets[band_idx]
                 .entry(band_hash)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push((url.to_string(), signature.clone()));
         }
 
@@ -673,7 +669,7 @@ impl DuplicateClusterer {
         let mut clusters: HashMap<usize, Vec<usize>> = HashMap::new();
         for i in 0..n {
             let root = find(&mut parent, i);
-            clusters.entry(root).or_insert_with(Vec::new).push(i);
+            clusters.entry(root).or_default().push(i);
         }
 
         // Build result
@@ -689,10 +685,8 @@ impl DuplicateClusterer {
                 let mut pairs = 0;
                 for i in 0..members.len() {
                     for j in (i + 1)..members.len() {
-                        let dist = SimHash::hamming_distance(
-                            hashes[members[i]].1,
-                            hashes[members[j]].1,
-                        );
+                        let dist =
+                            SimHash::hamming_distance(hashes[members[i]].1, hashes[members[j]].1);
                         total_similarity += 1.0 - (dist as f64 / 64.0);
                         pairs += 1;
                     }
@@ -735,8 +729,17 @@ mod tests {
         let dist13 = SimHash::hamming_distance(hash1, hash3);
 
         // For short texts, SimHash distance can be higher; main assertion is relative
-        assert!(dist12 < 20, "Similar docs should have moderate distance: {}", dist12);
-        assert!(dist13 > dist12, "Different docs should have larger distance: {} vs {}", dist13, dist12);
+        assert!(
+            dist12 < 20,
+            "Similar docs should have moderate distance: {}",
+            dist12
+        );
+        assert!(
+            dist13 > dist12,
+            "Different docs should have larger distance: {} vs {}",
+            dist13,
+            dist12
+        );
     }
 
     #[test]
@@ -766,7 +769,11 @@ mod tests {
         let sim12 = MinHash::jaccard_similarity(&sig1, &sig2);
         let sim13 = MinHash::jaccard_similarity(&sig1, &sig3);
 
-        assert!(sim12 > 0.5, "Similar docs should have high similarity: {}", sim12);
+        assert!(
+            sim12 > 0.5,
+            "Similar docs should have high similarity: {}",
+            sim12
+        );
         assert!(sim13 < sim12, "Different docs should have lower similarity");
     }
 
@@ -792,14 +799,20 @@ mod tests {
             "https://example.com/page2",
             "The quick brown fox jumps over the lazy cat",
         );
-        assert!(result2.is_some(), "Similar document should be detected as duplicate");
+        assert!(
+            result2.is_some(),
+            "Similar document should be detected as duplicate"
+        );
 
         // Add different document
         let result3 = detector.check_and_add(
             "https://example.com/page3",
             "Completely different content about Rust programming language",
         );
-        assert!(result3.is_none(), "Different document should not be duplicate");
+        assert!(
+            result3.is_none(),
+            "Different document should not be duplicate"
+        );
 
         let stats = detector.stats();
         assert_eq!(stats.documents_checked, 3);
@@ -826,7 +839,7 @@ mod tests {
         assert!(result1.is_none());
 
         // Add similar document
-        let result2 = detector.check_and_add(
+        let _result2 = detector.check_and_add(
             "https://example.com/page2",
             "The quick brown fox jumps over the lazy cat every day",
         );
@@ -843,7 +856,10 @@ mod tests {
         let documents = vec![
             ("url1".to_string(), "The quick brown fox jumps".to_string()),
             ("url2".to_string(), "The quick brown fox leaps".to_string()),
-            ("url3".to_string(), "Completely different content".to_string()),
+            (
+                "url3".to_string(),
+                "Completely different content".to_string(),
+            ),
             ("url4".to_string(), "Another different document".to_string()),
         ];
 

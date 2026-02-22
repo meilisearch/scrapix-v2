@@ -8,7 +8,9 @@
 #[cfg(not(feature = "browser-cdp"))]
 fn main() {
     eprintln!("This example requires the 'browser-cdp' feature.");
-    eprintln!("Run with: cargo run --example test_browser -p scrapix-crawler --features browser-cdp");
+    eprintln!(
+        "Run with: cargo run --example test_browser -p scrapix-crawler --features browser-cdp"
+    );
     std::process::exit(1);
 }
 

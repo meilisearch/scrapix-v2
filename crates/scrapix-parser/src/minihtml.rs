@@ -5,8 +5,33 @@ use scraper::Html;
 
 /// Tags whose content is kept as-is (with allowed attributes).
 const KEPT_TAGS: &[&str] = &[
-    "h1", "h2", "h3", "h4", "h5", "h6", "p", "blockquote", "hr", "br", "a", "img", "ul", "ol",
-    "li", "pre", "code", "table", "thead", "tbody", "tr", "td", "th", "strong", "em", "b", "i",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "p",
+    "blockquote",
+    "hr",
+    "br",
+    "a",
+    "img",
+    "ul",
+    "ol",
+    "li",
+    "pre",
+    "code",
+    "table",
+    "thead",
+    "tbody",
+    "tr",
+    "td",
+    "th",
+    "strong",
+    "em",
+    "b",
+    "i",
 ];
 
 /// Tags stripped entirely (tag + all descendants).
@@ -47,7 +72,7 @@ pub fn html_to_main_content_minihtml(html: &str) -> String {
 fn walk_node(node: &ego_tree::NodeRef<Node>, strip_boilerplate: bool, out: &mut String) {
     match node.value() {
         Node::Text(text) => {
-            escape_html_to(&text, out);
+            escape_html_to(text, out);
         }
         Node::Element(el) => {
             let tag = el.name();

@@ -43,6 +43,7 @@ impl TestMetrics {
         self.pages_fetched.fetch_add(1, Ordering::Relaxed);
     }
 
+    #[allow(dead_code)]
     fn record_process(&self) {
         self.pages_processed.fetch_add(1, Ordering::Relaxed);
     }
@@ -59,8 +60,10 @@ impl TestMetrics {
         self.errors.fetch_add(1, Ordering::Relaxed);
     }
 
+    #[allow(dead_code)]
     fn record_near_duplicate(&self) {
-        self.near_duplicates_detected.fetch_add(1, Ordering::Relaxed);
+        self.near_duplicates_detected
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     fn summary(&self) -> String {
@@ -114,6 +117,7 @@ impl MockWebServer {
         }
     }
 
+    #[allow(dead_code)]
     fn add_page(&mut self, path: &str, html: &str) {
         self.pages.insert(path.to_string(), html.to_string());
     }
@@ -137,7 +141,7 @@ impl MockWebServer {
             content_type: Some("text/html; charset=utf-8".to_string()),
             js_rendered: false,
             fetched_at: Utc::now(),
-            fetch_duration_ms: self.delay_ms as u64,
+            fetch_duration_ms: self.delay_ms,
         })
     }
 
@@ -259,7 +263,10 @@ async fn test_full_crawl_pipeline() {
     }
 
     // Verify results
-    assert!(metrics.pages_fetched.load(Ordering::Relaxed) > 0, "Should have fetched pages");
+    assert!(
+        metrics.pages_fetched.load(Ordering::Relaxed) > 0,
+        "Should have fetched pages"
+    );
     assert!(
         metrics.urls_discovered.load(Ordering::Relaxed) > 0,
         "Should have discovered URLs"
@@ -335,7 +342,10 @@ async fn test_near_duplicate_detection_pipeline() {
 
     // Process documents
     let result1 = detector.check_and_add("https://example.com/article1", doc1_content);
-    assert!(result1.is_none(), "First document should not be a duplicate");
+    assert!(
+        result1.is_none(),
+        "First document should not be a duplicate"
+    );
 
     let result2 = detector.check_and_add("https://example.com/article2", doc2_content);
     assert!(
@@ -389,10 +399,7 @@ async fn test_incremental_crawl_pipeline() {
     // First crawl - should always crawl
     let decision1 = scheduler.should_crawl(&CrawlUrl::seed(url));
     assert!(
-        matches!(
-            decision1,
-            scrapix_frontier::RecrawlDecision::Crawl { .. }
-        ),
+        matches!(decision1, scrapix_frontier::RecrawlDecision::Crawl { .. }),
         "First crawl should proceed"
     );
 
@@ -405,10 +412,7 @@ async fn test_incremental_crawl_pipeline() {
     // Immediate re-check - should skip (too recent, less than 1 second old)
     let decision2 = scheduler.should_crawl(&CrawlUrl::seed(url));
     assert!(
-        matches!(
-            decision2,
-            scrapix_frontier::RecrawlDecision::Skip { .. }
-        ),
+        matches!(decision2, scrapix_frontier::RecrawlDecision::Skip { .. }),
         "Should skip immediate re-crawl"
     );
 
@@ -418,10 +422,7 @@ async fn test_incremental_crawl_pipeline() {
     // Now should crawl again
     let decision3 = scheduler.should_crawl(&CrawlUrl::seed(url));
     assert!(
-        matches!(
-            decision3,
-            scrapix_frontier::RecrawlDecision::Crawl { .. }
-        ),
+        matches!(decision3, scrapix_frontier::RecrawlDecision::Crawl { .. }),
         "Should crawl after interval"
     );
 
@@ -433,7 +434,10 @@ async fn test_incremental_crawl_pipeline() {
 
     // Check that content change was detected
     let stored = history.get_record(url).unwrap();
-    assert!(stored.crawl_count >= 2, "Should have recorded multiple crawls");
+    assert!(
+        stored.crawl_count >= 2,
+        "Should have recorded multiple crawls"
+    );
 
     println!(
         "Incremental crawl test: {} crawls, change rate: {:.2}",
@@ -470,7 +474,10 @@ async fn test_document_parsing_pipeline() {
     assert!(doc.content.is_some(), "Article should have content");
     // Description is stored in metadata
     assert!(
-        doc.metadata.as_ref().map(|m| m.contains_key("description")).unwrap_or(false),
+        doc.metadata
+            .as_ref()
+            .map(|m| m.contains_key("description"))
+            .unwrap_or(false),
         "Article should have description in metadata"
     );
     println!("Parsed {}: {:?}", url, doc.title);
@@ -488,12 +495,12 @@ async fn test_document_parsing_pipeline() {
         doc.language.is_some() && doc.language.as_ref().unwrap().contains("fr"),
         "Should detect French language"
     );
-    println!(
-        "Parsed {}: {:?}, lang: {:?}",
-        url, doc.title, doc.language
-    );
+    println!("Parsed {}: {:?}, lang: {:?}", url, doc.title, doc.language);
 
-    println!("Document parsing pipeline: {} documents processed", results.len());
+    println!(
+        "Document parsing pipeline: {} documents processed",
+        results.len()
+    );
 }
 
 /// Test concurrent crawling simulation
@@ -516,7 +523,7 @@ async fn test_concurrent_crawl_simulation() {
                 3 => "/about",
                 _ => "/contact",
             };
-            CrawlUrl::seed(&format!("https://example.com{}", path))
+            CrawlUrl::seed(format!("https://example.com{}", path))
         })
         .collect();
 

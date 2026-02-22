@@ -3,8 +3,8 @@
 use async_openai::{
     config::OpenAIConfig,
     types::{
-        ChatCompletionRequestMessage, ChatCompletionRequestSystemMessageArgs,
-        ChatCompletionRequestUserMessageArgs, ChatCompletionRequestAssistantMessageArgs,
+        ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestMessage,
+        ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestUserMessageArgs,
         CreateChatCompletionRequestArgs,
     },
     Client as OpenAIClient,
@@ -30,7 +30,9 @@ impl OpenAiProvider {
         }
     }
 
-    fn convert_messages(messages: &[Message]) -> Result<Vec<ChatCompletionRequestMessage>, AiClientError> {
+    fn convert_messages(
+        messages: &[Message],
+    ) -> Result<Vec<ChatCompletionRequestMessage>, AiClientError> {
         messages
             .iter()
             .map(|m| match m.role {

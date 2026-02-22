@@ -62,7 +62,7 @@ impl Default for UrlHistoryConfig {
         Self {
             max_entries: 1_000_000,
             default_recrawl_interval: Duration::from_secs(24 * 3600), // 24 hours
-            min_recrawl_interval: Duration::from_secs(3600),         // 1 hour
+            min_recrawl_interval: Duration::from_secs(3600),          // 1 hour
             max_recrawl_interval: Duration::from_secs(7 * 24 * 3600), // 7 days
             unchanged_multiplier: 1.5,
             changed_multiplier: 0.5,
@@ -235,8 +235,7 @@ impl UrlHistory {
                 existing.change_count += 1;
                 // Decrease interval when content changes
                 let new_interval =
-                    (existing.recrawl_interval_secs as f64 * self.config.changed_multiplier)
-                        as u64;
+                    (existing.recrawl_interval_secs as f64 * self.config.changed_multiplier) as u64;
                 existing.recrawl_interval_secs =
                     new_interval.max(self.config.min_recrawl_interval.as_secs());
             } else {
@@ -307,16 +306,14 @@ impl UrlHistory {
         let key = normalize_url(url);
         let records = self.records.read();
 
-        records.get(&key).and_then(|record| {
+        records.get(&key).map(|record| {
             let elapsed = Utc::now()
                 .signed_duration_since(record.last_crawled_at)
                 .num_seconds() as u64;
             if elapsed >= record.recrawl_interval_secs {
-                Some(Duration::from_secs(0))
+                Duration::from_secs(0)
             } else {
-                Some(Duration::from_secs(
-                    record.recrawl_interval_secs - elapsed,
-                ))
+                Duration::from_secs(record.recrawl_interval_secs - elapsed)
             }
         })
     }
@@ -349,7 +346,11 @@ impl UrlHistory {
         };
 
         let avg_interval_secs = if total_count > 0 {
-            records.values().map(|r| r.recrawl_interval_secs).sum::<u64>() / total_count as u64
+            records
+                .values()
+                .map(|r| r.recrawl_interval_secs)
+                .sum::<u64>()
+                / total_count as u64
         } else {
             0
         };

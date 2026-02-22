@@ -283,7 +283,10 @@ impl AiExtractor {
 
         // Remove markdown code blocks
         if result.starts_with("```json") {
-            result = result.strip_prefix("```json").unwrap_or(&result).to_string();
+            result = result
+                .strip_prefix("```json")
+                .unwrap_or(&result)
+                .to_string();
         }
         if result.starts_with("```") {
             result = result.strip_prefix("```").unwrap_or(&result).to_string();
@@ -440,9 +443,9 @@ impl AiExtractor {
             Value::Array(arr) => {
                 let items: Vec<String> = arr
                     .into_iter()
-                    .filter_map(|v| match v {
-                        Value::String(s) => Some(s),
-                        other => Some(other.to_string()),
+                    .map(|v| match v {
+                        Value::String(s) => s,
+                        other => other.to_string(),
                     })
                     .collect();
                 Ok(items)

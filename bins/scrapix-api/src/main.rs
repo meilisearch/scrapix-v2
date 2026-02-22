@@ -144,6 +144,7 @@ struct AppState {
     /// ClickHouse event batcher (optional - for analytics persistence)
     clickhouse_batcher: Option<Arc<CrawlEventBatcher>>,
     /// ClickHouse AI usage batcher (optional)
+    #[allow(dead_code)]
     ai_usage_batcher: Option<Arc<AiUsageBatcher>>,
     /// Last activity time per job (for idle-based completion detection)
     job_last_activity: RwLock<HashMap<String, std::time::Instant>>,
@@ -2535,7 +2536,9 @@ async fn main() -> anyhow::Result<()> {
 
                     // Find running jobs that have been idle
                     // Also extract swap metadata for atomic index swap
-                    let idle_jobs: Vec<(String, u64, u64, u64, Option<String>, Option<String>, Option<String>, String)> = {
+                    // (job_id, pages_crawled, pages_indexed, errors, swap_temp_index, swap_target_index, swap_search_api_key, index_uid)
+                    type IdleJobInfo = (String, u64, u64, u64, Option<String>, Option<String>, Option<String>, String);
+                    let idle_jobs: Vec<IdleJobInfo> = {
                         let jobs = idle_state.jobs.read();
                         let activity = idle_state.job_last_activity.read();
                         jobs.iter()
@@ -2651,7 +2654,8 @@ async fn main() -> anyhow::Result<()> {
 
     // Start cron scheduler if database is configured
     let cron_handle = if let Some(ref pool) = state.db_pool {
-        let handle = configs::spawn_cron_scheduler(state.clone(), pool.clone(), shutdown_rx.clone());
+        let handle =
+            configs::spawn_cron_scheduler(state.clone(), pool.clone(), shutdown_rx.clone());
         info!("Cron scheduler started (30s tick interval)");
         Some(handle)
     } else {
@@ -2682,7 +2686,10 @@ async fn main() -> anyhow::Result<()> {
     // Add saved config routes if database is available
     if state.db_pool.is_some() {
         protected_routes = protected_routes
-            .route("/configs", post(configs::create_config).get(configs::list_configs))
+            .route(
+                "/configs",
+                post(configs::create_config).get(configs::list_configs),
+            )
             .route(
                 "/configs/{id}",
                 get(configs::get_config)

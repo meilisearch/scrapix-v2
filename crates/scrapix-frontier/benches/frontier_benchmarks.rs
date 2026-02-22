@@ -10,9 +10,7 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use rand::distributions::Alphanumeric;
 use rand::Rng;
-use scrapix_frontier::{
-    MultiLevelPriorityQueue, PartitionedUrlDedup, PriorityQueue, UrlDedup,
-};
+use scrapix_frontier::{MultiLevelPriorityQueue, PartitionedUrlDedup, PriorityQueue, UrlDedup};
 
 /// Generate random URLs for benchmarking
 fn generate_urls(count: usize, domain_count: usize) -> Vec<String> {
@@ -33,11 +31,8 @@ fn generate_crawl_urls(count: usize) -> Vec<scrapix_core::CrawlUrl> {
         .map(|i| {
             let depth = rng.gen_range(0..10);
             let priority = rng.gen_range(-5..15);
-            scrapix_core::CrawlUrl::new(
-                format!("https://example.com/page/{}", i),
-                depth,
-            )
-            .with_priority(priority)
+            scrapix_core::CrawlUrl::new(format!("https://example.com/page/{}", i), depth)
+                .with_priority(priority)
         })
         .collect()
 }
@@ -170,18 +165,14 @@ fn bench_partitioned_bloom_filter(c: &mut Criterion) {
 
         // Regular bloom filter
         let dedup_regular = UrlDedup::for_capacity(*size * 2, 0.01);
-        group.bench_with_input(
-            BenchmarkId::new("regular", size),
-            &urls,
-            |b, urls| {
-                b.iter(|| {
-                    for url in urls {
-                        dedup_regular.check_and_mark(black_box(url));
-                    }
-                    dedup_regular.clear();
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("regular", size), &urls, |b, urls| {
+            b.iter(|| {
+                for url in urls {
+                    dedup_regular.check_and_mark(black_box(url));
+                }
+                dedup_regular.clear();
+            });
+        });
 
         // Partitioned bloom filter (16 partitions)
         let dedup_partitioned = PartitionedUrlDedup::new(*size * 2, 0.01, 16);
@@ -443,4 +434,8 @@ criterion_group!(
     bench_concurrent_dedup,
 );
 
-criterion_main!(bloom_filter_benches, priority_queue_benches, scalability_benches);
+criterion_main!(
+    bloom_filter_benches,
+    priority_queue_benches,
+    scalability_benches
+);

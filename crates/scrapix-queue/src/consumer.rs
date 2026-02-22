@@ -188,7 +188,10 @@ impl KafkaConsumer {
         use tokio::sync::Semaphore;
         use tracing::info;
 
-        info!(concurrency = concurrency, "Starting concurrent message processing");
+        info!(
+            concurrency = concurrency,
+            "Starting concurrent message processing"
+        );
 
         let handler = std::sync::Arc::new(handler);
         let semaphore = std::sync::Arc::new(Semaphore::new(concurrency));

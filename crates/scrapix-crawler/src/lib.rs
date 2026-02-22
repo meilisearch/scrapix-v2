@@ -83,9 +83,11 @@ pub use fetcher::{
 pub use proxy::{ProxyConfig, ProxyPool, RotationStrategy};
 pub use robots::{
     PersistentRobotsCache, PersistentRobotsEntry, RobotsCache, RobotsCacheStats, RobotsConfig,
-    RocksDbOps, RocksRobotsPersistence, RobotsPersistence,
+    RobotsPersistence, RocksDbOps, RocksRobotsPersistence,
 };
-pub use sitemap::{ChangeFrequency, SitemapConfig, SitemapContent, SitemapEntry, SitemapParser, SitemapUrl};
+pub use sitemap::{
+    ChangeFrequency, SitemapConfig, SitemapContent, SitemapEntry, SitemapParser, SitemapUrl,
+};
 
 // CDP renderer re-exports
 #[cfg(feature = "browser-cdp")]

@@ -27,7 +27,7 @@
 //! ```
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Query, State},
     http::StatusCode,
     response::Json,
     routing::get,
@@ -35,10 +35,9 @@ use axum::{
 };
 use scrapix_storage::clickhouse::{ClickHouseConfig, ClickHouseStorage};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 // ============================================================================
 // Configuration
@@ -84,6 +83,7 @@ impl AnalyticsState {
     }
 
     /// Create analytics state from config
+    #[allow(dead_code)]
     pub async fn new(config: AnalyticsConfig) -> Result<Self, String> {
         let ch_config = ClickHouseConfig {
             url: config.clickhouse_url,
@@ -208,14 +208,38 @@ async fn pipe_top_domains(
     let rows = data.len();
     Ok(Json(AnalyticsResponse {
         meta: vec![
-            ColumnMeta { name: "domain".into(), col_type: "String".into() },
-            ColumnMeta { name: "total_requests".into(), col_type: "UInt64".into() },
-            ColumnMeta { name: "successful_requests".into(), col_type: "UInt64".into() },
-            ColumnMeta { name: "failed_requests".into(), col_type: "UInt64".into() },
-            ColumnMeta { name: "success_rate".into(), col_type: "Float64".into() },
-            ColumnMeta { name: "avg_response_time_ms".into(), col_type: "Float64".into() },
-            ColumnMeta { name: "total_bytes".into(), col_type: "UInt64".into() },
-            ColumnMeta { name: "unique_urls".into(), col_type: "UInt64".into() },
+            ColumnMeta {
+                name: "domain".into(),
+                col_type: "String".into(),
+            },
+            ColumnMeta {
+                name: "total_requests".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "successful_requests".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "failed_requests".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "success_rate".into(),
+                col_type: "Float64".into(),
+            },
+            ColumnMeta {
+                name: "avg_response_time_ms".into(),
+                col_type: "Float64".into(),
+            },
+            ColumnMeta {
+                name: "total_bytes".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "unique_urls".into(),
+                col_type: "UInt64".into(),
+            },
         ],
         data,
         rows,
@@ -278,14 +302,38 @@ async fn pipe_domain_stats(
 
     Ok(Json(AnalyticsResponse {
         meta: vec![
-            ColumnMeta { name: "domain".into(), col_type: "String".into() },
-            ColumnMeta { name: "total_requests".into(), col_type: "UInt64".into() },
-            ColumnMeta { name: "successful_requests".into(), col_type: "UInt64".into() },
-            ColumnMeta { name: "failed_requests".into(), col_type: "UInt64".into() },
-            ColumnMeta { name: "success_rate".into(), col_type: "Float64".into() },
-            ColumnMeta { name: "avg_response_time_ms".into(), col_type: "Float64".into() },
-            ColumnMeta { name: "total_bytes".into(), col_type: "UInt64".into() },
-            ColumnMeta { name: "unique_urls".into(), col_type: "UInt64".into() },
+            ColumnMeta {
+                name: "domain".into(),
+                col_type: "String".into(),
+            },
+            ColumnMeta {
+                name: "total_requests".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "successful_requests".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "failed_requests".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "success_rate".into(),
+                col_type: "Float64".into(),
+            },
+            ColumnMeta {
+                name: "avg_response_time_ms".into(),
+                col_type: "Float64".into(),
+            },
+            ColumnMeta {
+                name: "total_bytes".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "unique_urls".into(),
+                col_type: "UInt64".into(),
+            },
         ],
         data,
         rows: 1,
@@ -362,13 +410,34 @@ async fn pipe_hourly_stats(
     let rows = data.len();
     Ok(Json(AnalyticsResponse {
         meta: vec![
-            ColumnMeta { name: "hour".into(), col_type: "DateTime".into() },
-            ColumnMeta { name: "requests".into(), col_type: "UInt64".into() },
-            ColumnMeta { name: "successes".into(), col_type: "UInt64".into() },
-            ColumnMeta { name: "failures".into(), col_type: "UInt64".into() },
-            ColumnMeta { name: "success_rate".into(), col_type: "Float64".into() },
-            ColumnMeta { name: "avg_response_time_ms".into(), col_type: "Float64".into() },
-            ColumnMeta { name: "total_bytes".into(), col_type: "UInt64".into() },
+            ColumnMeta {
+                name: "hour".into(),
+                col_type: "DateTime".into(),
+            },
+            ColumnMeta {
+                name: "requests".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "successes".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "failures".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "success_rate".into(),
+                col_type: "Float64".into(),
+            },
+            ColumnMeta {
+                name: "avg_response_time_ms".into(),
+                col_type: "Float64".into(),
+            },
+            ColumnMeta {
+                name: "total_bytes".into(),
+                col_type: "UInt64".into(),
+            },
         ],
         data,
         rows,
@@ -432,9 +501,18 @@ async fn pipe_error_distribution(
     let rows = data.len();
     Ok(Json(AnalyticsResponse {
         meta: vec![
-            ColumnMeta { name: "status_code".into(), col_type: "UInt16".into() },
-            ColumnMeta { name: "count".into(), col_type: "UInt64".into() },
-            ColumnMeta { name: "percentage".into(), col_type: "Float64".into() },
+            ColumnMeta {
+                name: "status_code".into(),
+                col_type: "UInt16".into(),
+            },
+            ColumnMeta {
+                name: "count".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "percentage".into(),
+                col_type: "Float64".into(),
+            },
         ],
         data,
         rows,
@@ -519,17 +597,50 @@ async fn pipe_job_stats(
     let rows = data.len();
     Ok(Json(AnalyticsResponse {
         meta: vec![
-            ColumnMeta { name: "job_id".into(), col_type: "String".into() },
-            ColumnMeta { name: "total_urls".into(), col_type: "UInt64".into() },
-            ColumnMeta { name: "successful_urls".into(), col_type: "UInt64".into() },
-            ColumnMeta { name: "failed_urls".into(), col_type: "UInt64".into() },
-            ColumnMeta { name: "success_rate".into(), col_type: "Float64".into() },
-            ColumnMeta { name: "total_bytes".into(), col_type: "UInt64".into() },
-            ColumnMeta { name: "avg_response_time_ms".into(), col_type: "Float64".into() },
-            ColumnMeta { name: "unique_domains".into(), col_type: "UInt64".into() },
-            ColumnMeta { name: "started_at".into(), col_type: "DateTime".into() },
-            ColumnMeta { name: "last_activity_at".into(), col_type: "DateTime".into() },
-            ColumnMeta { name: "duration_seconds".into(), col_type: "Int64".into() },
+            ColumnMeta {
+                name: "job_id".into(),
+                col_type: "String".into(),
+            },
+            ColumnMeta {
+                name: "total_urls".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "successful_urls".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "failed_urls".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "success_rate".into(),
+                col_type: "Float64".into(),
+            },
+            ColumnMeta {
+                name: "total_bytes".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "avg_response_time_ms".into(),
+                col_type: "Float64".into(),
+            },
+            ColumnMeta {
+                name: "unique_domains".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "started_at".into(),
+                col_type: "DateTime".into(),
+            },
+            ColumnMeta {
+                name: "last_activity_at".into(),
+                col_type: "DateTime".into(),
+            },
+            ColumnMeta {
+                name: "duration_seconds".into(),
+                col_type: "Int64".into(),
+            },
         ],
         data,
         rows,
@@ -614,12 +725,30 @@ async fn pipe_kpis(
 
     Ok(Json(AnalyticsResponse {
         meta: vec![
-            ColumnMeta { name: "total_crawls".into(), col_type: "UInt64".into() },
-            ColumnMeta { name: "total_bytes".into(), col_type: "UInt64".into() },
-            ColumnMeta { name: "unique_domains".into(), col_type: "UInt64".into() },
-            ColumnMeta { name: "success_rate".into(), col_type: "Float64".into() },
-            ColumnMeta { name: "avg_response_time_ms".into(), col_type: "Float64".into() },
-            ColumnMeta { name: "errors_count".into(), col_type: "UInt64".into() },
+            ColumnMeta {
+                name: "total_crawls".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "total_bytes".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "unique_domains".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "success_rate".into(),
+                col_type: "Float64".into(),
+            },
+            ColumnMeta {
+                name: "avg_response_time_ms".into(),
+                col_type: "Float64".into(),
+            },
+            ColumnMeta {
+                name: "errors_count".into(),
+                col_type: "UInt64".into(),
+            },
         ],
         data,
         rows: 1,
@@ -689,12 +818,30 @@ async fn pipe_ai_usage(
     let rows = data.len();
     Ok(Json(AnalyticsResponse {
         meta: vec![
-            ColumnMeta { name: "model".into(), col_type: "String".into() },
-            ColumnMeta { name: "total_calls".into(), col_type: "UInt64".into() },
-            ColumnMeta { name: "total_prompt_tokens".into(), col_type: "UInt64".into() },
-            ColumnMeta { name: "total_completion_tokens".into(), col_type: "UInt64".into() },
-            ColumnMeta { name: "total_tokens".into(), col_type: "UInt64".into() },
-            ColumnMeta { name: "avg_duration_ms".into(), col_type: "Float64".into() },
+            ColumnMeta {
+                name: "model".into(),
+                col_type: "String".into(),
+            },
+            ColumnMeta {
+                name: "total_calls".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "total_prompt_tokens".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "total_completion_tokens".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "total_tokens".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "avg_duration_ms".into(),
+                col_type: "Float64".into(),
+            },
         ],
         data,
         rows,
@@ -733,8 +880,18 @@ async fn list_pipes() -> Json<Vec<PipeInfo>> {
             name: "top_domains".into(),
             description: "Top domains by request count".into(),
             parameters: vec![
-                ParamInfo { name: "hours".into(), param_type: "integer".into(), required: false, default: Some("24".into()) },
-                ParamInfo { name: "limit".into(), param_type: "integer".into(), required: false, default: Some("20".into()) },
+                ParamInfo {
+                    name: "hours".into(),
+                    param_type: "integer".into(),
+                    required: false,
+                    default: Some("24".into()),
+                },
+                ParamInfo {
+                    name: "limit".into(),
+                    param_type: "integer".into(),
+                    required: false,
+                    default: Some("20".into()),
+                },
             ],
             endpoint: "/analytics/v0/pipes/top_domains.json".into(),
         },
@@ -742,49 +899,81 @@ async fn list_pipes() -> Json<Vec<PipeInfo>> {
             name: "domain_stats".into(),
             description: "Statistics for a specific domain".into(),
             parameters: vec![
-                ParamInfo { name: "domain".into(), param_type: "string".into(), required: true, default: None },
-                ParamInfo { name: "hours".into(), param_type: "integer".into(), required: false, default: Some("24".into()) },
+                ParamInfo {
+                    name: "domain".into(),
+                    param_type: "string".into(),
+                    required: true,
+                    default: None,
+                },
+                ParamInfo {
+                    name: "hours".into(),
+                    param_type: "integer".into(),
+                    required: false,
+                    default: Some("24".into()),
+                },
             ],
             endpoint: "/analytics/v0/pipes/domain_stats.json".into(),
         },
         PipeInfo {
             name: "hourly_stats".into(),
             description: "Hourly crawl statistics".into(),
-            parameters: vec![
-                ParamInfo { name: "hours".into(), param_type: "integer".into(), required: false, default: Some("24".into()) },
-            ],
+            parameters: vec![ParamInfo {
+                name: "hours".into(),
+                param_type: "integer".into(),
+                required: false,
+                default: Some("24".into()),
+            }],
             endpoint: "/analytics/v0/pipes/hourly_stats.json".into(),
         },
         PipeInfo {
             name: "error_distribution".into(),
             description: "Error breakdown by status code".into(),
-            parameters: vec![
-                ParamInfo { name: "hours".into(), param_type: "integer".into(), required: false, default: Some("24".into()) },
-            ],
+            parameters: vec![ParamInfo {
+                name: "hours".into(),
+                param_type: "integer".into(),
+                required: false,
+                default: Some("24".into()),
+            }],
             endpoint: "/analytics/v0/pipes/error_distribution.json".into(),
         },
         PipeInfo {
             name: "job_stats".into(),
             description: "Statistics for a specific job".into(),
-            parameters: vec![
-                ParamInfo { name: "job_id".into(), param_type: "string".into(), required: true, default: None },
-            ],
+            parameters: vec![ParamInfo {
+                name: "job_id".into(),
+                param_type: "string".into(),
+                required: true,
+                default: None,
+            }],
             endpoint: "/analytics/v0/pipes/job_stats.json".into(),
         },
         PipeInfo {
             name: "kpis".into(),
             description: "Key performance indicators summary".into(),
-            parameters: vec![
-                ParamInfo { name: "hours".into(), param_type: "integer".into(), required: false, default: Some("24".into()) },
-            ],
+            parameters: vec![ParamInfo {
+                name: "hours".into(),
+                param_type: "integer".into(),
+                required: false,
+                default: Some("24".into()),
+            }],
             endpoint: "/analytics/v0/pipes/kpis.json".into(),
         },
         PipeInfo {
             name: "ai_usage".into(),
             description: "AI/LLM token usage per model".into(),
             parameters: vec![
-                ParamInfo { name: "hours".into(), param_type: "integer".into(), required: false, default: Some("24".into()) },
-                ParamInfo { name: "account_id".into(), param_type: "string".into(), required: false, default: None },
+                ParamInfo {
+                    name: "hours".into(),
+                    param_type: "integer".into(),
+                    required: false,
+                    default: Some("24".into()),
+                },
+                ParamInfo {
+                    name: "account_id".into(),
+                    param_type: "string".into(),
+                    required: false,
+                    default: None,
+                },
             ],
             endpoint: "/analytics/v0/pipes/ai_usage.json".into(),
         },
@@ -810,7 +999,10 @@ pub fn create_analytics_router(state: Arc<AnalyticsState>) -> Router {
         .route("/pipes/top_domains.json", get(pipe_top_domains))
         .route("/pipes/domain_stats.json", get(pipe_domain_stats))
         .route("/pipes/hourly_stats.json", get(pipe_hourly_stats))
-        .route("/pipes/error_distribution.json", get(pipe_error_distribution))
+        .route(
+            "/pipes/error_distribution.json",
+            get(pipe_error_distribution),
+        )
         .route("/pipes/job_stats.json", get(pipe_job_stats))
         .route("/pipes/kpis.json", get(pipe_kpis))
         .route("/pipes/ai_usage.json", get(pipe_ai_usage))
@@ -818,6 +1010,7 @@ pub fn create_analytics_router(state: Arc<AnalyticsState>) -> Router {
 }
 
 /// Try to initialize analytics (returns None if ClickHouse not configured)
+#[allow(dead_code)]
 pub async fn try_init_analytics() -> Option<Arc<AnalyticsState>> {
     let config = AnalyticsConfig::from_env()?;
 
@@ -827,7 +1020,10 @@ pub async fn try_init_analytics() -> Option<Arc<AnalyticsState>> {
             Some(Arc::new(state))
         }
         Err(e) => {
-            warn!("Failed to initialize analytics: {}. Analytics endpoints will be disabled.", e);
+            warn!(
+                "Failed to initialize analytics: {}. Analytics endpoints will be disabled.",
+                e
+            );
             None
         }
     }

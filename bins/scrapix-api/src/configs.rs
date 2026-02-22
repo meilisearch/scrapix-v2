@@ -112,8 +112,7 @@ pub fn compute_next_run(cron_expr: &str) -> Result<chrono::DateTime<chrono::Utc>
     use croner::Cron;
     use std::str::FromStr;
 
-    let cron = Cron::from_str(cron_expr)
-        .map_err(|e| format!("Invalid cron expression: {e}"))?;
+    let cron = Cron::from_str(cron_expr).map_err(|e| format!("Invalid cron expression: {e}"))?;
 
     cron.find_next_occurrence(&chrono::Utc::now(), false)
         .map_err(|e| format!("Failed to compute next run: {e}"))
@@ -121,12 +120,8 @@ pub fn compute_next_run(cron_expr: &str) -> Result<chrono::DateTime<chrono::Utc>
 
 fn row_to_record(row: &sqlx::postgres::PgRow) -> CrawlConfigRecord {
     CrawlConfigRecord {
-        id: row
-            .get::<uuid::Uuid, _>("id")
-            .to_string(),
-        account_id: row
-            .get::<uuid::Uuid, _>("account_id")
-            .to_string(),
+        id: row.get::<uuid::Uuid, _>("id").to_string(),
+        account_id: row.get::<uuid::Uuid, _>("account_id").to_string(),
         name: row.get("name"),
         description: row.get("description"),
         config: row.get("config"),
@@ -180,8 +175,8 @@ pub async fn create_config(
             Some(compute_next_run(cron_expr).map_err(|e| ApiError::new(e, "validation_error"))?)
         } else {
             // Parse to validate even if not enabled
-            let _ = compute_next_run(cron_expr)
-                .map_err(|e| ApiError::new(e, "validation_error"))?;
+            let _ =
+                compute_next_run(cron_expr).map_err(|e| ApiError::new(e, "validation_error"))?;
             None
         }
     } else {
@@ -320,10 +315,7 @@ pub async fn update_config(
         .map_err(|e| ApiError::new(format!("Database error: {e}"), "internal_error"))?
         .ok_or_else(|| ApiError::new("Config not found", "not_found"))?;
 
-    let new_name = req
-        .name
-        .as_deref()
-        .unwrap_or_else(|| existing.get("name"));
+    let new_name = req.name.as_deref().unwrap_or_else(|| existing.get("name"));
     if new_name.trim().is_empty() {
         return Err(ApiError::new("Name cannot be empty", "validation_error"));
     }
@@ -345,7 +337,9 @@ pub async fn update_config(
         None => existing.get("cron_expression"),
     };
 
-    let new_cron_enabled = req.cron_enabled.unwrap_or_else(|| existing.get("cron_enabled"));
+    let new_cron_enabled = req
+        .cron_enabled
+        .unwrap_or_else(|| existing.get("cron_enabled"));
 
     // Recompute next_run_at
     let new_next_run_at = if new_cron_enabled {
@@ -376,10 +370,7 @@ pub async fn update_config(
     .map_err(|e| {
         if let sqlx::Error::Database(ref db_err) = e {
             if db_err.constraint() == Some("crawl_configs_account_id_name_key") {
-                return ApiError::new(
-                    "A config with this name already exists",
-                    "conflict",
-                );
+                return ApiError::new("A config with this name already exists", "conflict");
             }
         }
         ApiError::new(format!("Failed to update config: {e}"), "internal_error")
@@ -413,13 +404,12 @@ pub async fn delete_config(
         .parse()
         .map_err(|_| ApiError::new("Invalid config ID", "validation_error"))?;
 
-    let result =
-        sqlx::query("DELETE FROM crawl_configs WHERE id = $1 AND account_id = $2")
-            .bind(config_uuid)
-            .bind(account_id)
-            .execute(pool)
-            .await
-            .map_err(|e| ApiError::new(format!("Failed to delete config: {e}"), "internal_error"))?;
+    let result = sqlx::query("DELETE FROM crawl_configs WHERE id = $1 AND account_id = $2")
+        .bind(config_uuid)
+        .bind(account_id)
+        .execute(pool)
+        .await
+        .map_err(|e| ApiError::new(format!("Failed to delete config: {e}"), "internal_error"))?;
 
     if result.rows_affected() == 0 {
         return Err(ApiError::new("Config not found", "not_found"));
@@ -470,13 +460,12 @@ pub async fn trigger_config(
     let response = do_create_crawl(&state, crawl_config).await?;
 
     // Update last_run_at and last_job_id
-    let _ = sqlx::query(
-        "UPDATE crawl_configs SET last_run_at = now(), last_job_id = $1 WHERE id = $2",
-    )
-    .bind(&response.job_id)
-    .bind(config_uuid)
-    .execute(pool)
-    .await;
+    let _ =
+        sqlx::query("UPDATE crawl_configs SET last_run_at = now(), last_job_id = $1 WHERE id = $2")
+            .bind(&response.job_id)
+            .bind(config_uuid)
+            .execute(pool)
+            .await;
 
     info!(
         config_id = %config_id,
@@ -553,12 +542,10 @@ async fn run_cron_tick(state: &Arc<AppState>, pool: &PgPool) -> Result<(), sqlx:
                     error = %e,
                     "Failed to deserialize stored config, disabling cron"
                 );
-                let _ = sqlx::query(
-                    "UPDATE crawl_configs SET cron_enabled = false WHERE id = $1",
-                )
-                .bind(config_id)
-                .execute(pool)
-                .await;
+                let _ = sqlx::query("UPDATE crawl_configs SET cron_enabled = false WHERE id = $1")
+                    .bind(config_id)
+                    .execute(pool)
+                    .await;
                 continue;
             }
         };
@@ -595,13 +582,11 @@ async fn run_cron_tick(state: &Arc<AppState>, pool: &PgPool) -> Result<(), sqlx:
 
                 // Advance next_run_at to avoid retry storm
                 let next_run = compute_next_run(&cron_expr).ok();
-                let _ = sqlx::query(
-                    "UPDATE crawl_configs SET next_run_at = $1 WHERE id = $2",
-                )
-                .bind(next_run)
-                .bind(config_id)
-                .execute(pool)
-                .await;
+                let _ = sqlx::query("UPDATE crawl_configs SET next_run_at = $1 WHERE id = $2")
+                    .bind(next_run)
+                    .bind(config_id)
+                    .execute(pool)
+                    .await;
             }
         }
     }

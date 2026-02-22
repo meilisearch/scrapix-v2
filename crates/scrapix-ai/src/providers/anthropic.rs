@@ -134,10 +134,9 @@ impl LlmProvider for AnthropicProvider {
             )));
         }
 
-        let resp: AnthropicResponse = response
-            .json()
-            .await
-            .map_err(|e| AiClientError::Config(format!("Failed to parse Anthropic response: {}", e)))?;
+        let resp: AnthropicResponse = response.json().await.map_err(|e| {
+            AiClientError::Config(format!("Failed to parse Anthropic response: {}", e))
+        })?;
 
         let content = resp
             .content

@@ -19,6 +19,7 @@ use sqlx::{postgres::PgPoolOptions, PgPool};
 #[derive(Debug, Clone)]
 pub struct AuthenticatedAccount {
     pub account_id: String,
+    #[allow(dead_code)]
     pub tier: String,
 }
 
@@ -26,6 +27,7 @@ pub struct AuthenticatedAccount {
 #[derive(Debug, Clone)]
 pub struct AuthenticatedUser {
     pub user_id: uuid::Uuid,
+    #[allow(dead_code)]
     pub email: String,
 }
 

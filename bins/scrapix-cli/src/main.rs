@@ -962,7 +962,11 @@ impl ApiClient {
 
     async fn analytics_pipes(&self) -> Result<Vec<PipeInfo>> {
         let url = format!("{}/analytics/v0/pipes", self.base_url);
-        let response = self.client.get(&url).send().await
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
             .context("Failed to connect to API server (is ClickHouse enabled?)")?;
 
         if response.status().is_success() {
@@ -973,8 +977,15 @@ impl ApiClient {
     }
 
     async fn analytics_kpis(&self, hours: u32) -> Result<AnalyticsResponse<KpisData>> {
-        let url = format!("{}/analytics/v0/pipes/kpis.json?hours={}", self.base_url, hours);
-        let response = self.client.get(&url).send().await
+        let url = format!(
+            "{}/analytics/v0/pipes/kpis.json?hours={}",
+            self.base_url, hours
+        );
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
             .context("Failed to connect to API server")?;
 
         if response.status().is_success() {
@@ -984,9 +995,20 @@ impl ApiClient {
         }
     }
 
-    async fn analytics_top_domains(&self, hours: u32, limit: u32) -> Result<AnalyticsResponse<TopDomainData>> {
-        let url = format!("{}/analytics/v0/pipes/top_domains.json?hours={}&limit={}", self.base_url, hours, limit);
-        let response = self.client.get(&url).send().await
+    async fn analytics_top_domains(
+        &self,
+        hours: u32,
+        limit: u32,
+    ) -> Result<AnalyticsResponse<TopDomainData>> {
+        let url = format!(
+            "{}/analytics/v0/pipes/top_domains.json?hours={}&limit={}",
+            self.base_url, hours, limit
+        );
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
             .context("Failed to connect to API server")?;
 
         if response.status().is_success() {
@@ -996,10 +1018,22 @@ impl ApiClient {
         }
     }
 
-    async fn analytics_domain_stats(&self, domain: &str, hours: u32) -> Result<AnalyticsResponse<TopDomainData>> {
-        let url = format!("{}/analytics/v0/pipes/domain_stats.json?domain={}&hours={}",
-            self.base_url, urlencoding::encode(domain), hours);
-        let response = self.client.get(&url).send().await
+    async fn analytics_domain_stats(
+        &self,
+        domain: &str,
+        hours: u32,
+    ) -> Result<AnalyticsResponse<TopDomainData>> {
+        let url = format!(
+            "{}/analytics/v0/pipes/domain_stats.json?domain={}&hours={}",
+            self.base_url,
+            urlencoding::encode(domain),
+            hours
+        );
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
             .context("Failed to connect to API server")?;
 
         if response.status().is_success() {
@@ -1010,8 +1044,15 @@ impl ApiClient {
     }
 
     async fn analytics_hourly(&self, hours: u32) -> Result<AnalyticsResponse<HourlyStatsData>> {
-        let url = format!("{}/analytics/v0/pipes/hourly_stats.json?hours={}", self.base_url, hours);
-        let response = self.client.get(&url).send().await
+        let url = format!(
+            "{}/analytics/v0/pipes/hourly_stats.json?hours={}",
+            self.base_url, hours
+        );
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
             .context("Failed to connect to API server")?;
 
         if response.status().is_success() {
@@ -1022,8 +1063,15 @@ impl ApiClient {
     }
 
     async fn analytics_error_dist(&self, hours: u32) -> Result<AnalyticsResponse<ErrorDistData>> {
-        let url = format!("{}/analytics/v0/pipes/error_distribution.json?hours={}", self.base_url, hours);
-        let response = self.client.get(&url).send().await
+        let url = format!(
+            "{}/analytics/v0/pipes/error_distribution.json?hours={}",
+            self.base_url, hours
+        );
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
             .context("Failed to connect to API server")?;
 
         if response.status().is_success() {
@@ -1034,8 +1082,15 @@ impl ApiClient {
     }
 
     async fn analytics_job_stats(&self, job_id: &str) -> Result<AnalyticsResponse<JobStatsData>> {
-        let url = format!("{}/analytics/v0/pipes/job_stats.json?job_id={}", self.base_url, job_id);
-        let response = self.client.get(&url).send().await
+        let url = format!(
+            "{}/analytics/v0/pipes/job_stats.json?job_id={}",
+            self.base_url, job_id
+        );
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
             .context("Failed to connect to API server")?;
 
         if response.status().is_success() {
@@ -1547,11 +1602,7 @@ async fn handle_validate(config_path: &str, verbose: bool, format: OutputFormat)
                 println!("{}", "Configuration Details:".bold());
                 println!("  {} {}", "Index UID:".dimmed(), config.index_uid);
                 println!("  {} {}", "Start URLs:".dimmed(), config.start_urls.len());
-                println!(
-                    "  {} {:?}",
-                    "Crawler Type:".dimmed(),
-                    config.crawler_type
-                );
+                println!("  {} {:?}", "Crawler Type:".dimmed(), config.crawler_type);
                 if let Some(depth) = config.max_depth {
                     println!("  {} {}", "Max Depth:".dimmed(), depth);
                 }
@@ -1790,7 +1841,10 @@ async fn handle_local(
 
                             if let Some(ref pb) = progress {
                                 pb.set_position(pages_crawled.load(Ordering::Relaxed));
-                                pb.set_message(format!("{} errors", pages_failed.load(Ordering::Relaxed)));
+                                pb.set_message(format!(
+                                    "{} errors",
+                                    pages_failed.load(Ordering::Relaxed)
+                                ));
                             }
                         }
                         Err(e) => {
@@ -1931,11 +1985,7 @@ async fn queue_urls(
 // Diagnostic Command Handlers
 // ============================================================================
 
-async fn handle_stats(
-    client: &ApiClient,
-    _verbose: bool,
-    format: OutputFormat,
-) -> Result<()> {
+async fn handle_stats(client: &ApiClient, _verbose: bool, format: OutputFormat) -> Result<()> {
     let stats = client.get_stats().await?;
 
     match format {
@@ -1953,7 +2003,11 @@ async fn handle_stats(
                 println!(
                     "  {} {}",
                     "Status:".dimmed(),
-                    if ms.available { "connected".green() } else { "unavailable".red() }
+                    if ms.available {
+                        "connected".green()
+                    } else {
+                        "unavailable".red()
+                    }
                 );
                 println!("  {} {}", "URL:".dimmed(), ms.url);
             } else {
@@ -1987,7 +2041,8 @@ async fn handle_stats(
                 stats.diagnostics.total_requests
             );
             let success_rate = if stats.diagnostics.total_requests > 0 {
-                (stats.diagnostics.total_successes as f64 / stats.diagnostics.total_requests as f64 * 100.0) as u32
+                (stats.diagnostics.total_successes as f64 / stats.diagnostics.total_requests as f64
+                    * 100.0) as u32
             } else {
                 0
             };
@@ -2004,7 +2059,10 @@ async fn handle_stats(
                 stats.diagnostics.recent_errors_count
             );
             println!();
-            println!("{}", format!("Collected at: {}", stats.collected_at).dimmed());
+            println!(
+                "{}",
+                format!("Collected at: {}", stats.collected_at).dimmed()
+            );
             println!();
         }
     }
@@ -2043,7 +2101,11 @@ async fn handle_errors_cmd(
                 let mut codes: Vec<_> = errors.by_status.iter().collect();
                 codes.sort_by_key(|(k, _)| k.parse::<u16>().unwrap_or(0));
                 for (code, count) in codes {
-                    let color = if code.starts_with('5') { "red" } else { "yellow" };
+                    let color = if code.starts_with('5') {
+                        "red"
+                    } else {
+                        "yellow"
+                    };
                     println!("  {} {}", code.color(color), count);
                 }
                 println!();
@@ -2082,7 +2144,10 @@ async fn handle_errors_cmd(
             }
 
             println!();
-            println!("{}", format!("Source: {} (recent only)", errors.source).dimmed());
+            println!(
+                "{}",
+                format!("Source: {} (recent only)", errors.source).dimmed()
+            );
             println!();
         }
     }
@@ -2246,13 +2311,13 @@ async fn handle_analytics_kpis(client: &ApiClient, hours: u32, format: OutputFor
             );
             println!();
             println!("  {} {}", "Total Crawls:".dimmed(), kpis.total_crawls);
-            println!("  {} {}", "Total Bytes:".dimmed(), format_bytes(kpis.total_bytes));
-            println!("  {} {}", "Unique Domains:".dimmed(), kpis.unique_domains);
             println!(
-                "  {} {:.1}%",
-                "Success Rate:".dimmed(),
-                kpis.success_rate
+                "  {} {}",
+                "Total Bytes:".dimmed(),
+                format_bytes(kpis.total_bytes)
             );
+            println!("  {} {}", "Unique Domains:".dimmed(), kpis.unique_domains);
+            println!("  {} {:.1}%", "Success Rate:".dimmed(), kpis.success_rate);
             println!(
                 "  {} {:.0}ms",
                 "Avg Response Time:".dimmed(),
@@ -2376,7 +2441,11 @@ async fn handle_analytics_domain_stats(
                 "Avg Response Time:".dimmed(),
                 d.avg_response_time_ms
             );
-            println!("  {} {}", "Total Bytes:".dimmed(), format_bytes(d.total_bytes));
+            println!(
+                "  {} {}",
+                "Total Bytes:".dimmed(),
+                format_bytes(d.total_bytes)
+            );
             println!("  {} {}", "Unique URLs:".dimmed(), d.unique_urls);
             println!();
             println!(
@@ -2535,7 +2604,11 @@ async fn handle_analytics_job_stats(
                 j.failed_urls.to_string().red()
             );
             println!("  {} {:.1}%", "Success Rate:".dimmed(), j.success_rate);
-            println!("  {} {}", "Total Bytes:".dimmed(), format_bytes(j.total_bytes));
+            println!(
+                "  {} {}",
+                "Total Bytes:".dimmed(),
+                format_bytes(j.total_bytes)
+            );
             println!(
                 "  {} {:.0}ms",
                 "Avg Response Time:".dimmed(),
@@ -2561,18 +2634,34 @@ async fn handle_analytics_job_stats(
 // ============================================================================
 
 fn handle_bench(cmd: BenchCommands, format: OutputFormat) -> Result<()> {
-    use std::process::Command;
-
     match cmd {
-        BenchCommands::All { output, iterations, verbose } => {
-            run_benchmarks(&["wikipedia_e2e", "integrated_benchmarks"], &output, iterations, verbose, format)
-        }
-        BenchCommands::Wikipedia { output, iterations, verbose } => {
-            run_benchmarks(&["wikipedia_e2e"], &output, iterations, verbose, format)
-        }
-        BenchCommands::Integrated { output, iterations, verbose } => {
-            run_benchmarks(&["integrated_benchmarks"], &output, iterations, verbose, format)
-        }
+        BenchCommands::All {
+            output,
+            iterations,
+            verbose,
+        } => run_benchmarks(
+            &["wikipedia_e2e", "integrated_benchmarks"],
+            &output,
+            iterations,
+            verbose,
+            format,
+        ),
+        BenchCommands::Wikipedia {
+            output,
+            iterations,
+            verbose,
+        } => run_benchmarks(&["wikipedia_e2e"], &output, iterations, verbose, format),
+        BenchCommands::Integrated {
+            output,
+            iterations,
+            verbose,
+        } => run_benchmarks(
+            &["integrated_benchmarks"],
+            &output,
+            iterations,
+            verbose,
+            format,
+        ),
         BenchCommands::Parser { output, verbose } => {
             run_benchmarks(&["integrated_benchmarks"], &output, 1, verbose, format)
         }
@@ -2621,7 +2710,10 @@ fn run_benchmarks(
     for iteration in 1..=iterations {
         if iterations > 1 && format == OutputFormat::Text {
             println!();
-            print_info(&format!("=== Iteration {} of {} ===", iteration, iterations));
+            print_info(&format!(
+                "=== Iteration {} of {} ===",
+                iteration, iterations
+            ));
         }
 
         for bench in benches {
@@ -2710,36 +2802,35 @@ fn handle_k8s(cmd: K8sCommands, format: OutputFormat) -> Result<()> {
     use std::process::Command;
 
     // Check kubectl is available
-    let kubectl_check = Command::new("kubectl")
-        .args(["cluster-info"])
-        .output();
+    let kubectl_check = Command::new("kubectl").args(["cluster-info"]).output();
 
     if kubectl_check.is_err() || !kubectl_check.as_ref().unwrap().status.success() {
         anyhow::bail!("Cannot connect to Kubernetes cluster. Check your kubeconfig.");
     }
 
     match cmd {
-        K8sCommands::Deploy { namespace, overlay } => {
-            k8s_deploy(&namespace, &overlay, format)
-        }
-        K8sCommands::Destroy { namespace, overlay, yes } => {
-            k8s_destroy(&namespace, &overlay, yes, format)
-        }
-        K8sCommands::Status { namespace, watch } => {
-            k8s_status(&namespace, watch, format)
-        }
-        K8sCommands::Logs { component, namespace, follow } => {
-            k8s_logs(&component, &namespace, follow)
-        }
-        K8sCommands::Scale { component, replicas, namespace } => {
-            k8s_scale(&component, replicas, &namespace, format)
-        }
-        K8sCommands::Restart { component, namespace } => {
-            k8s_restart(&component, &namespace, format)
-        }
-        K8sCommands::PortForward { namespace } => {
-            k8s_port_forward(&namespace, format)
-        }
+        K8sCommands::Deploy { namespace, overlay } => k8s_deploy(&namespace, &overlay, format),
+        K8sCommands::Destroy {
+            namespace,
+            overlay,
+            yes,
+        } => k8s_destroy(&namespace, &overlay, yes, format),
+        K8sCommands::Status { namespace, watch } => k8s_status(&namespace, watch, format),
+        K8sCommands::Logs {
+            component,
+            namespace,
+            follow,
+        } => k8s_logs(&component, &namespace, follow),
+        K8sCommands::Scale {
+            component,
+            replicas,
+            namespace,
+        } => k8s_scale(&component, replicas, &namespace, format),
+        K8sCommands::Restart {
+            component,
+            namespace,
+        } => k8s_restart(&component, &namespace, format),
+        K8sCommands::PortForward { namespace } => k8s_port_forward(&namespace, format),
     }
 }
 
@@ -2763,7 +2854,14 @@ fn k8s_deploy(namespace: &str, overlay: &str, format: OutputFormat) -> Result<()
     // Create namespace
     print_info("Creating namespace...");
     let _ = Command::new("kubectl")
-        .args(["create", "namespace", namespace, "--dry-run=client", "-o", "yaml"])
+        .args([
+            "create",
+            "namespace",
+            namespace,
+            "--dry-run=client",
+            "-o",
+            "yaml",
+        ])
         .stdout(std::process::Stdio::piped())
         .spawn()?
         .wait_with_output()
@@ -2793,7 +2891,14 @@ fn k8s_deploy(namespace: &str, overlay: &str, format: OutputFormat) -> Result<()
     // Wait for rollout
     print_info("Waiting for deployments to be ready...");
     let _ = Command::new("kubectl")
-        .args(["rollout", "status", "deployment", "-n", namespace, "--timeout=300s"])
+        .args([
+            "rollout",
+            "status",
+            "deployment",
+            "-n",
+            namespace,
+            "--timeout=300s",
+        ])
         .status();
 
     print_success("Deployment complete!");
@@ -2835,7 +2940,14 @@ fn k8s_destroy(namespace: &str, overlay: &str, yes: bool, format: OutputFormat) 
     }
 
     let status = Command::new("kubectl")
-        .args(["delete", "-k", &overlay_path, "-n", namespace, "--ignore-not-found"])
+        .args([
+            "delete",
+            "-k",
+            &overlay_path,
+            "-n",
+            namespace,
+            "--ignore-not-found",
+        ])
         .status()
         .context("Failed to delete resources")?;
 
@@ -2854,7 +2966,17 @@ fn k8s_status(namespace: &str, watch: bool, format: OutputFormat) -> Result<()> 
     if watch {
         // Use watch command
         let _ = Command::new("watch")
-            .args(["-n", "2", "kubectl", "get", "pods,svc,deployments", "-n", namespace, "-o", "wide"])
+            .args([
+                "-n",
+                "2",
+                "kubectl",
+                "get",
+                "pods,svc,deployments",
+                "-n",
+                namespace,
+                "-o",
+                "wide",
+            ])
             .status();
         return Ok(());
     }
@@ -2907,7 +3029,12 @@ fn k8s_logs(component: &str, namespace: &str, follow: bool) -> Result<()> {
     let mut args = vec!["logs", "-n", namespace];
 
     if component == "all" {
-        args.extend(["-l", "app.kubernetes.io/name=scrapix", "--all-containers", "--prefix"]);
+        args.extend([
+            "-l",
+            "app.kubernetes.io/name=scrapix",
+            "--all-containers",
+            "--prefix",
+        ]);
     } else {
         let deployment = match component {
             "api" => "deployment/scrapix-api",
@@ -2926,9 +3053,7 @@ fn k8s_logs(component: &str, namespace: &str, follow: bool) -> Result<()> {
 
     print_info(&format!("Streaming logs from {}...", component));
 
-    let _ = Command::new("kubectl")
-        .args(&args)
-        .status();
+    let _ = Command::new("kubectl").args(&args).status();
 
     Ok(())
 }
@@ -2945,13 +3070,19 @@ fn k8s_scale(component: &str, replicas: u32, namespace: &str, format: OutputForm
     };
 
     if format == OutputFormat::Text {
-        print_info(&format!("Scaling {} to {} replicas...", deployment, replicas));
+        print_info(&format!(
+            "Scaling {} to {} replicas...",
+            deployment, replicas
+        ));
     }
 
     let status = Command::new("kubectl")
         .args([
-            "scale", "deployment", deployment,
-            "-n", namespace,
+            "scale",
+            "deployment",
+            deployment,
+            "-n",
+            namespace,
             &format!("--replicas={}", replicas),
         ])
         .status()
@@ -2963,7 +3094,15 @@ fn k8s_scale(component: &str, replicas: u32, namespace: &str, format: OutputForm
 
     // Wait for rollout
     let _ = Command::new("kubectl")
-        .args(["rollout", "status", "deployment", deployment, "-n", namespace, "--timeout=120s"])
+        .args([
+            "rollout",
+            "status",
+            "deployment",
+            deployment,
+            "-n",
+            namespace,
+            "--timeout=120s",
+        ])
         .status();
 
     print_success(&format!("Scaled {} to {} replicas", deployment, replicas));
@@ -2981,9 +3120,13 @@ fn k8s_restart(component: &str, namespace: &str, format: OutputFormat) -> Result
     let status = if component == "all" {
         Command::new("kubectl")
             .args([
-                "rollout", "restart", "deployment",
-                "-n", namespace,
-                "-l", "app.kubernetes.io/name=scrapix",
+                "rollout",
+                "restart",
+                "deployment",
+                "-n",
+                namespace,
+                "-l",
+                "app.kubernetes.io/name=scrapix",
             ])
             .status()
     } else {
@@ -2995,7 +3138,14 @@ fn k8s_restart(component: &str, namespace: &str, format: OutputFormat) -> Result
             _ => return Err(anyhow::anyhow!("Unknown component: {}", component)),
         };
         Command::new("kubectl")
-            .args(["rollout", "restart", "deployment", deployment, "-n", namespace])
+            .args([
+                "rollout",
+                "restart",
+                "deployment",
+                deployment,
+                "-n",
+                namespace,
+            ])
             .status()
     };
 
@@ -3003,7 +3153,14 @@ fn k8s_restart(component: &str, namespace: &str, format: OutputFormat) -> Result
 
     // Wait for rollout
     let _ = Command::new("kubectl")
-        .args(["rollout", "status", "deployment", "-n", namespace, "--timeout=120s"])
+        .args([
+            "rollout",
+            "status",
+            "deployment",
+            "-n",
+            namespace,
+            "--timeout=120s",
+        ])
         .status();
 
     print_success("Restart complete");
@@ -3026,19 +3183,37 @@ fn k8s_port_forward(namespace: &str, format: OutputFormat) -> Result<()> {
 
     // Start port forwards in background
     let _ = Command::new("kubectl")
-        .args(["port-forward", "-n", namespace, "svc/scrapix-api", "8080:8080"])
+        .args([
+            "port-forward",
+            "-n",
+            namespace,
+            "svc/scrapix-api",
+            "8080:8080",
+        ])
         .spawn();
 
     print_success("API Server: http://localhost:8080");
 
     let _ = Command::new("kubectl")
-        .args(["port-forward", "-n", namespace, "svc/meilisearch", "7700:7700"])
+        .args([
+            "port-forward",
+            "-n",
+            namespace,
+            "svc/meilisearch",
+            "7700:7700",
+        ])
         .spawn();
 
     print_success("Meilisearch: http://localhost:7700");
 
     let _ = Command::new("kubectl")
-        .args(["port-forward", "-n", namespace, "svc/redpanda-console", "8090:8080"])
+        .args([
+            "port-forward",
+            "-n",
+            namespace,
+            "svc/redpanda-console",
+            "8090:8080",
+        ])
         .spawn();
 
     print_success("Redpanda Console: http://localhost:8090");
@@ -3066,7 +3241,15 @@ fn handle_infra(cmd: InfraCommands, format: OutputFormat) -> Result<()> {
             }
 
             let status = Command::new("docker")
-                .args(["compose", "-f", "docker-compose.yml", "-f", "docker-compose.dev.yml", "up", "-d"])
+                .args([
+                    "compose",
+                    "-f",
+                    "docker-compose.yml",
+                    "-f",
+                    "docker-compose.dev.yml",
+                    "up",
+                    "-d",
+                ])
                 .status()
                 .context("Failed to start infrastructure")?;
 
@@ -3090,7 +3273,14 @@ fn handle_infra(cmd: InfraCommands, format: OutputFormat) -> Result<()> {
             }
 
             let status = Command::new("docker")
-                .args(["compose", "-f", "docker-compose.yml", "-f", "docker-compose.dev.yml", "down"])
+                .args([
+                    "compose",
+                    "-f",
+                    "docker-compose.yml",
+                    "-f",
+                    "docker-compose.dev.yml",
+                    "down",
+                ])
                 .status()
                 .context("Failed to stop infrastructure")?;
 
@@ -3105,7 +3295,14 @@ fn handle_infra(cmd: InfraCommands, format: OutputFormat) -> Result<()> {
             }
 
             let status = Command::new("docker")
-                .args(["compose", "-f", "docker-compose.yml", "-f", "docker-compose.dev.yml", "restart"])
+                .args([
+                    "compose",
+                    "-f",
+                    "docker-compose.yml",
+                    "-f",
+                    "docker-compose.dev.yml",
+                    "restart",
+                ])
                 .status()
                 .context("Failed to restart infrastructure")?;
 
@@ -3115,9 +3312,7 @@ fn handle_infra(cmd: InfraCommands, format: OutputFormat) -> Result<()> {
         }
 
         InfraCommands::Status => {
-            let _ = Command::new("docker")
-                .args(["compose", "ps"])
-                .status();
+            let _ = Command::new("docker").args(["compose", "ps"]).status();
         }
 
         InfraCommands::Logs { service, follow } => {
@@ -3131,9 +3326,7 @@ fn handle_infra(cmd: InfraCommands, format: OutputFormat) -> Result<()> {
                 args.push(svc);
             }
 
-            let _ = Command::new("docker")
-                .args(&args)
-                .status();
+            let _ = Command::new("docker").args(&args).status();
         }
 
         InfraCommands::Reset { yes } => {
@@ -3157,7 +3350,15 @@ fn handle_infra(cmd: InfraCommands, format: OutputFormat) -> Result<()> {
             }
 
             let status = Command::new("docker")
-                .args(["compose", "-f", "docker-compose.yml", "-f", "docker-compose.dev.yml", "down", "-v"])
+                .args([
+                    "compose",
+                    "-f",
+                    "docker-compose.yml",
+                    "-f",
+                    "docker-compose.dev.yml",
+                    "down",
+                    "-v",
+                ])
                 .status()
                 .context("Failed to reset infrastructure")?;
 
@@ -3212,13 +3413,25 @@ async fn main() -> Result<()> {
             output,
             concurrency,
             verbose,
-        } => handle_local(config_path, config, output, concurrency, verbose, cli.output).await,
+        } => {
+            handle_local(
+                config_path,
+                config,
+                output,
+                concurrency,
+                verbose,
+                cli.output,
+            )
+            .await
+        }
 
         Commands::Stats { verbose } => handle_stats(&client, verbose, cli.output).await,
 
         Commands::Errors { last, job } => handle_errors_cmd(&client, last, job, cli.output).await,
 
-        Commands::Domains { top, filter } => handle_domains_cmd(&client, top, filter, cli.output).await,
+        Commands::Domains { top, filter } => {
+            handle_domains_cmd(&client, top, filter, cli.output).await
+        }
 
         Commands::Analytics(cmd) => handle_analytics(&client, cmd, cli.output).await,
 

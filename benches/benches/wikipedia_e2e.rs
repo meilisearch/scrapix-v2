@@ -17,7 +17,6 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
@@ -56,7 +55,7 @@ fn generate_wikipedia_article(title: &str, category: &str, word_count: usize) ->
 
     // Generate internal links
     let links: Vec<String> = (0..rng.gen_range(30..80))
-        .map(|i| {
+        .map(|_i| {
             let link_title: String = (0..rng.gen_range(5..20))
                 .map(|_| rng.sample(Alphanumeric) as char)
                 .collect();
@@ -194,12 +193,13 @@ fn bench_wikipedia_parsing(c: &mut Criterion) {
     });
 
     // Report throughput
-    println!(
-        "\n[Wikipedia Parsing Stats]"
-    );
+    println!("\n[Wikipedia Parsing Stats]");
     println!("  Total pages: 1,000");
     println!("  Total HTML: {:.2} MB", total_bytes as f64 / 1_000_000.0);
-    println!("  Avg page size: {:.2} KB", total_bytes as f64 / 1000.0 / 1000.0);
+    println!(
+        "  Avg page size: {:.2} KB",
+        total_bytes as f64 / 1000.0 / 1000.0
+    );
 
     group.finish();
 }
@@ -211,47 +211,43 @@ fn bench_wikipedia_full_pipeline(c: &mut Criterion) {
 
     for page_count in [1_000, 10_000].iter() {
         let pages = generate_wikipedia_batch(*page_count);
-        let urls: Vec<_> = pages.iter().map(|(url, _)| url.clone()).collect();
+        let _urls: Vec<_> = pages.iter().map(|(url, _)| url.clone()).collect();
 
-        group.bench_with_input(
-            BenchmarkId::new("pages", page_count),
-            &pages,
-            |b, pages| {
-                let dedup = UrlDedup::for_capacity(*page_count * 2, 0.01);
-                let queue = PriorityQueue::with_defaults();
-                let parser = HtmlParserBuilder::new()
-                    .extract_content(true)
-                    .convert_to_markdown(true)
-                    .detect_language(true)
-                    .build();
+        group.bench_with_input(BenchmarkId::new("pages", page_count), &pages, |b, pages| {
+            let dedup = UrlDedup::for_capacity(*page_count * 2, 0.01);
+            let queue = PriorityQueue::with_defaults();
+            let parser = HtmlParserBuilder::new()
+                .extract_content(true)
+                .convert_to_markdown(true)
+                .detect_language(true)
+                .build();
 
-                b.iter(|| {
-                    // Phase 1: URL deduplication
-                    for (i, (url, _)) in pages.iter().enumerate() {
-                        if !dedup.check_and_mark(url) {
-                            queue.push(CrawlUrl::new(url.clone(), (i % 5) as u32));
-                        }
+            b.iter(|| {
+                // Phase 1: URL deduplication
+                for (i, (url, _)) in pages.iter().enumerate() {
+                    if !dedup.check_and_mark(url) {
+                        queue.push(CrawlUrl::new(url.clone(), (i % 5) as u32));
                     }
+                }
 
-                    // Phase 2: Parse pages and create documents
-                    let mut documents = Vec::with_capacity(pages.len());
-                    for (url, page) in pages {
-                        if let Ok(parsed) = parser.parse(page) {
-                            let mut doc = Document::new(url, "en.wikipedia.org");
-                            doc.title = parsed.title;
-                            doc.content = parsed.content;
-                            doc.markdown = parsed.markdown;
-                            doc.language = parsed.language;
-                            documents.push(doc);
-                        }
+                // Phase 2: Parse pages and create documents
+                let mut documents = Vec::with_capacity(pages.len());
+                for (url, page) in pages {
+                    if let Ok(parsed) = parser.parse(page) {
+                        let mut doc = Document::new(url, "en.wikipedia.org");
+                        doc.title = parsed.title;
+                        doc.content = parsed.content;
+                        doc.markdown = parsed.markdown;
+                        doc.language = parsed.language;
+                        documents.push(doc);
                     }
+                }
 
-                    black_box(documents);
-                    dedup.clear();
-                    queue.clear();
-                });
-            },
-        );
+                black_box(documents);
+                dedup.clear();
+                queue.clear();
+            });
+        });
     }
 
     group.finish();
@@ -295,10 +291,7 @@ fn bench_wikipedia_100k_estimate(c: &mut Criterion) {
             let chunk_size = pages.len() / 4;
             let handles: Vec<_> = (0..4)
                 .map(|t| {
-                    let pages_chunk: Vec<_> = pages[t * chunk_size..(t + 1) * chunk_size]
-                        .iter()
-                        .cloned()
-                        .collect();
+                    let pages_chunk: Vec<_> = pages[t * chunk_size..(t + 1) * chunk_size].to_vec();
                     let dedup = Arc::clone(&dedup);
                     let parsed_count = Arc::clone(&parsed_count);
                     let parser = HtmlParserBuilder::new()
@@ -309,10 +302,8 @@ fn bench_wikipedia_100k_estimate(c: &mut Criterion) {
 
                     std::thread::spawn(move || {
                         for (url, page) in pages_chunk {
-                            if !dedup.check_and_mark(&url) {
-                                if parser.parse(&page).is_ok() {
-                                    parsed_count.fetch_add(1, Ordering::Relaxed);
-                                }
+                            if !dedup.check_and_mark(&url) && parser.parse(&page).is_ok() {
+                                parsed_count.fetch_add(1, Ordering::Relaxed);
                             }
                         }
                     })

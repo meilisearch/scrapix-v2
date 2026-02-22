@@ -12,7 +12,7 @@ use meilisearch_sdk::{
     task_info::TaskInfo,
     tasks::TasksSearchQuery,
 };
-use tracing::{debug, info, warn, instrument};
+use tracing::{debug, info, instrument, warn};
 
 use scrapix_core::{Document, Result, ScrapixError};
 
@@ -284,7 +284,9 @@ impl MeilisearchStorage {
         let task = index
             .add_documents(&[doc], Some(&self.config.primary_key))
             .await
-            .map_err(|e| ScrapixError::Storage(format!("Failed to add document to {}: {}", index_uid, e)))?;
+            .map_err(|e| {
+                ScrapixError::Storage(format!("Failed to add document to {}: {}", index_uid, e))
+            })?;
 
         debug!(
             task_uid = task.task_uid,
@@ -321,7 +323,9 @@ impl MeilisearchStorage {
         let task = index
             .add_documents(&docs, Some(&self.config.primary_key))
             .await
-            .map_err(|e| ScrapixError::Storage(format!("Failed to add documents to {}: {}", index_uid, e)))?;
+            .map_err(|e| {
+                ScrapixError::Storage(format!("Failed to add documents to {}: {}", index_uid, e))
+            })?;
 
         info!(
             count,
@@ -445,7 +449,10 @@ impl MeilisearchStorage {
         temp_index: &str,
     ) -> Result<()> {
         let client = Client::new(meilisearch_url, api_key).map_err(|e| {
-            ScrapixError::Storage(format!("Failed to create Meilisearch client for swap: {}", e))
+            ScrapixError::Storage(format!(
+                "Failed to create Meilisearch client for swap: {}",
+                e
+            ))
         })?;
 
         // Ensure the target index exists (first crawl case)
@@ -474,11 +481,13 @@ impl MeilisearchStorage {
 
         // Wait for swap to complete
         task_info
-            .wait_for_completion(&client, Some(Duration::from_millis(200)), Some(Duration::from_secs(60)))
+            .wait_for_completion(
+                &client,
+                Some(Duration::from_millis(200)),
+                Some(Duration::from_secs(60)),
+            )
             .await
-            .map_err(|e| {
-                ScrapixError::Storage(format!("Swap task failed: {}", e))
-            })?;
+            .map_err(|e| ScrapixError::Storage(format!("Swap task failed: {}", e)))?;
 
         info!(
             target = %target_index,
@@ -505,7 +514,10 @@ impl MeilisearchStorage {
         index_uid: &str,
     ) -> Result<()> {
         let client = Client::new(meilisearch_url, api_key).map_err(|e| {
-            ScrapixError::Storage(format!("Failed to create Meilisearch client for cleanup: {}", e))
+            ScrapixError::Storage(format!(
+                "Failed to create Meilisearch client for cleanup: {}",
+                e
+            ))
         })?;
 
         Self::delete_index_with_client(&client, index_uid).await
@@ -513,14 +525,16 @@ impl MeilisearchStorage {
 
     /// Delete an index via the given client.
     async fn delete_index_with_client(client: &Client, index_uid: &str) -> Result<()> {
-        let task_info = client
-            .index(index_uid)
-            .delete()
-            .await
-            .map_err(|e| ScrapixError::Storage(format!("Failed to delete index {}: {}", index_uid, e)))?;
+        let task_info = client.index(index_uid).delete().await.map_err(|e| {
+            ScrapixError::Storage(format!("Failed to delete index {}: {}", index_uid, e))
+        })?;
 
         task_info
-            .wait_for_completion(client, Some(Duration::from_millis(200)), Some(Duration::from_secs(30)))
+            .wait_for_completion(
+                client,
+                Some(Duration::from_millis(200)),
+                Some(Duration::from_secs(30)),
+            )
             .await
             .map_err(|e| {
                 ScrapixError::Storage(format!("Delete index task failed for {}: {}", index_uid, e))
@@ -553,7 +567,10 @@ impl MeilisearchStorage {
                 .with_statuses(["enqueued", "processing"]);
 
             let result = client.get_tasks_with(&query).await.map_err(|e| {
-                ScrapixError::Storage(format!("Failed to query tasks for index {}: {}", index_uid, e))
+                ScrapixError::Storage(format!(
+                    "Failed to query tasks for index {}: {}",
+                    index_uid, e
+                ))
             })?;
 
             let pending_count = result.results.len();

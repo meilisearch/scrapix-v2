@@ -207,7 +207,9 @@ impl AiClient {
 
     /// Create a new AI client with usage tracking enabled.
     /// Returns the client and a receiver that emits an `AiUsageEvent` for every successful LLM call.
-    pub fn with_usage_tracking(config: AiClientConfig) -> Result<(Self, AiUsageReceiver), AiClientError> {
+    pub fn with_usage_tracking(
+        config: AiClientConfig,
+    ) -> Result<(Self, AiUsageReceiver), AiClientError> {
         let mut client = Self::new(config)?;
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         client.usage_tx = Some(tx);
@@ -270,8 +272,7 @@ impl AiClient {
             _ => "gpt-4", // Default to gpt-4 tokenizer for non-OpenAI models
         };
 
-        get_bpe_from_model(tiktoken_model)
-            .map_err(|e| AiClientError::TokenizerError(e.to_string()))
+        get_bpe_from_model(tiktoken_model).map_err(|e| AiClientError::TokenizerError(e.to_string()))
     }
 
     /// Count tokens in a text for a specific model
@@ -281,7 +282,11 @@ impl AiClient {
     }
 
     /// Truncate text to fit within a token limit
-    pub fn truncate_to_tokens(text: &str, max_tokens: usize, model: &str) -> Result<String, AiClientError> {
+    pub fn truncate_to_tokens(
+        text: &str,
+        max_tokens: usize,
+        model: &str,
+    ) -> Result<String, AiClientError> {
         let bpe = Self::get_tokenizer(model)?;
         let tokens = bpe.encode_with_special_tokens(text);
 

@@ -280,12 +280,14 @@ impl S3ConfigBuilder {
 
     /// Build the S3Config.
     pub fn build(self) -> Result<S3Config, ObjectStorageError> {
-        let bucket = self.bucket.ok_or_else(|| {
-            ObjectStorageError::ConfigError("bucket is required".to_string())
-        })?;
+        let bucket = self
+            .bucket
+            .ok_or_else(|| ObjectStorageError::ConfigError("bucket is required".to_string()))?;
 
         Ok(S3Config {
-            endpoint: self.endpoint.unwrap_or_else(|| "http://localhost:9000".to_string()),
+            endpoint: self
+                .endpoint
+                .unwrap_or_else(|| "http://localhost:9000".to_string()),
             bucket,
             region: self.region.unwrap_or_else(default_region),
             access_key: self.access_key,
@@ -344,16 +346,14 @@ impl S3Storage {
 
     fn create_credentials(config: &S3Config) -> Result<Credentials, ObjectStorageError> {
         match (&config.access_key, &config.secret_key) {
-            (Some(access), Some(secret)) => {
-                Credentials::new(
-                    Some(access),
-                    Some(secret),
-                    config.security_token.as_deref(),
-                    config.session_token.as_deref(),
-                    None,
-                )
-                .map_err(|e| ObjectStorageError::CredentialsError(e.to_string()))
-            }
+            (Some(access), Some(secret)) => Credentials::new(
+                Some(access),
+                Some(secret),
+                config.security_token.as_deref(),
+                config.session_token.as_deref(),
+                None,
+            )
+            .map_err(|e| ObjectStorageError::CredentialsError(e.to_string())),
             _ => {
                 // Try to load from environment or IAM
                 Credentials::default()
@@ -521,10 +521,7 @@ impl S3Storage {
 
         debug!(prefix = %full_prefix, "Listing objects");
 
-        let results = self
-            .bucket
-            .list(full_prefix, None)
-            .await?;
+        let results = self.bucket.list(full_prefix, None).await?;
 
         let mut objects = Vec::new();
         let limit = max_keys.unwrap_or(usize::MAX);

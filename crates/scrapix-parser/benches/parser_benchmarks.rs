@@ -13,10 +13,7 @@ use std::collections::HashMap;
 use chrono::Utc;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use scrapix_core::RawPage;
-use scrapix_parser::{
-    extract_content, html_to_markdown, HtmlParser, HtmlParserBuilder,
-    detect_language,
-};
+use scrapix_parser::{detect_language, extract_content, html_to_markdown, HtmlParserBuilder};
 
 // =============================================================================
 // TEST HTML CONTENT
@@ -305,11 +302,15 @@ fn bench_markdown_conversion(c: &mut Criterion) {
     // Large HTML
     let large_html = generate_large_html(100, 500);
     group.throughput(Throughput::Bytes(large_html.len() as u64));
-    group.bench_with_input(BenchmarkId::new("large_html", "100p"), &large_html, |b, html| {
-        b.iter(|| {
-            black_box(html_to_markdown(html));
-        });
-    });
+    group.bench_with_input(
+        BenchmarkId::new("large_html", "100p"),
+        &large_html,
+        |b, html| {
+            b.iter(|| {
+                black_box(html_to_markdown(html));
+            });
+        },
+    );
 
     group.finish();
 }
@@ -332,20 +333,28 @@ fn bench_content_extraction(c: &mut Criterion) {
     // Large HTML
     let large_html = generate_large_html(100, 500);
     group.throughput(Throughput::Bytes(large_html.len() as u64));
-    group.bench_with_input(BenchmarkId::new("large_html", "100p"), &large_html, |b, html| {
-        b.iter(|| {
-            black_box(extract_content(html));
-        });
-    });
+    group.bench_with_input(
+        BenchmarkId::new("large_html", "100p"),
+        &large_html,
+        |b, html| {
+            b.iter(|| {
+                black_box(extract_content(html));
+            });
+        },
+    );
 
     // Very large HTML
     let very_large_html = generate_large_html(500, 2000);
     group.throughput(Throughput::Bytes(very_large_html.len() as u64));
-    group.bench_with_input(BenchmarkId::new("very_large_html", "500p"), &very_large_html, |b, html| {
-        b.iter(|| {
-            black_box(extract_content(html));
-        });
-    });
+    group.bench_with_input(
+        BenchmarkId::new("very_large_html", "500p"),
+        &very_large_html,
+        |b, html| {
+            b.iter(|| {
+                black_box(extract_content(html));
+            });
+        },
+    );
 
     group.finish();
 }
@@ -433,9 +442,6 @@ criterion_group!(
     bench_language_detection,
 );
 
-criterion_group!(
-    throughput_benches,
-    bench_pages_per_second,
-);
+criterion_group!(throughput_benches, bench_pages_per_second,);
 
 criterion_main!(parsing_benches, conversion_benches, throughput_benches);

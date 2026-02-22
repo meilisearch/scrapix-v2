@@ -3,10 +3,10 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
-    pub sub: String,   // user_id
+    pub sub: String, // user_id
     pub email: String,
-    pub exp: usize,    // expiry (unix timestamp)
-    pub iat: usize,    // issued at
+    pub exp: usize, // expiry (unix timestamp)
+    pub iat: usize, // issued at
 }
 
 pub fn encode_jwt(
@@ -28,10 +28,7 @@ pub fn encode_jwt(
     )
 }
 
-pub fn decode_jwt(
-    token: &str,
-    secret: &str,
-) -> Result<Claims, jsonwebtoken::errors::Error> {
+pub fn decode_jwt(token: &str, secret: &str) -> Result<Claims, jsonwebtoken::errors::Error> {
     let data = decode::<Claims>(
         token,
         &DecodingKey::from_secret(secret.as_bytes()),

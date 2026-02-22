@@ -481,10 +481,9 @@ impl WebDriverRenderer {
         let title = client.title().await.ok();
 
         // Get HTML content
-        let html = client
-            .source()
-            .await
-            .map_err(|e| WebDriverError::NavigationFailed(format!("Failed to get source: {}", e)))?;
+        let html = client.source().await.map_err(|e| {
+            WebDriverError::NavigationFailed(format!("Failed to get source: {}", e))
+        })?;
 
         let render_duration = start.elapsed();
 
@@ -550,10 +549,9 @@ impl WebDriverRenderer {
 
         let title = client.title().await.ok();
 
-        let html = client
-            .source()
-            .await
-            .map_err(|e| WebDriverError::NavigationFailed(format!("Failed to get source: {}", e)))?;
+        let html = client.source().await.map_err(|e| {
+            WebDriverError::NavigationFailed(format!("Failed to get source: {}", e))
+        })?;
 
         // Take screenshot
         let screenshot = client
@@ -703,10 +701,9 @@ impl WebDriverRenderer {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Get the resulting page source
-        let html = client
-            .source()
-            .await
-            .map_err(|e| WebDriverError::NavigationFailed(format!("Failed to get source: {}", e)))?;
+        let html = client.source().await.map_err(|e| {
+            WebDriverError::NavigationFailed(format!("Failed to get source: {}", e))
+        })?;
 
         if let Err(e) = client.close().await {
             warn!(error = %e, "Failed to close WebDriver session");
@@ -759,7 +756,7 @@ impl WebDriverRenderer {
         Ok(RawPage {
             url: url.url.clone(),
             final_url: result.final_url,
-            status: 200, // WebDriver doesn't expose HTTP status
+            status: 200,             // WebDriver doesn't expose HTTP status
             headers: HashMap::new(), // WebDriver doesn't expose headers
             html: result.html,
             content_type: Some("text/html".to_string()),
@@ -1045,7 +1042,10 @@ mod tests {
 
     #[test]
     fn test_capabilities_firefox() {
-        let renderer = WebDriverRendererBuilder::new().firefox().headless(true).build();
+        let renderer = WebDriverRendererBuilder::new()
+            .firefox()
+            .headless(true)
+            .build();
 
         let caps = renderer.build_capabilities();
         assert_eq!(caps.get("browserName"), Some(&json!("firefox")));
@@ -1053,7 +1053,10 @@ mod tests {
 
     #[test]
     fn test_capabilities_chrome() {
-        let renderer = WebDriverRendererBuilder::new().chrome().headless(true).build();
+        let renderer = WebDriverRendererBuilder::new()
+            .chrome()
+            .headless(true)
+            .build();
 
         let caps = renderer.build_capabilities();
         assert_eq!(caps.get("browserName"), Some(&json!("chrome")));

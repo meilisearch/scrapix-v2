@@ -332,7 +332,8 @@ impl Summarizer {
 
         let (truncated_content, _) = self.truncate_content(content)?;
 
-        let system_prompt = "Generate a concise, engaging headline or title for the following content. \
+        let system_prompt =
+            "Generate a concise, engaging headline or title for the following content. \
                             The headline should be informative and capture the main point. \
                             Respond with only the headline, no quotes or explanation.";
 
@@ -394,9 +395,11 @@ impl Summarizer {
             .filter(|line| !line.is_empty())
             .map(|line| {
                 // Remove common prefixes
-                line.trim_start_matches(|c: char| c.is_numeric() || c == '.' || c == '-' || c == '*' || c == '•')
-                    .trim()
-                    .to_string()
+                line.trim_start_matches(|c: char| {
+                    c.is_numeric() || c == '.' || c == '-' || c == '*' || c == '•'
+                })
+                .trim()
+                .to_string()
             })
             .take(count)
             .collect();
@@ -490,7 +493,8 @@ impl Summarizer {
 
         let (truncated_content, _) = self.truncate_content(content)?;
 
-        let system_prompt = "Create a TL;DR (too long; didn't read) summary of the following content. \
+        let system_prompt =
+            "Create a TL;DR (too long; didn't read) summary of the following content. \
                             This should be a single sentence that captures the absolute essence. \
                             Respond with only the TL;DR, no prefix or explanation.";
 

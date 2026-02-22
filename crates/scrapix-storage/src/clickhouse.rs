@@ -588,7 +588,10 @@ impl ClickHouseStorage {
 
     /// Insert multiple crawl events in batch.
     #[instrument(skip(self, events), fields(count = events.len()))]
-    pub async fn insert_crawl_events(&self, events: Vec<CrawlEvent>) -> Result<(), ClickHouseError> {
+    pub async fn insert_crawl_events(
+        &self,
+        events: Vec<CrawlEvent>,
+    ) -> Result<(), ClickHouseError> {
         if events.is_empty() {
             return Ok(());
         }
@@ -827,7 +830,10 @@ impl ClickHouseStorage {
             .fetch_all::<StatusCount>()
             .await?;
 
-        Ok(results.into_iter().map(|r| (r.status_code, r.count)).collect())
+        Ok(results
+            .into_iter()
+            .map(|r| (r.status_code, r.count))
+            .collect())
     }
 
     /// Get total crawl count for the specified time period.

@@ -83,10 +83,11 @@ pub enum OtlpProtocol {
 }
 
 /// Sampling strategy for traces.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SamplingStrategy {
     /// Always sample all traces
+    #[default]
     AlwaysOn,
     /// Never sample any traces
     AlwaysOff,
@@ -96,20 +97,12 @@ pub enum SamplingStrategy {
     ParentBased { root: Box<SamplingStrategy> },
 }
 
-impl Default for SamplingStrategy {
-    fn default() -> Self {
-        SamplingStrategy::AlwaysOn
-    }
-}
-
 impl SamplingStrategy {
     fn to_sampler(&self) -> Sampler {
         match self {
             SamplingStrategy::AlwaysOn => Sampler::AlwaysOn,
             SamplingStrategy::AlwaysOff => Sampler::AlwaysOff,
-            SamplingStrategy::TraceIdRatioBased { ratio } => {
-                Sampler::TraceIdRatioBased(*ratio)
-            }
+            SamplingStrategy::TraceIdRatioBased { ratio } => Sampler::TraceIdRatioBased(*ratio),
             SamplingStrategy::ParentBased { root } => {
                 Sampler::ParentBased(Box::new(root.to_sampler()))
             }
@@ -228,9 +221,7 @@ impl OtelConfig {
 
     /// Build resource attributes from config.
     fn build_resource(&self) -> Resource {
-        let mut attrs = vec![
-            KeyValue::new("service.name", self.service_name.clone()),
-        ];
+        let mut attrs = vec![KeyValue::new("service.name", self.service_name.clone())];
 
         if let Some(ref version) = self.service_version {
             attrs.push(KeyValue::new("service.version", version.clone()));
@@ -358,14 +349,18 @@ impl OtelConfigBuilder {
             service_name: self.service_name.unwrap_or(defaults.service_name),
             service_version: self.service_version.or(defaults.service_version),
             service_namespace: self.service_namespace.or(defaults.service_namespace),
-            deployment_environment: self.deployment_environment.or(defaults.deployment_environment),
+            deployment_environment: self
+                .deployment_environment
+                .or(defaults.deployment_environment),
             endpoint: self.endpoint.unwrap_or(defaults.endpoint),
             protocol: self.protocol.unwrap_or(defaults.protocol),
             sampling: self.sampling.unwrap_or(defaults.sampling),
             timeout_secs: self.timeout_secs.unwrap_or(defaults.timeout_secs),
             max_batch_size: self.max_batch_size.unwrap_or(defaults.max_batch_size),
             max_queue_size: self.max_queue_size.unwrap_or(defaults.max_queue_size),
-            scheduled_delay_ms: self.scheduled_delay_ms.unwrap_or(defaults.scheduled_delay_ms),
+            scheduled_delay_ms: self
+                .scheduled_delay_ms
+                .unwrap_or(defaults.scheduled_delay_ms),
             max_export_batch_size: self
                 .max_export_batch_size
                 .unwrap_or(defaults.max_export_batch_size),
@@ -646,7 +641,10 @@ mod tests {
     #[test]
     fn test_header_extraction() {
         let headers = vec![
-            ("traceparent", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"),
+            (
+                "traceparent",
+                "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+            ),
             ("tracestate", "congo=t61rcWkgMzE"),
         ];
 

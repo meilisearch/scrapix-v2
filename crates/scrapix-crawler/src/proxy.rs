@@ -253,7 +253,8 @@ impl ProxyPool {
                 successful_requests: p.successful_requests,
                 success_rate: p.success_rate(),
                 consecutive_failures: p.failures,
-                is_available: p.is_available(self.config.failure_cooldown, self.config.max_failures),
+                is_available: p
+                    .is_available(self.config.failure_cooldown, self.config.max_failures),
             })
             .collect()
     }

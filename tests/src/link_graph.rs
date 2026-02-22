@@ -1,7 +1,7 @@
 //! Integration tests for link graph functionality
 
-use scrapix_frontier::{LinkGraph, LinkGraphBuilder, LinkGraphConfig, PriorityQueue};
 use scrapix_core::CrawlUrl;
+use scrapix_frontier::{LinkGraph, LinkGraphBuilder, LinkGraphConfig, PriorityQueue};
 
 /// Test basic link recording and score computation
 #[test]
@@ -37,8 +37,14 @@ fn test_link_graph_basic() {
         ],
     );
 
-    graph.record_link("https://example.com/products/1", "https://example.com/products");
-    graph.record_link("https://example.com/products/2", "https://example.com/products");
+    graph.record_link(
+        "https://example.com/products/1",
+        "https://example.com/products",
+    );
+    graph.record_link(
+        "https://example.com/products/2",
+        "https://example.com/products",
+    );
 
     // Compute scores
     graph.compute_scores();
@@ -48,7 +54,10 @@ fn test_link_graph_basic() {
     let about_score = graph.get_score("https://example.com/about");
     let products_score = graph.get_score("https://example.com/products");
 
-    assert!(home_score > about_score, "Home should rank higher than About");
+    assert!(
+        home_score > about_score,
+        "Home should rank higher than About"
+    );
     assert!(
         products_score > about_score,
         "Products should rank higher than About (more inbound)"

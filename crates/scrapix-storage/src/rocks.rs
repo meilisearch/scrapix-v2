@@ -199,11 +199,7 @@ impl RocksStorage {
     }
 
     /// Iterate over keys with a prefix in a specific column family
-    pub fn prefix_iter_cf(
-        &self,
-        cf_name: &str,
-        prefix: &[u8],
-    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+    pub fn prefix_iter_cf(&self, cf_name: &str, prefix: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
         let cf = self.db.cf_handle(cf_name).ok_or_else(|| {
             ScrapixError::Storage(format!("Column family not found: {}", cf_name))
         })?;

@@ -209,7 +209,7 @@ fn test_crawl_pipeline_simulation() {
     let queue = PriorityQueue::with_defaults();
 
     // Simulate pages as if they were fetched
-    let pages = vec![
+    let pages = [
         ("https://example.com/", fixtures::PAGE_WITH_LINKS),
         ("https://example.com/page1", fixtures::SIMPLE_ARTICLE),
         ("https://example.com/page2", fixtures::MINIMAL_PAGE),
@@ -306,7 +306,7 @@ fn test_crawl_dedup_integration() {
     assert!(added > 0);
 
     // Queue should have the links
-    assert!(queue.len() > 0);
+    assert!(!queue.is_empty());
 
     // Trying to add same links again should not increase queue
     let page2 = create_raw_page("https://example.com/page1", fixtures::PAGE_WITH_LINKS);

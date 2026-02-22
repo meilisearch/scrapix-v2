@@ -195,7 +195,7 @@ impl HttpFetcher {
             .gzip(true)
             .brotli(true)
             .deflate(true)
-            .pool_max_idle_per_host(100)
+            .pool_max_idle_per_host(200)
             .pool_idle_timeout(Duration::from_secs(90))
             .tcp_keepalive(Duration::from_secs(60))
             .tcp_nodelay(true)
@@ -218,11 +218,7 @@ impl HttpFetcher {
     /// Create a new HTTP fetcher with default configuration and DNS caching
     pub fn with_defaults_and_dns(robots_cache: Arc<RobotsCache>) -> Result<Self> {
         let dns_resolver = Arc::new(CachingDnsResolver::with_defaults()?);
-        Self::new_with_dns(
-            FetcherConfig::default(),
-            robots_cache,
-            Some(dns_resolver),
-        )
+        Self::new_with_dns(FetcherConfig::default(), robots_cache, Some(dns_resolver))
     }
 
     /// Fetch a URL with retry logic

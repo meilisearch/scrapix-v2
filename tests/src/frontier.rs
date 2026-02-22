@@ -210,7 +210,10 @@ fn test_priority_queue_many_urls() {
 
     // Add 100 URLs
     for i in 0..100 {
-        queue.push(CrawlUrl::new(&format!("https://example.com/page{}", i), i % 5));
+        queue.push(CrawlUrl::new(
+            format!("https://example.com/page{}", i),
+            i % 5,
+        ));
     }
 
     assert_eq!(queue.len(), 100);
@@ -421,7 +424,7 @@ fn test_frontier_pipeline() {
     ];
 
     for seed in &seeds {
-        if !dedup.check_and_mark(*seed) {
+        if !dedup.check_and_mark(seed) {
             queue.push(CrawlUrl::seed(*seed));
         }
     }
@@ -430,7 +433,7 @@ fn test_frontier_pipeline() {
 
     // Try adding duplicates
     for seed in &seeds {
-        if !dedup.check_and_mark(*seed) {
+        if !dedup.check_and_mark(seed) {
             queue.push(CrawlUrl::seed(*seed));
         }
     }

@@ -100,8 +100,7 @@ impl HtmlParser {
 
         // Extract main content - reuse the already-parsed DOM
         if self.config.extract_content {
-            let content =
-                extract_content_from_dom(&html, &ReadabilityConfig::default());
+            let content = extract_content_from_dom(&html, &ReadabilityConfig::default());
             if content.len() >= self.config.min_content_length {
                 // Convert to markdown if enabled
                 if self.config.convert_to_markdown {

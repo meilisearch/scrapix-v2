@@ -45,8 +45,8 @@ impl Default for ProducerConfig {
             request_timeout: Duration::from_secs(5),
             idempotent: true,
             compression: "lz4".to_string(),
-            batch_size: 16384,
-            linger_ms: 5,
+            batch_size: 65536,
+            linger_ms: 20,
             acks: "all".to_string(),
         }
     }

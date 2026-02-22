@@ -310,10 +310,11 @@ impl SelectorExtractor {
     ) -> Result<Value, SelectorError> {
         // Try each selector until one matches
         for selector_str in definition.selector.selectors() {
-            let selector = Selector::parse(selector_str).map_err(|e| SelectorError::InvalidSelector {
-                selector: selector_str.to_string(),
-                message: format!("{:?}", e),
-            })?;
+            let selector =
+                Selector::parse(selector_str).map_err(|e| SelectorError::InvalidSelector {
+                    selector: selector_str.to_string(),
+                    message: format!("{:?}", e),
+                })?;
 
             let elements: Vec<_> = document.select(&selector).collect();
 
@@ -476,10 +477,7 @@ impl SelectorExtractor {
                     if let Value::String(s) = &value {
                         let lower = s.to_lowercase();
                         Value::Bool(
-                            lower == "true"
-                                || lower == "yes"
-                                || lower == "1"
-                                || lower == "on",
+                            lower == "true" || lower == "yes" || lower == "1" || lower == "on",
                         )
                     } else {
                         value
@@ -607,7 +605,10 @@ mod tests {
 
         let result = extractor.extract(html).unwrap();
 
-        assert_eq!(result.values.get("link_url").unwrap(), "https://example.com");
+        assert_eq!(
+            result.values.get("link_url").unwrap(),
+            "https://example.com"
+        );
         assert_eq!(result.values.get("image_src").unwrap(), "/image.jpg");
         assert_eq!(result.values.get("image_alt").unwrap(), "Image");
     }

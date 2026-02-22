@@ -137,15 +137,15 @@ fn default_duration_buckets() -> Vec<f64> {
 /// Default size histogram buckets (in bytes).
 fn default_size_buckets() -> Vec<f64> {
     vec![
-        1024.0,           // 1 KB
-        10240.0,          // 10 KB
-        102400.0,         // 100 KB
-        524288.0,         // 512 KB
-        1048576.0,        // 1 MB
-        5242880.0,        // 5 MB
-        10485760.0,       // 10 MB
-        52428800.0,       // 50 MB
-        104857600.0,      // 100 MB
+        1024.0,      // 1 KB
+        10240.0,     // 10 KB
+        102400.0,    // 100 KB
+        524288.0,    // 512 KB
+        1048576.0,   // 1 MB
+        5242880.0,   // 5 MB
+        10485760.0,  // 10 MB
+        52428800.0,  // 50 MB
+        104857600.0, // 100 MB
     ]
 }
 
@@ -433,18 +433,12 @@ fn register_metric_descriptions() {
         "scrapix_pages_fetched_total",
         "Total number of pages fetched"
     );
-    describe_counter!(
-        "scrapix_bytes_downloaded_total",
-        "Total bytes downloaded"
-    );
+    describe_counter!("scrapix_bytes_downloaded_total", "Total bytes downloaded");
     describe_histogram!(
         "scrapix_fetch_duration_seconds",
         "Time taken to fetch a page"
     );
-    describe_counter!(
-        "scrapix_fetch_errors_total",
-        "Total fetch errors by type"
-    );
+    describe_counter!("scrapix_fetch_errors_total", "Total fetch errors by type");
 
     // Processing metrics
     describe_counter!(
@@ -461,10 +455,7 @@ fn register_metric_descriptions() {
     );
 
     // Queue metrics
-    describe_gauge!(
-        "scrapix_queue_size",
-        "Current number of URLs in the queue"
-    );
+    describe_gauge!("scrapix_queue_size", "Current number of URLs in the queue");
     describe_gauge!(
         "scrapix_active_fetches",
         "Number of currently active fetch operations"
@@ -493,14 +484,8 @@ fn register_metric_descriptions() {
     );
 
     // DNS metrics
-    describe_counter!(
-        "scrapix_dns_lookups_total",
-        "Total DNS lookups performed"
-    );
-    describe_counter!(
-        "scrapix_dns_cache_hits_total",
-        "DNS cache hits"
-    );
+    describe_counter!("scrapix_dns_lookups_total", "Total DNS lookups performed");
+    describe_counter!("scrapix_dns_cache_hits_total", "DNS cache hits");
     describe_histogram!(
         "scrapix_dns_lookup_duration_seconds",
         "Time taken for DNS lookups"
@@ -527,10 +512,7 @@ fn register_metric_descriptions() {
     );
 
     // AI/LLM metrics
-    describe_counter!(
-        "scrapix_ai_requests_total",
-        "Total AI/LLM requests made"
-    );
+    describe_counter!("scrapix_ai_requests_total", "Total AI/LLM requests made");
     describe_counter!(
         "scrapix_ai_tokens_used_total",
         "Total tokens used for AI processing"
@@ -980,7 +962,10 @@ mod tests {
         assert_eq!(config.endpoint, "/custom-metrics");
         assert!(!config.include_process_metrics);
         assert_eq!(config.global_labels.len(), 1);
-        assert_eq!(config.global_labels[0], ("env".to_string(), "test".to_string()));
+        assert_eq!(
+            config.global_labels[0],
+            ("env".to_string(), "test".to_string())
+        );
         assert_eq!(config.metric_prefix, Some("test_scrapix".to_string()));
     }
 

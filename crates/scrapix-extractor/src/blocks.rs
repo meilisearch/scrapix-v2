@@ -296,8 +296,7 @@ impl BlockSplitter {
             })
             .collect();
 
-        result.truncated =
-            self.config.max_blocks > 0 && filtered.len() >= self.config.max_blocks;
+        result.truncated = self.config.max_blocks > 0 && filtered.len() >= self.config.max_blocks;
         result.count = filtered.len();
         result.blocks = filtered;
 
@@ -458,8 +457,21 @@ impl BlockSplitter {
     fn should_skip_element(&self, tag_name: &str) -> bool {
         matches!(
             tag_name,
-            "script" | "style" | "nav" | "footer" | "header" | "aside" | "noscript" | "iframe"
-                | "svg" | "canvas" | "form" | "button" | "input" | "select" | "textarea"
+            "script"
+                | "style"
+                | "nav"
+                | "footer"
+                | "header"
+                | "aside"
+                | "noscript"
+                | "iframe"
+                | "svg"
+                | "canvas"
+                | "form"
+                | "button"
+                | "input"
+                | "select"
+                | "textarea"
         )
     }
 }
@@ -622,10 +634,7 @@ mod tests {
         let result = splitter.split(html).unwrap();
 
         assert_eq!(result.count, 2);
-        assert_eq!(
-            result.blocks[0].anchor,
-            Some("getting-started".to_string())
-        );
+        assert_eq!(result.blocks[0].anchor, Some("getting-started".to_string()));
         assert_eq!(result.blocks[1].anchor, Some("installation".to_string()));
     }
 

@@ -63,21 +63,16 @@ pub enum LogFormat {
 }
 
 /// Log output target
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LogTarget {
     /// Write to stdout
+    #[default]
     Stdout,
     /// Write to stderr
     Stderr,
     /// Write to a file
     File { path: PathBuf },
-}
-
-impl Default for LogTarget {
-    fn default() -> Self {
-        LogTarget::Stdout
-    }
 }
 
 /// Configuration for logging

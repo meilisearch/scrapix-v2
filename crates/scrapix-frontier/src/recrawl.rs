@@ -64,7 +64,7 @@ impl Default for RecrawlConfig {
             enabled: true,
             force_recrawl_interval: None,
             max_age: Duration::from_secs(7 * 24 * 3600), // 7 days
-            min_age: Duration::from_secs(3600),         // 1 hour
+            min_age: Duration::from_secs(3600),          // 1 hour
             change_rate_priority_boost: 10.0,
             skip_high_error_rate: true,
             error_rate_threshold: 0.5,
@@ -444,7 +444,10 @@ mod tests {
             RecrawlDecision::Crawl { reason, .. } => {
                 assert_eq!(reason, RecrawlReason::IntervalElapsed);
             }
-            _ => panic!("Expected Crawl decision after interval elapsed, got {:?}", decision),
+            _ => panic!(
+                "Expected Crawl decision after interval elapsed, got {:?}",
+                decision
+            ),
         }
     }
 
@@ -515,6 +518,8 @@ mod tests {
 
         // Should only include new URLs (not the recent one)
         assert_eq!(filtered.len(), 2);
-        assert!(filtered.iter().all(|(url, _)| url.url != "https://example.com/recent"));
+        assert!(filtered
+            .iter()
+            .all(|(url, _)| url.url != "https://example.com/recent"));
     }
 }

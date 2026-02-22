@@ -71,10 +71,10 @@ pub use history::{
     check_content_change, fingerprint_bytes, fingerprint_content, ConditionalHeaders,
     ContentChangeResult, CrawlRecord, UrlHistory, UrlHistoryConfig, UrlHistoryStats,
 };
+pub use linkgraph::{LinkGraph, LinkGraphBuilder, LinkGraphConfig, LinkGraphStats};
 pub use partition::{extract_domain, DomainGrouper, PartitionConfig, Partitioner};
 pub use politeness::{DomainStats, PolitenessConfig, PolitenessScheduler};
 pub use priority::{MultiLevelPriorityQueue, PriorityConfig, PriorityQueue};
-pub use linkgraph::{LinkGraph, LinkGraphBuilder, LinkGraphConfig, LinkGraphStats};
 pub use recrawl::{
     RecrawlConfig, RecrawlDecision, RecrawlReason, RecrawlScheduler, RecrawlSchedulerBuilder,
     RecrawlStats, SkipReason,
