@@ -264,10 +264,6 @@ pub struct FeaturesConfig {
     /// AI-powered summarization
     #[serde(default)]
     pub ai_summary: Option<FeatureToggle>,
-
-    /// Generate embeddings
-    #[serde(default)]
-    pub embeddings: Option<EmbeddingsConfig>,
 }
 
 /// Simple feature toggle with page filters
@@ -355,30 +351,6 @@ pub struct AiExtractionConfig {
 
 fn default_model() -> String {
     "gpt-4o-mini".to_string()
-}
-
-/// Embeddings generation configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EmbeddingsConfig {
-    pub enabled: bool,
-
-    /// Embedding model to use
-    #[serde(default = "default_embedding_model")]
-    pub model: String,
-
-    /// Vector dimensions (if model supports it)
-    #[serde(default)]
-    pub dimensions: Option<u32>,
-
-    #[serde(default)]
-    pub include_pages: Vec<String>,
-
-    #[serde(default)]
-    pub exclude_pages: Vec<String>,
-}
-
-fn default_embedding_model() -> String {
-    "text-embedding-3-small".to_string()
 }
 
 /// Meilisearch configuration

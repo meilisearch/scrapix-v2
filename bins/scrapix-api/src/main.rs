@@ -68,7 +68,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use scrapix_core::{CrawlConfig, CrawlUrl, JobState, JobStatus};
 use scrapix_crawler::{HttpFetcher, HttpFetcherBuilder, RobotsCache, RobotsConfig};
-use scrapix_ai::{AiClient, AiClientConfig, AiService, FieldDefinition as AiFieldDefinition, SchemaBuilder};
+use scrapix_ai::{AiClient, AiService, FieldDefinition as AiFieldDefinition, SchemaBuilder};
 use scrapix_extractor::{
     Extractor, ExtractedMetadata, ExtractedSchema, ContentBlock,
     SelectorExtractor, SelectorDefinition,
@@ -642,10 +642,6 @@ struct AiOptions {
     /// Extract structured data (prompt-based or schema-based)
     #[serde(default)]
     extract: Option<AiExtractOptions>,
-
-    /// Generate vector embedding
-    #[serde(default)]
-    embed: bool,
 }
 
 /// AI extraction options
@@ -769,8 +765,6 @@ struct AiResult {
     summary: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     extract: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    embedding: Option<Vec<f32>>,
 }
 
 /// Metadata from scraped page
@@ -1298,27 +1292,18 @@ async fn scrape_url(
                     }
                 };
 
-                let embed_fut = async {
-                    if ai_opts.embed {
-                        ai_service.embed(ai_text).await.ok().map(|e| e.vector)
-                    } else {
-                        None
-                    }
-                };
+                let (ai_summary, ai_extract) =
+                    tokio::join!(summary_fut, extract_fut);
 
-                let (ai_summary, ai_extract, ai_embedding) =
-                    tokio::join!(summary_fut, extract_fut, embed_fut);
-
-                if ai_summary.is_some() || ai_extract.is_some() || ai_embedding.is_some() {
+                if ai_summary.is_some() || ai_extract.is_some() {
                     ai_result = Some(AiResult {
                         summary: ai_summary,
                         extract: ai_extract,
-                        embedding: ai_embedding,
                     });
                 }
             }
         } else {
-            warning = Some("AI features require OPENAI_API_KEY environment variable".to_string());
+            warning = Some("AI features require a provider API key (set AI_PROVIDER and corresponding key env var)".to_string());
         }
     }
 
@@ -2311,26 +2296,18 @@ async fn main() -> anyhow::Result<()> {
     );
     info!("Shared HTTP fetcher initialized for /scrape endpoint");
 
-    // Initialize AI service if OPENAI_API_KEY is set
-    let ai_service = std::env::var("OPENAI_API_KEY").ok().and_then(|api_key| {
-        let config = AiClientConfig {
-            api_key,
-            ..Default::default()
-        };
-        match AiClient::new(config) {
-            Ok(client) => {
-                info!("AI service initialized (OPENAI_API_KEY found)");
-                Some(Arc::new(AiService::new(Arc::new(client))))
-            }
-            Err(e) => {
-                warn!(error = %e, "Failed to initialize AI client");
-                None
-            }
+    // Initialize AI service from environment (supports multiple providers via AI_PROVIDER)
+    let ai_service = match AiClient::from_env() {
+        Ok(client) => {
+            let provider = std::env::var("AI_PROVIDER").unwrap_or_else(|_| "openai".to_string());
+            info!(provider = %provider, "AI service initialized");
+            Some(Arc::new(AiService::new(Arc::new(client))))
         }
-    });
-    if ai_service.is_none() {
-        info!("AI enrichment disabled (OPENAI_API_KEY not set)");
-    }
+        Err(e) => {
+            info!(reason = %e, "AI enrichment disabled");
+            None
+        }
+    };
 
     // Create application state
     let config = AppConfig {

@@ -53,10 +53,6 @@ pub struct Document {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ai_summary: Option<String>,
 
-    /// Vector embeddings
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub embeddings: Option<Vec<f32>>,
-
     /// Language code (ISO 639-1)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
@@ -112,7 +108,7 @@ impl Document {
             custom: None,
             ai_extraction: None,
             ai_summary: None,
-            embeddings: None,
+
             language: None,
             crawled_at: Utc::now(),
             parent_document_id: None,
@@ -142,7 +138,7 @@ impl Document {
             custom: None,
             ai_extraction: None,
             ai_summary: None,
-            embeddings: None,
+
             language: parent.language.clone(),
             crawled_at: parent.crawled_at,
             parent_document_id: Some(parent.uid.clone()),
