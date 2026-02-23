@@ -34,16 +34,16 @@ patches:
 images:
   - name: scrapix-api
     newName: rg.fr-par.scw.cloud/scrapix/scrapix-api
-    newTag: latest
+    newTag: b13613e
   - name: scrapix-frontier-service
     newName: rg.fr-par.scw.cloud/scrapix/scrapix-frontier-service
-    newTag: latest
+    newTag: b13613e
   - name: scrapix-worker-crawler
     newName: rg.fr-par.scw.cloud/scrapix/scrapix-worker-crawler
-    newTag: latest
+    newTag: b13613e
   - name: scrapix-worker-content
     newName: rg.fr-par.scw.cloud/scrapix/scrapix-worker-content
-    newTag: latest
+    newTag: b13613e
   - name: scrapix-console
     newName: rg.fr-par.scw.cloud/scrapix/scrapix-console
-    newTag: latest
+    newTag: b13613e
