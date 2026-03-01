@@ -1,0 +1,157 @@
+---
+title: Azure
+description: Container Apps deployment for single binary mode
+---
+
+# Azure
+
+Azure Container Apps runs Scrapix in **single binary mode** with built-in scaling, HTTPS, and managed identity.
+
+## Prerequisites
+
+- [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) installed
+- Azure subscription
+- Docker installed
+
+## Step-by-Step
+
+### 1. Create Resources
+
+```bash
+# Resource group
+az group create --name scrapix-rg --location westeurope
+
+# Container Apps environment
+az containerapp env create \
+  --name scrapix-env \
+  --resource-group scrapix-rg \
+  --location westeurope
+
+# Azure Container Registry
+az acr create --name scrapixregistry --resource-group scrapix-rg --sku Basic
+az acr login --name scrapixregistry
+```
+
+### 2. Build and Push Image
+
+```bash
+# Build the all-in-one image
+docker build --target scrapix-all -t scrapixregistry.azurecr.io/scrapix:latest .
+docker push scrapixregistry.azurecr.io/scrapix:latest
+```
+
+Or use ACR build tasks:
+
+```bash
+az acr build --registry scrapixregistry \
+  --image scrapix:latest \
+  --target scrapix-all .
+```
+
+### 3. Deploy Meilisearch
+
+```bash
+az containerapp create \
+  --name meilisearch \
+  --resource-group scrapix-rg \
+  --environment scrapix-env \
+  --image getmeili/meilisearch:v1.31 \
+  --target-port 7700 \
+  --ingress internal \
+  --min-replicas 1 \
+  --max-replicas 1 \
+  --cpu 1.0 \
+  --memory 2.0Gi \
+  --env-vars "MEILI_MASTER_KEY=your-master-key"
+```
+
+<Note>
+Container Apps doesn't support persistent volumes out of the box. For production, use [Azure Meilisearch on a VM](https://www.meilisearch.com/docs/learn/getting_started/installation) or Meilisearch Cloud.
+</Note>
+
+### 4. Deploy Scrapix
+
+```bash
+# Get Meilisearch internal URL
+MEILI_FQDN=$(az containerapp show --name meilisearch --resource-group scrapix-rg --query "properties.configuration.ingress.fqdn" -o tsv)
+
+az containerapp create \
+  --name scrapix \
+  --resource-group scrapix-rg \
+  --environment scrapix-env \
+  --image scrapixregistry.azurecr.io/scrapix:latest \
+  --registry-server scrapixregistry.azurecr.io \
+  --args "all" \
+  --target-port 8080 \
+  --ingress external \
+  --min-replicas 1 \
+  --max-replicas 5 \
+  --cpu 1.0 \
+  --memory 2.0Gi \
+  --env-vars \
+    "MEILISEARCH_URL=http://$MEILI_FQDN" \
+    "MEILISEARCH_API_KEY=your-master-key" \
+    "RUST_LOG=info,scrapix=debug"
+```
+
+### 5. Verify
+
+```bash
+APP_URL=$(az containerapp show --name scrapix --resource-group scrapix-rg --query "properties.configuration.ingress.fqdn" -o tsv)
+curl https://$APP_URL/health
+```
+
+## Scaling Rules
+
+Container Apps supports HTTP-based scaling:
+
+```bash
+az containerapp update \
+  --name scrapix \
+  --resource-group scrapix-rg \
+  --scale-rule-name http-scaler \
+  --scale-rule-type http \
+  --scale-rule-http-concurrency 50
+```
+
+## Distributed Mode with Event Hubs
+
+For distributed mode, use Azure Event Hubs (Kafka-compatible):
+
+```bash
+# Create Event Hubs namespace with Kafka enabled
+az eventhubs namespace create \
+  --name scrapix-events \
+  --resource-group scrapix-rg \
+  --sku Standard \
+  --enable-kafka true
+
+# Create topics
+for topic in scrapix.urls.frontier scrapix.urls.processing scrapix.pages.raw scrapix.documents scrapix.events scrapix.dlq.urls scrapix.jobs.status; do
+  az eventhubs eventhub create \
+    --name $topic \
+    --namespace-name scrapix-events \
+    --resource-group scrapix-rg \
+    --partition-count 6
+done
+```
+
+Set `KAFKA_BROKERS` to the Event Hubs Kafka endpoint.
+
+## Cost Estimate
+
+| Component | Configuration | Approx. Cost |
+|-----------|--------------|-------------|
+| Scrapix (Container App) | 1 vCPU, 2GB | ~$15/mo |
+| Meilisearch (Container App) | 1 vCPU, 2GB | ~$15/mo |
+| ACR (Basic) | — | $5/mo |
+| **Total** | | **~$35/mo** |
+
+Container Apps billing is based on vCPU-seconds and memory GB-seconds.
+
+## Limitations
+
+- No persistent volumes in Container Apps (RocksDB data lost on restart)
+- Meilisearch needs external persistent storage for production
+- Event Hubs Kafka compatibility has some limitations vs native Kafka
+- Maximum 4 vCPU / 8 GB per container

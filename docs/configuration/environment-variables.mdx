@@ -1,0 +1,203 @@
+---
+title: Environment Variables
+description: Complete reference for all Scrapix configuration variables
+---
+
+# Environment Variables
+
+All Scrapix services are configured through environment variables. When running in single-binary mode (`scrapix all`), all variables apply to the single process.
+
+## API Server
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HOST` | `0.0.0.0` | API server bind address |
+| `PORT` | `8080` | API server port |
+| `ENABLE_CORS` | `true` | Enable CORS headers |
+| `API_KEY` | — | API authentication key (optional) |
+| `JWT_SECRET` | `dev-jwt-secret-change-in-production` | JWT signing secret |
+| `DATABASE_URL` | — | PostgreSQL URL for auth (optional) |
+| `MAX_JOBS` | `10000` | Maximum tracked jobs |
+
+## Message Queue
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KAFKA_BROKERS` | `localhost:9092` | Comma-separated Kafka/Redpanda broker addresses |
+| `KAFKA_GROUP_ID` | varies per service | Consumer group ID |
+
+<Note>
+In single-binary mode (`scrapix all`), set `--kafka-brokers` to use Kafka instead of in-process channels. If omitted, Scrapix uses zero-infrastructure in-memory channels.
+</Note>
+
+## Meilisearch
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MEILISEARCH_URL` | `http://localhost:7700` | Meilisearch server URL |
+| `MEILISEARCH_API_KEY` | `masterKey` | Meilisearch admin API key |
+| `MEILISEARCH_INDEX` | `documents` | Default index UID |
+
+## Cache (Redis / DragonflyDB)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `REDIS_URL` | `redis://localhost:6380` | Redis/DragonflyDB connection URL |
+
+## Analytics (ClickHouse)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CLICKHOUSE_URL` | `http://localhost:8123` | ClickHouse HTTP endpoint |
+| `CLICKHOUSE_DATABASE` | `scrapix` | Database name |
+| `CLICKHOUSE_USER` | `scrapix` | Username |
+| `CLICKHOUSE_PASSWORD` | `scrapix` | Password |
+
+<Note>
+Setting `CLICKHOUSE_URL` automatically enables the analytics API at `/analytics/v0/pipes/`.
+</Note>
+
+## Frontier Service
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DISPATCH_INTERVAL_MS` | `20` | Milliseconds between dispatch batches |
+| `DISPATCH_BATCH_SIZE` | `2000` | URLs per dispatch batch |
+| `DOMAIN_DELAY_MS` | `50` | Minimum delay between requests to same domain |
+| `BLOOM_CAPACITY` | `10000000` | Bloom filter expected capacity per job |
+| `BLOOM_FP_RATE` | `0.01` | Bloom filter false positive rate |
+| `MAX_PENDING_PER_JOB` | `1000000` | Maximum pending URLs per job |
+| `CONCURRENT_PER_DOMAIN` | `50` | Maximum concurrent requests per domain |
+| `INSTANCE_ID` | — | Instance identifier for multi-instance frontier |
+
+### Link Graph (optional)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENABLE_LINKGRAPH` | `false` | Enable PageRank-based priority boosting |
+| `LINKGRAPH_DAMPING` | `0.85` | PageRank damping factor |
+| `LINKGRAPH_MAX_BOOST` | `50` | Maximum priority boost from PageRank |
+| `LINKGRAPH_MAX_PAGES` | `10000000` | Maximum pages in link graph |
+| `LINKGRAPH_COMPUTE_INTERVAL` | `300` | Seconds between PageRank recomputation |
+
+### Recrawl (optional)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENABLE_RECRAWL` | `false` | Enable automatic recrawling |
+| `RECRAWL_MIN_AGE` | `3600` | Minimum seconds before recrawl |
+| `RECRAWL_MAX_AGE` | `604800` | Maximum seconds before forced recrawl |
+| `RECRAWL_MAX_URLS` | `10000000` | Maximum URLs in recrawl queue |
+
+## Crawler Workers
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CONCURRENCY` | `50` | Concurrent HTTP fetchers |
+| `USER_AGENT` | `Scrapix/1.0 (compatible; ...)` | HTTP User-Agent header |
+| `REQUEST_TIMEOUT` | `30` | Request timeout in seconds |
+| `MAX_RETRIES` | `3` | Maximum retry attempts per URL |
+| `MAX_DEPTH` | `100` | Maximum crawl depth |
+| `MAX_BODY_SIZE_MB` | `10` | Maximum response body size in MB |
+| `RESPECT_ROBOTS` | `true` | Respect robots.txt directives |
+| `WORKER_ID` | — | Worker identifier |
+| `ROCKSDB_PATH` | `./data/crawler-rocksdb` | RocksDB storage path |
+
+### DNS Cache
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DNS_CACHE` | `true` | Enable DNS result caching |
+| `DNS_CACHE_TTL` | `300` | DNS cache TTL in seconds |
+
+### Sitemap Discovery
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SITEMAP_DISCOVERY` | `true` | Automatically discover and parse sitemaps |
+| `MAX_SITEMAP_URLS` | `10000` | Maximum URLs to extract from sitemaps |
+
+### Link Graph Publishing
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LINK_GRAPH` | `true` | Track link relationships locally |
+| `LINK_GRAPH_INTERVAL` | `1000` | Links before sending batch update |
+| `PUBLISH_LINKS` | `false` | Publish link graph to Kafka topic |
+| `INCREMENTAL_CRAWL` | `true` | Track ETags/Last-Modified for incremental crawls |
+
+### Browser Rendering
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BROWSER_RENDER` | `false` | Enable headless browser rendering |
+| `BROWSER_RENDER_PATTERNS` | — | URL patterns to render (comma-separated globs) |
+| `CHROME_PATH` | — | Path to Chrome/Chromium binary |
+| `BROWSER_TIMEOUT` | `30` | Browser page load timeout in seconds |
+| `BROWSER_CONCURRENCY` | `5` | Concurrent browser instances |
+| `BROWSER_HEADLESS` | `true` | Run browser in headless mode |
+
+## Content Workers
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BATCH_SIZE` | `2000` | Meilisearch indexing batch size |
+| `BATCH_TIMEOUT_SECS` | `5` | Maximum seconds to wait before flushing batch |
+| `EXTRACT_CONTENT` | `true` | Enable readability content extraction |
+| `CONVERT_MARKDOWN` | `true` | Convert extracted content to markdown |
+| `DETECT_LANGUAGE` | `true` | Detect page language |
+| `EXTRACT_SCHEMA` | `true` | Extract JSON-LD and microdata |
+| `MIN_CONTENT_LENGTH` | `100` | Skip pages with less content (bytes) |
+| `PUBLISH_TO_KAFKA` | `false` | Publish processed documents to Kafka |
+| `PUBLISH_HISTORY` | `false` | Publish crawl history for incremental crawling |
+| `SKIP_MEILISEARCH` | `false` | Skip Meilisearch indexing |
+
+### AI Enrichment
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OPENAI_API_KEY` | — | OpenAI API key |
+| `ENABLE_SUMMARY` | `false` | Enable AI summarization |
+| `SUMMARY_MODEL` | `gpt-5-nano` | Model for summaries |
+| `ENABLE_EXTRACTION` | `false` | Enable AI extraction |
+| `EXTRACTION_PROMPT` | — | Custom extraction prompt |
+| `EXTRACTION_MODEL` | `gpt-5-nano` | Model for extraction |
+| `AI_MAX_TOKENS` | `1000` | Max tokens per AI request |
+| `AI_CONCURRENCY` | `5` | Concurrent AI requests |
+
+### Block Splitting
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENABLE_BLOCK_SPLIT` | `false` | Split pages into heading-based blocks |
+| `BLOCK_SPLIT_MIN_LEVEL` | `2` | Minimum heading level (h2) |
+| `BLOCK_SPLIT_MAX_LEVEL` | `4` | Maximum heading level (h4) |
+| `BLOCK_SPLIT_MIN_LENGTH` | `50` | Minimum block content length |
+
+### Near-Duplicate Detection
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENABLE_DEDUP` | `false` | Enable content deduplication at indexing stage |
+| `DEDUP_USE_SIMHASH` | `true` | Use SimHash for quick similarity checks |
+| `DEDUP_SIMHASH_THRESHOLD` | `3` | SimHash Hamming distance threshold |
+| `DEDUP_MINHASH_THRESHOLD` | `0.85` | MinHash Jaccard similarity threshold |
+| `DEDUP_MAX_FINGERPRINTS` | `10000000` | Maximum stored fingerprints |
+
+## Object Storage (S3-compatible)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `S3_ENDPOINT` | — | S3-compatible endpoint URL |
+| `S3_ACCESS_KEY` | — | Access key |
+| `S3_SECRET_KEY` | — | Secret key |
+| `S3_BUCKET` | — | Bucket name |
+| `S3_REGION` | `us-east-1` | Region |
+
+## Telemetry
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RUST_LOG` | `info,scrapix=debug` | Log level filter |
+| `METRICS_PORT` | `9090` | Prometheus metrics endpoint port |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | — | OpenTelemetry OTLP collector endpoint |

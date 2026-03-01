@@ -1,0 +1,110 @@
+---
+title: PostgreSQL
+description: Optional database for authentication and API keys
+---
+
+# PostgreSQL
+
+PostgreSQL is **optional**. It's used for user accounts, API key management, and authentication. If you don't need multi-user auth, you can skip it entirely.
+
+## When Do You Need PostgreSQL?
+
+| Feature | PostgreSQL Required? |
+|---------|---------------------|
+| Basic crawling (single user) | No |
+| API key authentication | Yes |
+| User accounts and billing tiers | Yes |
+| Account-based usage tracking | Yes |
+
+## Quick Setup with Docker
+
+```bash
+docker run -d \
+  --name postgres \
+  -p 5433:5432 \
+  -e POSTGRES_USER=scrapix \
+  -e POSTGRES_PASSWORD=scrapix \
+  -e POSTGRES_DB=scrapix \
+  -v pg_data:/var/lib/postgresql/data \
+  postgres:17-alpine
+```
+
+Then configure Scrapix:
+
+```bash
+export DATABASE_URL=postgres://scrapix:scrapix@localhost:5433/scrapix
+export JWT_SECRET=change-this-in-production
+```
+
+## Database Schema
+
+Scrapix automatically initializes the schema on first connection. The schema includes:
+
+### Tables
+
+**`users`** — User accounts
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | UUID | Primary key |
+| `email` | VARCHAR (unique) | Login email |
+| `password_hash` | VARCHAR | bcrypt hash |
+| `full_name` | VARCHAR | Display name |
+| `created_at` | TIMESTAMPTZ | Registration date |
+| `updated_at` | TIMESTAMPTZ | Last update |
+
+**`accounts`** — Billing entities
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | UUID | Primary key |
+| `name` | VARCHAR | Account name |
+| `tier` | ENUM | `free`, `starter`, `pro`, `enterprise` |
+| `stripe_customer_id` | VARCHAR | Stripe integration |
+| `created_at` | TIMESTAMPTZ | Creation date |
+
+**`account_members`** — Account membership
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `user_id` | UUID | Foreign key to users |
+| `account_id` | UUID | Foreign key to accounts |
+| `role` | ENUM | `owner`, `admin`, `member` |
+
+**`api_keys`** — API authentication tokens
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | UUID | Primary key |
+| `account_id` | UUID | Foreign key to accounts |
+| `name` | VARCHAR | Key description |
+| `prefix` | VARCHAR | Visible key prefix (e.g., `sk_live_...`) |
+| `key_hash` | VARCHAR | SHA-256 hash of full key |
+| `last_used_at` | TIMESTAMPTZ | Last API call |
+| `created_at` | TIMESTAMPTZ | Creation date |
+
+### Functions
+
+- **`validate_api_key(key)`** — Validates an API key and returns the associated account with its billing tier
+- **`update_updated_at()`** — Trigger function for automatic timestamp updates
+
+## Kubernetes
+
+The Scrapix Kubernetes base includes a PostgreSQL StatefulSet with the schema loaded via a ConfigMap init script:
+
+```bash
+kubectl apply -k deploy/kubernetes/base/
+```
+
+Production storage: 20Gi PVC.
+
+## Managed Alternatives
+
+| Service | Notes |
+|---------|-------|
+| [Neon](https://neon.tech) | Serverless Postgres, scale-to-zero. Great for low-traffic. |
+| [Supabase](https://supabase.com) | Managed Postgres with extras. |
+| [AWS RDS](https://aws.amazon.com/rds/postgresql/) | Managed Postgres on AWS. |
+| [Fly Postgres](https://fly.io/docs/postgres/) | Fly.io managed clusters. |
+
+Set `DATABASE_URL` to your managed PostgreSQL connection string.

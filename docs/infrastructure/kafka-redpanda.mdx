@@ -1,0 +1,134 @@
+---
+title: Kafka / Redpanda
+description: Message broker setup for distributed mode
+---
+
+# Kafka / Redpanda
+
+A Kafka-compatible message broker is required **only for distributed mode** — when running services separately (`scrapix api`, `scrapix frontier`, etc.). The single binary (`scrapix all`) uses in-process channels and does not need Kafka.
+
+We recommend [Redpanda](https://redpanda.com/) for its simpler operations (no ZooKeeper, single binary), but any Kafka-compatible broker works.
+
+## When Do You Need Kafka?
+
+| Mode | Kafka Required? |
+|------|----------------|
+| `scrapix all` | No |
+| `scrapix all --kafka-brokers ...` | Yes (optional) |
+| Separate services | Yes |
+
+## Quick Setup with Docker
+
+```bash
+docker run -d \
+  --name redpanda \
+  -p 19092:19092 \
+  -p 9644:9644 \
+  docker.redpanda.com/redpandadata/redpanda:v25.3.4 \
+  redpanda start \
+    --smp 1 \
+    --memory 512M \
+    --overprovisioned \
+    --kafka-addr PLAINTEXT://0.0.0.0:19092 \
+    --advertise-kafka-addr PLAINTEXT://localhost:19092
+```
+
+Then configure Scrapix:
+
+```bash
+export KAFKA_BROKERS=localhost:19092
+```
+
+## Topics
+
+Scrapix uses 7 Kafka topics. They are automatically created by the topic initialization job in Docker Compose, or you can create them manually:
+
+```bash
+# Using rpk (Redpanda CLI)
+rpk topic create scrapix.urls.frontier -p 12 -r 1
+rpk topic create scrapix.urls.processing -p 12 -r 1
+rpk topic create scrapix.pages.raw -p 6 -r 1
+rpk topic create scrapix.documents -p 6 -r 1
+rpk topic create scrapix.events -p 3 -r 1
+rpk topic create scrapix.dlq.urls -p 3 -r 1
+rpk topic create scrapix.jobs.status -p 3 -r 1
+```
+
+Optional topics (enable with `PUBLISH_LINKS=true` or `PUBLISH_HISTORY=true`):
+
+```bash
+rpk topic create scrapix.links -p 6 -r 1
+rpk topic create scrapix.crawl.history -p 6 -r 1
+```
+
+### Topic Details
+
+| Topic | Partitions | Purpose |
+|-------|-----------|---------|
+| `scrapix.urls.frontier` | 12 | URLs submitted for crawling |
+| `scrapix.urls.processing` | 12 | URLs ready to fetch (dispatched by frontier) |
+| `scrapix.pages.raw` | 6 | Raw HTML from crawler workers |
+| `scrapix.documents` | 6 | Processed documents |
+| `scrapix.events` | 3 | Monitoring events (crawl stats, errors) |
+| `scrapix.dlq.urls` | 3 | Dead letter queue for failed messages |
+| `scrapix.jobs.status` | 3 | Job lifecycle updates |
+| `scrapix.links` | 6 | Link graph updates (optional) |
+| `scrapix.crawl.history` | 6 | Crawl history for incremental mode (optional) |
+
+### Partition Keys
+
+- **URL topics:** Partitioned by domain for per-domain ordering
+- **Page/document topics:** Partitioned by job ID
+- **Event topics:** Partitioned by job ID
+
+## Producer Configuration
+
+Scrapix producers use these defaults:
+
+| Setting | Value | Purpose |
+|---------|-------|---------|
+| Compression | LZ4 | Reduce bandwidth |
+| Idempotent | true | Exactly-once semantics |
+| Batch size | 64 KB | Batching threshold |
+| Linger | 20 ms | Batching delay |
+| Acks | all | Full durability |
+| Message timeout | 30 s | Delivery timeout |
+
+## Consumer Configuration
+
+| Setting | Value | Purpose |
+|---------|-------|---------|
+| Auto commit | false | Manual commits for reliability |
+| Auto offset reset | earliest | Don't skip messages |
+| Session timeout | 30 s | Consumer group rebalance |
+| Max poll interval | 300 s | Processing time budget |
+| Fetch max wait | 500 ms | Polling interval |
+
+## Kubernetes
+
+The Scrapix Kubernetes manifests include a Redpanda StatefulSet:
+
+- **Local:** 1 replica, 1Gi storage
+- **Production:** 3 replicas, 100Gi storage, anti-affinity rules, 4 CPU / 8Gi memory per broker
+
+## Managed Alternatives
+
+If you prefer not to self-host Kafka:
+
+| Service | Notes |
+|---------|-------|
+| [Upstash Kafka](https://upstash.com/kafka) | Serverless, pay-per-message. Good for low-volume. |
+| [Confluent Cloud](https://confluent.io/confluent-cloud) | Fully managed Kafka. Best compatibility. |
+| [AWS MSK](https://aws.amazon.com/msk/) | Managed Kafka on AWS. See [AWS deployment guide](/deployment/aws). |
+| [Redpanda Cloud](https://redpanda.com/redpanda-cloud) | Managed Redpanda. |
+
+Set `KAFKA_BROKERS` to the managed broker's bootstrap servers. Ensure your managed Kafka supports the topics and partition counts listed above.
+
+## Monitoring
+
+Redpanda exposes Prometheus metrics at `http://redpanda:9644/public_metrics`. The Scrapix monitoring stack scrapes this automatically.
+
+Key metrics to watch:
+- Consumer group lag (messages behind)
+- Partition leader distribution
+- Produce/consume throughput

@@ -1,0 +1,153 @@
+---
+title: Fly.io
+description: Distributed deployment on Fly.io with per-service apps
+---
+
+# Fly.io
+
+Fly.io runs Scrapix in **distributed mode** with each service as a separate Fly app. The repository includes pre-configured `fly.toml` files in `deploy/fly/`.
+
+## Prerequisites
+
+- [Fly CLI](https://fly.io/docs/flyctl/install/) installed and authenticated
+- A Fly.io account
+
+## Architecture
+
+Each service runs as a separate Fly app connected via Fly's internal network:
+
+| App | fly.toml | Memory | HTTP? | Description |
+|-----|----------|--------|-------|-------------|
+| `scrapix-api` | `deploy/fly/api/fly.toml` | 512 MB | Yes | API server |
+| `scrapix-frontier` | `deploy/fly/frontier/fly.toml` | 256 MB | No | Frontier service |
+| `scrapix-crawler` | `deploy/fly/crawler/fly.toml` | 512 MB | No | Crawler workers |
+| `scrapix-content` | `deploy/fly/content/fly.toml` | 512 MB | No | Content workers |
+| `scrapix-console` | `deploy/fly/console/fly.toml` | 256 MB | Yes | Web UI |
+| `scrapix-redpanda` | `deploy/fly/redpanda/fly.toml` | 1024 MB | No | Kafka broker |
+| `scrapix-meilisearch` | `deploy/fly/meilisearch/fly.toml` | 1024 MB | No | Search engine |
+
+## Step-by-Step Deployment
+
+### 1. Create Apps
+
+```bash
+fly apps create scrapix-api
+fly apps create scrapix-frontier
+fly apps create scrapix-crawler
+fly apps create scrapix-content
+fly apps create scrapix-console
+fly apps create scrapix-redpanda
+fly apps create scrapix-meilisearch
+```
+
+### 2. Create Volumes for Stateful Services
+
+```bash
+fly volumes create redpanda_data --size 10 --app scrapix-redpanda --region cdg
+fly volumes create meili_data --size 10 --app scrapix-meilisearch --region cdg
+```
+
+### 3. Set Secrets
+
+```bash
+# Shared across services
+fly secrets set KAFKA_BROKERS=scrapix-redpanda.internal:9092 --app scrapix-api
+fly secrets set KAFKA_BROKERS=scrapix-redpanda.internal:9092 --app scrapix-frontier
+fly secrets set KAFKA_BROKERS=scrapix-redpanda.internal:9092 --app scrapix-crawler
+fly secrets set KAFKA_BROKERS=scrapix-redpanda.internal:9092 --app scrapix-content
+
+# Meilisearch
+fly secrets set MEILISEARCH_URL=http://scrapix-meilisearch.internal:7700 --app scrapix-api
+fly secrets set MEILISEARCH_URL=http://scrapix-meilisearch.internal:7700 --app scrapix-content
+fly secrets set MEILISEARCH_API_KEY=your-master-key --app scrapix-api
+fly secrets set MEILISEARCH_API_KEY=your-master-key --app scrapix-content
+fly secrets set MEILI_MASTER_KEY=your-master-key --app scrapix-meilisearch
+```
+
+### 4. Deploy Infrastructure First
+
+```bash
+cd deploy/fly/redpanda && fly deploy
+cd deploy/fly/meilisearch && fly deploy
+```
+
+### 5. Deploy Application Services
+
+```bash
+# Build and deploy from repo root
+fly deploy --config deploy/fly/api/fly.toml --dockerfile Dockerfile --build-target scrapix-api
+fly deploy --config deploy/fly/frontier/fly.toml --dockerfile Dockerfile --build-target scrapix-frontier-service
+fly deploy --config deploy/fly/crawler/fly.toml --dockerfile Dockerfile --build-target scrapix-worker-crawler
+fly deploy --config deploy/fly/content/fly.toml --dockerfile Dockerfile --build-target scrapix-worker-content
+fly deploy --config deploy/fly/console/fly.toml --dockerfile console/Dockerfile
+```
+
+### 6. Verify
+
+```bash
+fly status --app scrapix-api
+curl https://scrapix-api.fly.dev/health
+```
+
+## Internal Networking
+
+Fly apps in the same organization communicate over the internal network using `.internal` DNS:
+
+- `scrapix-redpanda.internal:9092` — Kafka broker
+- `scrapix-meilisearch.internal:7700` — Meilisearch
+
+No public ports needed for internal services.
+
+## Auto-Scaling
+
+The API and console use Fly's auto-scaling:
+
+```toml
+# deploy/fly/api/fly.toml
+[http_service]
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  concurrency = 250
+```
+
+Workers (frontier, crawler, content) run as always-on machines since they consume from Kafka continuously.
+
+## Health Checks
+
+```toml
+# API health check
+[http_service.checks]
+  [http_service.checks.health]
+    interval = "10s"
+    timeout = "2s"
+    path = "/health"
+```
+
+## Scaling
+
+```bash
+# Scale crawler workers
+fly scale count 3 --app scrapix-crawler
+
+# Scale machine size
+fly scale vm shared-cpu-2x --app scrapix-crawler
+```
+
+## Cost Estimate
+
+| Component | Machine | Approx. Cost |
+|-----------|---------|-------------|
+| API | shared-cpu-1x, 512MB | $3/mo |
+| Frontier | shared-cpu-1x, 256MB | $2/mo |
+| Crawler (x2) | shared-cpu-1x, 512MB | $6/mo |
+| Content | shared-cpu-1x, 512MB | $3/mo |
+| Redpanda | shared-cpu-2x, 1GB | $7/mo |
+| Meilisearch | shared-cpu-2x, 1GB | $7/mo |
+| **Total** | | **~$28/mo** |
+
+## Limitations
+
+- Fly volumes are single-AZ — no cross-region replication for Redpanda/Meilisearch
+- Shared CPU machines may have noisy-neighbor effects
+- For high throughput, consider dedicated CPU machines (`performance-1x`)

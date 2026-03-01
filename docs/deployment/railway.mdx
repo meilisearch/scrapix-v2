@@ -1,0 +1,109 @@
+---
+title: Railway
+description: Single binary deployment on Railway
+---
+
+# Railway
+
+Railway is a simple PaaS that works well for Scrapix in **single binary mode**. Deploy from a Dockerfile with zero configuration.
+
+## Prerequisites
+
+- [Railway account](https://railway.app)
+- GitHub repository with the Scrapix code
+
+## Step-by-Step
+
+### 1. Create a New Project
+
+Go to [railway.app/new](https://railway.app/new) and connect your GitHub repository.
+
+### 2. Add Meilisearch
+
+Click **+ New Service** → **Database** → search for **Meilisearch** in the Railway marketplace.
+
+Note the internal connection URL (e.g., `meilisearch.railway.internal:7700`).
+
+### 3. Configure the Scrapix Service
+
+Add a `railway.toml` to your repo root:
+
+```toml
+[build]
+dockerfilePath = "Dockerfile"
+buildTarget = "scrapix-all"
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+```
+
+### 4. Set Environment Variables
+
+In the Railway dashboard, add these variables to the Scrapix service:
+
+| Variable | Value |
+|----------|-------|
+| `MEILISEARCH_URL` | `http://meilisearch.railway.internal:7700` |
+| `MEILISEARCH_API_KEY` | Your Meilisearch master key |
+| `PORT` | `8080` |
+| `RUST_LOG` | `info,scrapix=debug` |
+
+### 5. Deploy
+
+Railway automatically builds and deploys on push. You can also trigger manually:
+
+```bash
+railway up
+```
+
+### 6. Verify
+
+```bash
+curl https://your-app.railway.app/health
+```
+
+## Adding Optional Services
+
+### PostgreSQL
+
+Click **+ New Service** → **Database** → **PostgreSQL**.
+
+Add `DATABASE_URL` to Scrapix pointing to the internal URL.
+
+### Redis (DragonflyDB)
+
+Click **+ New Service** → **Database** → **Redis**.
+
+Add `REDIS_URL` to Scrapix.
+
+## Scaling
+
+Railway supports vertical scaling through the dashboard:
+
+- **Starter plan:** Up to 8 GB RAM, 8 vCPU
+- **Pro plan:** Up to 32 GB RAM, 32 vCPU
+
+For the single binary mode, 1 GB RAM handles moderate workloads (< 5K pages/day).
+
+## Cost Estimate
+
+| Component | Approx. Cost |
+|-----------|-------------|
+| Scrapix (1 GB RAM) | ~$5/mo |
+| Meilisearch (1 GB RAM) | ~$5/mo |
+| **Total** | **~$10/mo** |
+
+Railway charges based on resource usage (CPU time + memory GB-hours).
+
+## Limitations
+
+- Single binary mode only — Railway doesn't support multi-service Kafka setups well
+- No persistent volumes for the Scrapix process (RocksDB data lost on redeploy)
+- Build times can be long for Rust projects (~10-15 minutes)
+
+<Tip>
+Set `INCREMENTAL_CRAWL=false` on Railway since RocksDB data doesn't persist across deploys.
+</Tip>

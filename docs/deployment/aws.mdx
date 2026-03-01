@@ -1,0 +1,215 @@
+---
+title: AWS
+description: ECS Fargate and App Runner deployment
+---
+
+# AWS
+
+AWS offers multiple options for running Scrapix. This guide covers **ECS Fargate** (both modes) and **App Runner** (single binary).
+
+## Option 1: ECS Fargate (Distributed)
+
+ECS Fargate runs containers without managing servers. This setup supports the full distributed architecture.
+
+### Prerequisites
+
+- AWS CLI configured
+- ECR repository for images
+- VPC with private subnets
+
+### 1. Push Images to ECR
+
+```bash
+# Create repositories
+aws ecr create-repository --repository-name scrapix-api
+aws ecr create-repository --repository-name scrapix-frontier
+aws ecr create-repository --repository-name scrapix-crawler
+aws ecr create-repository --repository-name scrapix-content
+
+# Login to ECR
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ACCOUNT.dkr.ecr.us-east-1.amazonaws.com
+
+# Build and push
+for svc in scrapix-api scrapix-frontier-service scrapix-worker-crawler scrapix-worker-content; do
+  target=$(echo $svc | sed 's/scrapix-/scrapix-/')
+  tag=$(echo $svc | sed 's/scrapix-worker-/scrapix-/' | sed 's/scrapix-frontier-service/scrapix-frontier/')
+  docker build --target $svc -t ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/$tag:latest .
+  docker push ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/$tag:latest
+done
+```
+
+### 2. Create ECS Cluster
+
+```bash
+aws ecs create-cluster --cluster-name scrapix
+```
+
+### 3. Task Definitions
+
+Example task definition for the API service:
+
+```json
+{
+  "family": "scrapix-api",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "containerDefinitions": [
+    {
+      "name": "scrapix-api",
+      "image": "ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/scrapix-api:latest",
+      "portMappings": [
+        {"containerPort": 8080, "protocol": "tcp"}
+      ],
+      "environment": [
+        {"name": "KAFKA_BROKERS", "value": "your-msk-brokers:9092"},
+        {"name": "MEILISEARCH_URL", "value": "http://meilisearch-alb:7700"},
+        {"name": "RUST_LOG", "value": "info,scrapix=debug"}
+      ],
+      "secrets": [
+        {"name": "MEILISEARCH_API_KEY", "valueFrom": "arn:aws:secretsmanager:..."}
+      ],
+      "healthCheck": {
+        "command": ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/scrapix-api",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "api"
+        }
+      }
+    }
+  ]
+}
+```
+
+### 4. Create Services
+
+```bash
+# API with ALB
+aws ecs create-service \
+  --cluster scrapix \
+  --service-name scrapix-api \
+  --task-definition scrapix-api \
+  --desired-count 2 \
+  --launch-type FARGATE \
+  --network-configuration "awsvpcConfiguration={subnets=[subnet-xxx],securityGroups=[sg-xxx]}" \
+  --load-balancers "targetGroupArn=arn:aws:elasticloadbalancing:...,containerName=scrapix-api,containerPort=8080"
+
+# Workers (no ALB)
+aws ecs create-service \
+  --cluster scrapix \
+  --service-name scrapix-crawler \
+  --task-definition scrapix-crawler \
+  --desired-count 3 \
+  --launch-type FARGATE \
+  --network-configuration "awsvpcConfiguration={subnets=[subnet-xxx],securityGroups=[sg-xxx]}"
+```
+
+### 5. Kafka (MSK)
+
+Use [Amazon MSK](https://aws.amazon.com/msk/) for managed Kafka:
+
+```bash
+aws kafka create-cluster \
+  --cluster-name scrapix-kafka \
+  --kafka-version 3.6.0 \
+  --broker-node-group-info '{
+    "instanceType": "kafka.t3.small",
+    "storageInfo": {"ebsStorageInfo": {"volumeSize": 100}},
+    "clientSubnets": ["subnet-xxx", "subnet-yyy"],
+    "securityGroups": ["sg-xxx"]
+  }' \
+  --number-of-broker-nodes 2
+```
+
+### 6. Auto Scaling
+
+```bash
+# Register scalable target
+aws application-autoscaling register-scalable-target \
+  --service-namespace ecs \
+  --resource-id service/scrapix/scrapix-crawler \
+  --scalable-dimension ecs:service:DesiredCount \
+  --min-capacity 1 \
+  --max-capacity 20
+
+# CPU-based scaling
+aws application-autoscaling put-scaling-policy \
+  --service-namespace ecs \
+  --resource-id service/scrapix/scrapix-crawler \
+  --scalable-dimension ecs:service:DesiredCount \
+  --policy-name cpu-tracking \
+  --policy-type TargetTrackingScaling \
+  --target-tracking-scaling-policy-configuration '{
+    "TargetValue": 70.0,
+    "PredefinedMetricSpecification": {"PredefinedMetricType": "ECSServiceAverageCPUUtilization"}
+  }'
+```
+
+## Option 2: App Runner (Single Binary)
+
+For simpler setups, AWS App Runner runs Scrapix in single binary mode with minimal configuration.
+
+```bash
+aws apprunner create-service \
+  --service-name scrapix \
+  --source-configuration '{
+    "ImageRepository": {
+      "ImageIdentifier": "ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/scrapix:latest",
+      "ImageConfiguration": {
+        "Port": "8080",
+        "RuntimeEnvironmentVariables": {
+          "MEILISEARCH_URL": "http://meilisearch-host:7700",
+          "MEILISEARCH_API_KEY": "your-key"
+        },
+        "StartCommand": "all"
+      },
+      "ImageRepositoryType": "ECR"
+    },
+    "AutoDeploymentsEnabled": true
+  }' \
+  --instance-configuration '{
+    "Cpu": "1 vCPU",
+    "Memory": "2 GB"
+  }' \
+  --health-check-configuration '{
+    "Protocol": "HTTP",
+    "Path": "/health"
+  }'
+```
+
+## Cost Estimate
+
+### ECS Fargate (Distributed)
+
+| Component | Configuration | Approx. Cost |
+|-----------|--------------|-------------|
+| API (2x) | 0.5 vCPU, 1GB | $30/mo |
+| Frontier | 0.5 vCPU, 1GB | $15/mo |
+| Crawler (3x) | 0.5 vCPU, 1GB | $45/mo |
+| Content (2x) | 0.5 vCPU, 1GB | $30/mo |
+| MSK (2 brokers) | kafka.t3.small | $90/mo |
+| ALB | — | $20/mo |
+| **Total** | | **~$230/mo** |
+
+### App Runner (Single Binary)
+
+| Component | Configuration | Approx. Cost |
+|-----------|--------------|-------------|
+| Scrapix | 1 vCPU, 2GB | $30/mo |
+| Meilisearch (EC2) | t3.small | $15/mo |
+| **Total** | | **~$45/mo** |
+
+## Limitations
+
+- Fargate tasks have a 20 GB ephemeral storage limit
+- MSK minimum is 2 brokers (no single-broker dev option)
+- App Runner doesn't support persistent volumes
+- VPC configuration required for private networking between services

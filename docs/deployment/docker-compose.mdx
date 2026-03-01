@@ -1,0 +1,177 @@
+---
+title: Docker Compose
+description: Local development and small production deployments
+---
+
+# Docker Compose
+
+Docker Compose is the easiest way to run Scrapix locally or on a single server. The repository includes compose files for both modes.
+
+## Single Binary (Minimal)
+
+The simplest setup — just Meilisearch and Scrapix:
+
+```yaml
+# compose.yaml
+services:
+  meilisearch:
+    image: getmeili/meilisearch:v1.31
+    ports:
+      - "7700:7700"
+    environment:
+      MEILI_MASTER_KEY: masterKey
+    volumes:
+      - meili_data:/meili_data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7700/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  scrapix:
+    image: ghcr.io/quentindequelen/scrapix:latest
+    command: ["all"]
+    ports:
+      - "8080:8080"
+    environment:
+      MEILISEARCH_URL: http://meilisearch:7700
+      MEILISEARCH_API_KEY: masterKey
+      RUST_LOG: info,scrapix=debug
+    depends_on:
+      meilisearch:
+        condition: service_healthy
+
+volumes:
+  meili_data:
+```
+
+```bash
+docker compose up -d
+```
+
+## Full Distributed Stack
+
+The repository's `docker-compose.yml` runs the full distributed system:
+
+```bash
+# Clone the repo and start everything
+git clone https://github.com/quentindequelen/scrapix.git
+cd scrapix
+docker compose up -d
+```
+
+This starts:
+
+| Service | Port | Description |
+|---------|------|-------------|
+| scrapix-api | 8080 | REST API server |
+| scrapix-frontier | — | URL frontier service |
+| scrapix-crawler (x3) | — | Crawler workers (3 replicas) |
+| scrapix-content (x2) | — | Content workers (2 replicas) |
+| console | 3001 | Web UI |
+| redpanda | 19092 | Kafka-compatible broker |
+| redpanda-console | 8090 | Redpanda web UI |
+| meilisearch | 7700 | Search engine |
+| dragonfly | 6380 | Redis-compatible cache |
+| postgres | 5433 | Auth database |
+| clickhouse | 8123 | Analytics database |
+
+### Infrastructure Only
+
+For development, run only infrastructure in Docker and services natively with `cargo watch`:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+```
+
+The dev overlay disables all application services and reduces Redpanda memory to 512MB.
+
+Then start services natively:
+
+```bash
+just dev  # Uses overmind to start all services with cargo-watch
+```
+
+## Development with File Watching
+
+The compose file uses `develop.watch` for hot-reload development:
+
+```bash
+docker compose watch
+```
+
+This syncs source files into containers and triggers rebuilds on dependency changes:
+
+- **`sync`** — Source code changes (`src/`, `crates/`, `bins/`) synced without rebuild
+- **`rebuild`** — Dependency changes (`Cargo.toml`, `Cargo.lock`) trigger full rebuild
+
+## Topic Initialization
+
+The compose file includes an init container that creates all required Kafka topics:
+
+```yaml
+init-topics:
+  image: docker.redpanda.com/redpandadata/redpanda:v25.3.4
+  entrypoint: ["/bin/bash", "-c"]
+  command:
+    - |
+      rpk topic create scrapix.urls.frontier -p 12
+      rpk topic create scrapix.urls.processing -p 12
+      rpk topic create scrapix.pages.raw -p 6
+      rpk topic create scrapix.documents -p 6
+      rpk topic create scrapix.events -p 3
+      rpk topic create scrapix.dlq.urls -p 3
+      rpk topic create scrapix.jobs.status -p 3
+```
+
+## Production Considerations
+
+For running Docker Compose in production on a single server:
+
+1. **Change default passwords** — Update `MEILI_MASTER_KEY`, `POSTGRES_PASSWORD`, `CLICKHOUSE_PASSWORD`, `JWT_SECRET`
+2. **Add a reverse proxy** — Use Caddy, Nginx, or Traefik in front of the API
+3. **Enable TLS** — Via the reverse proxy
+4. **Set resource limits** — Add `deploy.resources.limits` to each service
+5. **Configure log rotation** — Use Docker's `json-file` log driver with max-size
+6. **Use a `.env` file** — Keep secrets out of the compose file
+
+```yaml
+services:
+  scrapix:
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+```
+
+## Volumes
+
+The compose file uses named volumes for all persistent data and build caches:
+
+| Volume | Purpose |
+|--------|---------|
+| `meili_data` | Meilisearch indexes |
+| `pg_data` | PostgreSQL data |
+| `redpanda_data` | Kafka topics and logs |
+| `dragonfly_data` | Redis cache |
+| `clickhouse_data` | Analytics data |
+| `cargo-registry`, `cargo-git` | Rust dependency cache |
+| `target-*` | Per-service Rust build cache |
+
+To reset all data:
+
+```bash
+docker compose down -v
+```
+
+## Health Checks
+
+All services include health checks:
+
+- **API:** `GET /health`
+- **Meilisearch:** `GET /health`
+- **PostgreSQL:** `pg_isready`
+- **Redpanda:** `rpk cluster health`
+- **DragonflyDB:** `redis-cli ping`
+- **ClickHouse:** `wget --spider http://localhost:8123/ping`

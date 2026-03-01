@@ -1,0 +1,110 @@
+---
+title: Coolify
+description: Self-hosted PaaS deployment for single binary mode
+---
+
+# Coolify
+
+[Coolify](https://coolify.io) is a self-hosted PaaS (like Heroku/Vercel) that you run on your own server. It provides git-push deploys, automatic HTTPS, and a web dashboard.
+
+## Prerequisites
+
+- A server with at least 2 GB RAM
+- Coolify installed ([installation guide](https://coolify.io/docs/installation))
+
+## Step-by-Step
+
+### 1. Add Meilisearch as a Service
+
+In the Coolify dashboard:
+
+1. Go to your project → **+ New Resource** → **Service** → search **Meilisearch**
+2. Configure:
+   - **MEILI_MASTER_KEY:** Set a secure key
+   - **Volume:** `/meili_data` (persistent)
+3. Deploy
+
+Note the internal hostname (e.g., `meilisearch-xxxxx:7700`).
+
+### 2. Add Scrapix from Docker Image
+
+1. **+ New Resource** → **Docker Image**
+2. Image: `ghcr.io/quentindequelen/scrapix:latest`
+3. Command: `all`
+4. Port: `8080`
+5. Health check path: `/health`
+
+### 3. Set Environment Variables
+
+| Variable | Value |
+|----------|-------|
+| `MEILISEARCH_URL` | `http://meilisearch-xxxxx:7700` (internal) |
+| `MEILISEARCH_API_KEY` | Your master key |
+| `PORT` | `8080` |
+| `RUST_LOG` | `info,scrapix=debug` |
+
+### 4. Deploy from Git (Alternative)
+
+Instead of a Docker image, deploy from your repository:
+
+1. **+ New Resource** → **Git Repository**
+2. Connect your GitHub/GitLab repository
+3. Set:
+   - **Build pack:** Dockerfile
+   - **Dockerfile location:** `./Dockerfile`
+   - **Docker build target:** `scrapix-all`
+4. Deploy
+
+Coolify will build the image and deploy it. Subsequent pushes trigger automatic redeployment.
+
+## Adding Optional Services
+
+### PostgreSQL
+
+**+ New Resource** → **Database** → **PostgreSQL**
+
+Set `DATABASE_URL` in Scrapix to the internal connection string.
+
+### Redis
+
+**+ New Resource** → **Database** → **Redis**
+
+Set `REDIS_URL` in Scrapix.
+
+### ClickHouse
+
+**+ New Resource** → **Docker Image** → `clickhouse/clickhouse-server:24.8`
+
+Set `CLICKHOUSE_URL`, `CLICKHOUSE_DATABASE`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD` in Scrapix.
+
+## Custom Domain
+
+In the Coolify dashboard:
+
+1. Go to the Scrapix service → **Settings** → **Domain**
+2. Add your domain (e.g., `scrapix.yourdomain.com`)
+3. Coolify handles SSL certificates automatically via Let's Encrypt
+
+## Scaling
+
+Coolify runs on a single server, so scaling is vertical:
+
+- Upgrade server RAM/CPU
+- Increase `CONCURRENCY` environment variable
+- Add additional servers to Coolify for multi-server deployment
+
+## Cost Estimate
+
+| Component | Cost |
+|-----------|------|
+| Coolify | Free (self-hosted) |
+| Server (2 vCPU, 4GB) | EUR 4.50/mo (Hetzner) or $6/mo (DigitalOcean) |
+| Domain | ~$10/year |
+| **Total** | **~$5-7/mo** |
+
+## Limitations
+
+- Single binary mode only
+- Git-based deploys rebuild the full Rust project (~10-15 min build time)
+- No horizontal scaling without additional Coolify servers
+- Coolify itself needs ~512 MB RAM overhead

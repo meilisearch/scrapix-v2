@@ -1,0 +1,182 @@
+---
+title: ClickHouse
+description: Optional analytics database for crawl metrics and dashboards
+---
+
+# ClickHouse
+
+ClickHouse is **optional**. When configured, Scrapix persists all crawl events for long-term analytics. Without it, only in-memory diagnostics (last 1,000 errors) are available.
+
+## When Do You Need ClickHouse?
+
+| Feature | ClickHouse Required? |
+|---------|---------------------|
+| Basic crawling | No |
+| In-memory diagnostics (`scrapix stats`) | No |
+| Long-term analytics | Yes |
+| Hourly/daily crawl metrics | Yes |
+| Per-account usage billing data | Yes |
+| Analytics API (`/analytics/v0/pipes/`) | Yes |
+
+## Quick Setup with Docker
+
+```bash
+docker run -d \
+  --name clickhouse \
+  -p 8123:8123 \
+  -p 9000:9000 \
+  -e CLICKHOUSE_USER=scrapix \
+  -e CLICKHOUSE_PASSWORD=scrapix \
+  -e CLICKHOUSE_DB=scrapix \
+  -v clickhouse_data:/var/lib/clickhouse \
+  clickhouse/clickhouse-server:24.8
+```
+
+Then configure Scrapix:
+
+```bash
+export CLICKHOUSE_URL=http://localhost:8123
+export CLICKHOUSE_DATABASE=scrapix
+export CLICKHOUSE_USER=scrapix
+export CLICKHOUSE_PASSWORD=scrapix
+```
+
+Setting `CLICKHOUSE_URL` automatically enables analytics event persistence and the analytics API.
+
+## Event Batching
+
+Scrapix batches events before writing to ClickHouse:
+
+- **Batch size:** 100 events
+- **Flush interval:** 5 seconds
+- Whichever threshold is hit first triggers a write
+
+## Analytics API
+
+Once ClickHouse is configured, the analytics API is available at `/analytics/v0/pipes/`. The response format is Tinybird-compatible.
+
+### Available Pipes
+
+| Pipe | Parameters | Description |
+|------|-----------|-------------|
+| `kpis.json` | `hours` | Key performance indicators |
+| `top_domains.json` | `hours`, `limit` | Top domains by request count |
+| `domain_stats.json` | `domain`, `hours` | Stats for a specific domain |
+| `hourly_stats.json` | `hours` | Hourly crawl statistics |
+| `error_distribution.json` | `hours` | Error breakdown by status code |
+| `job_stats.json` | `job_id` | Statistics for a specific job |
+| `account_usage.json` | `account_id`, `hours` | Per-account usage |
+| `top_accounts.json` | `hours`, `limit` | Top accounts by usage |
+
+### Example Queries
+
+```bash
+# Key performance indicators for the last 24 hours
+curl "http://localhost:8080/analytics/v0/pipes/kpis.json?hours=24"
+
+# Top 10 domains
+curl "http://localhost:8080/analytics/v0/pipes/top_domains.json?hours=24&limit=10"
+
+# Error breakdown
+curl "http://localhost:8080/analytics/v0/pipes/error_distribution.json?hours=24"
+```
+
+### Response Format
+
+```json
+{
+  "meta": [
+    {"name": "domain", "type": "String"},
+    {"name": "requests", "type": "UInt64"},
+    {"name": "avg_latency_ms", "type": "Float64"}
+  ],
+  "data": [
+    {"domain": "example.com", "requests": 1523, "avg_latency_ms": 245.3}
+  ],
+  "rows": 1,
+  "statistics": {
+    "elapsed": 0.015,
+    "rows_read": 10,
+    "bytes_read": 0
+  }
+}
+```
+
+## Data Model
+
+### `crawl_events` Table
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `url` | String | URL crawled |
+| `domain` | String | Extracted domain |
+| `status_code` | UInt16 | HTTP status |
+| `response_time_ms` | UInt32 | Fetch latency |
+| `content_length` | UInt64 | Bytes downloaded |
+| `content_type` | String | MIME type |
+| `js_rendered` | Bool | Used browser rendering |
+| `depth` | UInt32 | Crawl depth |
+| `worker_id` | String | Worker attribution |
+| `job_id` | String | Job attribution |
+| `account_id` | String | Billing attribution |
+| `crawled_at` | DateTime | Timestamp |
+| `error` | String | Error message (if failed) |
+| `links_extracted` | UInt32 | Links found on page |
+| `content_changed` | Bool | Changed since last crawl |
+
+## Direct SQL Queries
+
+For custom analytics beyond the pipe API:
+
+```sql
+-- Account usage summary (last 30 days)
+SELECT
+  account_id,
+  count() AS pages,
+  sum(content_length) AS bytes,
+  avg(response_time_ms) AS avg_latency
+FROM crawl_events
+WHERE crawled_at >= now() - INTERVAL 30 DAY
+GROUP BY account_id;
+
+-- Daily billing breakdown
+SELECT
+  toDate(crawled_at) AS date,
+  count() AS requests,
+  sum(content_length) AS bytes,
+  countIf(js_rendered) AS browser_renders
+FROM crawl_events
+WHERE account_id = 'acct_123'
+GROUP BY date
+ORDER BY date;
+
+-- Error hotspots
+SELECT
+  domain,
+  status_code,
+  count() AS errors
+FROM crawl_events
+WHERE status_code >= 400
+  AND crawled_at >= now() - INTERVAL 24 HOUR
+GROUP BY domain, status_code
+ORDER BY errors DESC
+LIMIT 20;
+```
+
+## Sizing Guidelines
+
+| Scale | Events/day | Recommended RAM | Storage/month |
+|-------|-----------|----------------|---------------|
+| Small | < 100K | 1 GB | 1 Gi |
+| Medium | 100K – 1M | 4 GB | 10 Gi |
+| Large | 1M – 10M | 8+ GB | 50+ Gi |
+
+ClickHouse compresses data aggressively — 10M crawl events typically consume < 2 GB on disk.
+
+## Managed Alternatives
+
+| Service | Notes |
+|---------|-------|
+| [ClickHouse Cloud](https://clickhouse.cloud) | Managed ClickHouse with scale-to-zero. |
+| [Tinybird](https://tinybird.co) | ClickHouse-based analytics API (Scrapix pipe API is Tinybird-compatible). |
+| [Altinity Cloud](https://altinity.cloud) | Managed ClickHouse on AWS/GCP. |

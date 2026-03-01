@@ -1,0 +1,337 @@
+---
+title: Crawl Configurations
+description: JSON schema and examples for crawl job configurations
+---
+
+# Crawl Configurations
+
+Crawl jobs are submitted as JSON to the `POST /crawl` endpoint or via `scrapix crawl -p config.json`.
+
+## Minimal Configuration
+
+The simplest crawl config only needs `start_urls` and `index_uid`:
+
+```json
+{
+  "start_urls": ["https://example.com"],
+  "index_uid": "my-index",
+  "meilisearch": {
+    "url": "http://localhost:7700",
+    "api_key": "masterKey"
+  }
+}
+```
+
+## Full Schema
+
+### Top-Level Fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `start_urls` | `string[]` | **required** | Seed URLs to begin crawling |
+| `index_uid` | `string` | **required** | Meilisearch index name |
+| `crawler_type` | `"http"` or `"browser"` | `"http"` | HTTP-only or headless browser |
+| `max_depth` | `integer` | — | Maximum link depth from start URLs |
+| `max_pages` | `integer` | — | Maximum pages to crawl |
+| `allowed_domains` | `string[]` | `[]` | Strict domain whitelist |
+| `replace_index` | `boolean` | `false` | Atomically swap index on completion |
+| `headers` | `object` | `{}` | Custom HTTP headers |
+| `user_agents` | `string[]` | `[]` | User-Agent rotation list |
+
+### URL Patterns
+
+Control which URLs are crawled and indexed:
+
+```json
+{
+  "url_patterns": {
+    "include": ["https://docs.example.com/**"],
+    "exclude": ["**/api-reference/**", "**/*.pdf"],
+    "index_only": ["https://docs.example.com/guides/**"],
+    "allowed_domains": ["docs.example.com"]
+  }
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `include` | Glob patterns — only crawl matching URLs |
+| `exclude` | Glob patterns — skip matching URLs |
+| `index_only` | Crawl all, but only index matches |
+| `allowed_domains` | Domain whitelist (alternative to top-level) |
+
+### Sitemap
+
+```json
+{
+  "sitemap": {
+    "enabled": true,
+    "urls": ["https://example.com/sitemap.xml"]
+  }
+}
+```
+
+### Concurrency
+
+```json
+{
+  "concurrency": {
+    "max_concurrent_requests": 50,
+    "browser_pool_size": 5,
+    "dns_concurrency": 100
+  }
+}
+```
+
+### Rate Limiting
+
+```json
+{
+  "rate_limit": {
+    "requests_per_second": 10,
+    "requests_per_minute": 500,
+    "per_domain_delay_ms": 100,
+    "respect_robots_txt": true,
+    "default_crawl_delay_ms": 1000
+  }
+}
+```
+
+### Proxy Configuration
+
+```json
+{
+  "proxy": {
+    "urls": [
+      "http://proxy1.example.com:8080",
+      "http://proxy2.example.com:8080"
+    ],
+    "rotation": "round_robin"
+  }
+}
+```
+
+Rotation strategies: `round_robin`, `random`, `least_used`.
+
+For tiered fallback (try cheaper proxies first):
+
+```json
+{
+  "proxy": {
+    "urls": ["http://datacenter-proxy:8080"],
+    "rotation": "round_robin",
+    "tiered": [
+      ["http://datacenter1:8080", "http://datacenter2:8080"],
+      ["http://residential1:8080", "http://residential2:8080"]
+    ]
+  }
+}
+```
+
+### Feature Extraction
+
+Toggle individual extraction features:
+
+```json
+{
+  "features": {
+    "metadata": { "enabled": true },
+    "markdown": { "enabled": true },
+    "block_split": { "enabled": true },
+    "schema": {
+      "enabled": true,
+      "only_types": ["Article", "Product"],
+      "convert_dates": true
+    },
+    "custom_selectors": {
+      "enabled": true,
+      "selectors": {
+        "price": ".product-price",
+        "rating": ".star-rating",
+        "tags": [".tag", ".category"]
+      }
+    },
+    "ai_extraction": {
+      "enabled": true,
+      "prompt": "Extract the product name, price, and description from: {content}",
+      "model": "gpt-4o-mini",
+      "max_tokens": 500
+    },
+    "ai_summary": { "enabled": true }
+  }
+}
+```
+
+Each feature supports page-level filtering:
+
+```json
+{
+  "features": {
+    "metadata": {
+      "enabled": true,
+      "include_pages": ["https://example.com/blog/**"],
+      "exclude_pages": ["**/drafts/**"]
+    }
+  }
+}
+```
+
+### Meilisearch Settings
+
+Configure the destination index:
+
+```json
+{
+  "meilisearch": {
+    "url": "http://localhost:7700",
+    "api_key": "masterKey",
+    "primary_key": "uid",
+    "batch_size": 1000,
+    "keep_settings": false,
+    "settings": {
+      "searchable_attributes": ["title", "content", "markdown", "h1", "h2", "h3"],
+      "filterable_attributes": ["domain", "language", "crawled_at", "urls_tags"],
+      "sortable_attributes": ["crawled_at"],
+      "ranking_rules": ["words", "typo", "proximity", "attribute", "sort", "exactness"],
+      "stop_words": ["the", "a", "an"],
+      "synonyms": {
+        "js": ["javascript"],
+        "ts": ["typescript"]
+      }
+    }
+  }
+}
+```
+
+### Webhooks
+
+Receive notifications for crawl events:
+
+```json
+{
+  "webhooks": [
+    {
+      "url": "https://api.example.com/webhook",
+      "events": ["crawl_completed", "crawl_failed", "progress_update"],
+      "auth": {
+        "bearer": { "token": "your-secret-token" }
+      },
+      "timeout_ms": 30000
+    }
+  ]
+}
+```
+
+Available events: `crawl_started`, `crawl_completed`, `crawl_failed`, `progress_update`, `page_crawled`, `page_indexed`, `page_error`, `batch_sent`.
+
+Auth methods:
+- `bearer` — Bearer token in Authorization header
+- `hmac` — HMAC signature in custom header
+- `headers` — Custom headers
+
+## Example Configurations
+
+### Documentation Site Crawl
+
+```json
+{
+  "start_urls": ["https://docs.meilisearch.com"],
+  "index_uid": "meilisearch-docs",
+  "crawler_type": "http",
+  "max_depth": 5,
+  "max_pages": 1000,
+  "url_patterns": {
+    "include": ["https://docs.meilisearch.com/**"],
+    "exclude": ["**/api-reference/**"]
+  },
+  "concurrency": {
+    "max_concurrent_requests": 10
+  },
+  "rate_limit": {
+    "requests_per_second": 5,
+    "respect_robots_txt": true
+  },
+  "features": {
+    "metadata": { "enabled": true },
+    "markdown": { "enabled": true }
+  },
+  "meilisearch": {
+    "url": "http://localhost:7700",
+    "api_key": "masterKey",
+    "batch_size": 100,
+    "settings": {
+      "searchable_attributes": ["title", "content", "markdown"],
+      "filterable_attributes": ["url", "language", "depth"]
+    }
+  }
+}
+```
+
+### High-Throughput Multi-Site Crawl
+
+```json
+{
+  "start_urls": [
+    "https://en.wikipedia.org/wiki/Main_Page",
+    "https://en.wikipedia.org/wiki/Portal:Contents"
+  ],
+  "index_uid": "wikipedia-10k",
+  "max_pages": 10000,
+  "max_depth": 5,
+  "allowed_domains": ["en.wikipedia.org"],
+  "concurrency": {
+    "max_concurrent_requests": 100
+  },
+  "rate_limit": {
+    "requests_per_second": 50,
+    "per_domain_delay_ms": 20,
+    "respect_robots_txt": true
+  },
+  "features": {
+    "metadata": { "enabled": true },
+    "markdown": { "enabled": true },
+    "schema": { "enabled": true }
+  },
+  "meilisearch": {
+    "url": "http://localhost:7700",
+    "api_key": "masterKey",
+    "batch_size": 500
+  }
+}
+```
+
+### E-Commerce with AI Extraction
+
+```json
+{
+  "start_urls": ["https://shop.example.com"],
+  "index_uid": "products",
+  "max_depth": 3,
+  "crawler_type": "browser",
+  "features": {
+    "custom_selectors": {
+      "enabled": true,
+      "selectors": {
+        "price": ".product-price",
+        "sku": "[data-sku]",
+        "availability": ".stock-status"
+      },
+      "include_pages": ["**/product/**"]
+    },
+    "ai_extraction": {
+      "enabled": true,
+      "prompt": "Extract structured product data from: {content}",
+      "model": "gpt-4o-mini",
+      "include_pages": ["**/product/**"]
+    }
+  },
+  "meilisearch": {
+    "url": "http://localhost:7700",
+    "api_key": "masterKey",
+    "settings": {
+      "filterable_attributes": ["price", "availability", "category"],
+      "sortable_attributes": ["price"]
+    }
+  }
+}
+```

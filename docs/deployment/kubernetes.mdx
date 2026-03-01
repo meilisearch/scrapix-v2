@@ -1,0 +1,200 @@
+---
+title: Kubernetes
+description: Distributed deployment with Kustomize overlays
+---
+
+# Kubernetes
+
+Scrapix ships with Kustomize manifests for Kubernetes deployment. Three overlays are included: local development, generic production, and Scaleway Kapsule with KEDA autoscaling.
+
+## Prerequisites
+
+- Kubernetes cluster (minikube, kind, EKS, GKE, or any managed K8s)
+- `kubectl` configured for your cluster
+- Container images built or pulled from `ghcr.io/quentindequelen/scrapix-*`
+
+## Quick Start (Local)
+
+```bash
+# Deploy with local overlay (reduced resources)
+kubectl apply -k deploy/kubernetes/overlays/local
+
+# Or use the CLI
+scrapix k8s deploy
+
+# Wait for pods
+kubectl -n scrapix get pods -w
+
+# Port forward API and Meilisearch
+kubectl -n scrapix port-forward svc/scrapix-api 8080:8080
+kubectl -n scrapix port-forward svc/meilisearch 7700:7700
+```
+
+## Architecture
+
+The Kubernetes deployment runs Scrapix in **distributed mode** with all infrastructure:
+
+```
+scrapix namespace
+├── Deployments
+│   ├── scrapix-api (1-10 replicas)
+│   ├── scrapix-frontier (1-5 replicas)
+│   ├── scrapix-worker-crawler (1-20 replicas)
+│   ├── scrapix-worker-content (1-10 replicas)
+│   ├── console (1 replica)
+│   └── dragonfly (1 replica)
+├── StatefulSets
+│   ├── redpanda (1-3 replicas)
+│   ├── meilisearch (1 replica)
+│   ├── postgres (1 replica)
+│   └── clickhouse (1 replica)
+├── ConfigMap (scrapix-config)
+└── Secret (scrapix-secrets)
+```
+
+## Overlays
+
+### Local
+
+Minimal resources for development:
+
+| Service | CPU Request | Memory Request | Storage |
+|---------|-------------|---------------|---------|
+| API | 50m | 64Mi | — |
+| Frontier | 50m | 64Mi | — |
+| Crawler | 50m | 64Mi | — |
+| Content | 50m | 64Mi | — |
+| Redpanda | 50m | 64Mi | 1Gi |
+| Meilisearch | 50m | 64Mi | 2Gi |
+
+NodePort services for API (30080) and Meilisearch (30700).
+
+```bash
+kubectl apply -k deploy/kubernetes/overlays/local
+```
+
+### Production
+
+Scaled resources with HPA and PDBs:
+
+| Service | Replicas | CPU Req/Limit | Memory Req/Limit |
+|---------|----------|--------------|-----------------|
+| API | 2-10 | 250m / 1000m | 256Mi / 1Gi |
+| Frontier | 1-5 | 250m / 1000m | 512Mi / 2Gi |
+| Crawler | 2-20 | 250m / 1000m | 256Mi / 1Gi |
+| Content | 2-10 | 250m / 1000m | 256Mi / 1Gi |
+| Redpanda | 3 | 1000m / 4000m | 2Gi / 8Gi |
+| Meilisearch | 1 | 500m / 2000m | 1Gi / 4Gi |
+
+**Horizontal Pod Autoscalers:**
+
+| Service | Min | Max | CPU Target | Memory Target |
+|---------|-----|-----|-----------|--------------|
+| API | 2 | 10 | 70% | 80% |
+| Crawler | 2 | 20 | 70% | — |
+| Content | 2 | 10 | 70% | — |
+| Frontier | 1 | 5 | — | 80% |
+
+**Pod Disruption Budgets:** `minAvailable: 1` for API, crawler, content, redpanda, meilisearch.
+
+```bash
+kubectl apply -k deploy/kubernetes/overlays/prod
+```
+
+### Scaleway Kapsule
+
+Optimized for Scaleway with KEDA autoscaling, Ingress, cert-manager, and node pool selectors:
+
+**Recommended Node Pools:**
+
+| Pool | Instance Type | vCPU | RAM | Purpose |
+|------|---------------|------|-----|---------|
+| Infra | PRO2-S | 4 | 16 GB | Redpanda, Meilisearch, Postgres, ClickHouse |
+| Workers | DEV1-M | 3 | 4 GB | Crawlers, content, frontier |
+| System | DEV1-S | 2 | 2 GB | API, console, ingress |
+
+**KEDA ScaledObjects** (scale-to-zero workers):
+
+| Service | Trigger | Threshold | Min | Max |
+|---------|---------|-----------|-----|-----|
+| Crawler | Kafka lag on `scrapix.urls.processing` | 100 messages | 0 | 20 |
+| Content | Kafka lag on `scrapix.pages.raw` | 100 messages | 0 | 10 |
+| Frontier | Kafka lag on `scrapix.urls.frontier` | 500 messages | 0 | 3 |
+
+```bash
+kubectl apply -k deploy/kubernetes/overlays/scaleway
+```
+
+## Building Images
+
+Build and push images to your registry:
+
+```bash
+# Build all service images
+docker build --target scrapix-api -t ghcr.io/your-org/scrapix-api:v0.1.0 .
+docker build --target scrapix-frontier-service -t ghcr.io/your-org/scrapix-frontier:v0.1.0 .
+docker build --target scrapix-worker-crawler -t ghcr.io/your-org/scrapix-crawler:v0.1.0 .
+docker build --target scrapix-worker-content -t ghcr.io/your-org/scrapix-content:v0.1.0 .
+
+# Push
+docker push ghcr.io/your-org/scrapix-api:v0.1.0
+docker push ghcr.io/your-org/scrapix-frontier:v0.1.0
+docker push ghcr.io/your-org/scrapix-crawler:v0.1.0
+docker push ghcr.io/your-org/scrapix-content:v0.1.0
+```
+
+Update image references in your overlay's `kustomization.yaml`:
+
+```yaml
+images:
+  - name: scrapix-api
+    newName: ghcr.io/your-org/scrapix-api
+    newTag: v0.1.0
+```
+
+## Secrets
+
+Update secrets before deploying to production:
+
+```bash
+kubectl -n scrapix create secret generic scrapix-secrets \
+  --from-literal=MEILISEARCH_API_KEY=your-key \
+  --from-literal=POSTGRES_PASSWORD=your-password \
+  --from-literal=CLICKHOUSE_PASSWORD=your-password \
+  --from-literal=JWT_SECRET=your-jwt-secret
+```
+
+## Monitoring
+
+Deploy the monitoring stack alongside:
+
+```bash
+# Install Prometheus + Grafana via Helm
+helm install prometheus prometheus-community/kube-prometheus-stack -n monitoring
+
+# Scrapix services expose metrics on port 9090 at /metrics
+# ServiceMonitor CRDs can be added for automatic discovery
+```
+
+See [Monitoring](/operations/monitoring) for details.
+
+## Management Commands
+
+```bash
+# Status
+scrapix k8s status
+scrapix k8s status -w  # Watch mode
+
+# Logs
+scrapix k8s logs crawler
+scrapix k8s logs -f
+
+# Scale
+scrapix k8s scale crawler -r 10
+
+# Restart
+scrapix k8s restart crawler
+
+# Destroy
+scrapix k8s destroy
+```

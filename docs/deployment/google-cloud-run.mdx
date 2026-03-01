@@ -1,0 +1,121 @@
+---
+title: Google Cloud Run
+description: Serverless single binary deployment with scale-to-zero
+---
+
+# Google Cloud Run
+
+Cloud Run is ideal for Scrapix in **single binary mode** with bursty workloads. It scales to zero when idle and spins up on demand.
+
+## Prerequisites
+
+- [Google Cloud account](https://cloud.google.com)
+- `gcloud` CLI installed and configured
+- Docker installed for building images
+
+## Step-by-Step
+
+### 1. Build and Push the Image
+
+```bash
+# Configure Docker for Artifact Registry
+gcloud auth configure-docker us-central1-docker.pkg.dev
+
+# Create a repository
+gcloud artifacts repositories create scrapix \
+  --repository-format=docker \
+  --location=us-central1
+
+# Build and push
+docker build --target scrapix-all -t us-central1-docker.pkg.dev/YOUR_PROJECT/scrapix/scrapix:latest .
+docker push us-central1-docker.pkg.dev/YOUR_PROJECT/scrapix/scrapix:latest
+```
+
+### 2. Deploy Meilisearch
+
+Meilisearch needs persistent storage, so run it on Compute Engine or use [Meilisearch Cloud](https://www.meilisearch.com/cloud):
+
+**Option A: Compute Engine**
+
+```bash
+gcloud compute instances create-with-container meilisearch \
+  --container-image=getmeili/meilisearch:v1.31 \
+  --container-env=MEILI_MASTER_KEY=your-key \
+  --machine-type=e2-small \
+  --boot-disk-size=20GB \
+  --zone=us-central1-a \
+  --tags=meilisearch
+```
+
+**Option B: Meilisearch Cloud** — No infrastructure to manage.
+
+### 3. Deploy Scrapix
+
+```bash
+gcloud run deploy scrapix \
+  --image=us-central1-docker.pkg.dev/YOUR_PROJECT/scrapix/scrapix:latest \
+  --args=all \
+  --port=8080 \
+  --memory=1Gi \
+  --cpu=2 \
+  --min-instances=0 \
+  --max-instances=5 \
+  --set-env-vars="MEILISEARCH_URL=http://MEILISEARCH_IP:7700" \
+  --set-env-vars="MEILISEARCH_API_KEY=your-key" \
+  --set-env-vars="RUST_LOG=info,scrapix=debug" \
+  --allow-unauthenticated \
+  --region=us-central1
+```
+
+### 4. Verify
+
+```bash
+SERVICE_URL=$(gcloud run services describe scrapix --format="value(status.url)" --region=us-central1)
+curl $SERVICE_URL/health
+```
+
+## Scale-to-Zero Behavior
+
+Cloud Run scales to zero when there are no incoming requests. When a request arrives, it cold-starts the Scrapix process. Cold start time for the Rust binary is typically 1-3 seconds.
+
+<Warning>
+In-progress crawls are interrupted when Cloud Run scales down. For long-running crawls, set `--min-instances=1` to keep at least one instance running.
+</Warning>
+
+## Connecting to VPC
+
+If Meilisearch runs on Compute Engine in a VPC:
+
+```bash
+# Create a Serverless VPC Access connector
+gcloud compute networks vpc-access connectors create scrapix-connector \
+  --region=us-central1 \
+  --network=default \
+  --range=10.8.0.0/28
+
+# Redeploy with VPC connector
+gcloud run deploy scrapix \
+  --vpc-connector=scrapix-connector \
+  --vpc-egress=private-ranges-only \
+  # ... other flags
+```
+
+## Cost Estimate
+
+| Component | Configuration | Approx. Cost |
+|-----------|--------------|-------------|
+| Cloud Run (scrapix) | 1 vCPU, 1GB, pay-per-use | $5-20/mo (usage dependent) |
+| Compute Engine (meilisearch) | e2-small | $15/mo |
+| Artifact Registry | Image storage | $1/mo |
+| **Total** | | **~$20-35/mo** |
+
+Cloud Run is billed per request-second. If crawls are infrequent, costs can be very low.
+
+## Limitations
+
+- Single binary mode only — no Kafka on Cloud Run
+- No persistent local storage (RocksDB resets on cold start)
+- Maximum request timeout is 60 minutes
+- Maximum instance memory is 32 GB
+- Scale-to-zero interrupts long-running crawls
+- VPC connector needed for private Meilisearch access

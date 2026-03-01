@@ -1,0 +1,94 @@
+{
+  "$schema": "https://mintlify.com/schema.json",
+  "name": "Scrapix",
+  "logo": {
+    "dark": "/logo/dark.svg",
+    "light": "/logo/light.svg"
+  },
+  "favicon": "/favicon.svg",
+  "colors": {
+    "primary": "#FF6B35",
+    "light": "#FF8F66",
+    "dark": "#E55A2B",
+    "anchors": {
+      "from": "#FF6B35",
+      "to": "#E55A2B"
+    }
+  },
+  "topbarLinks": [
+    {
+      "name": "GitHub",
+      "url": "https://github.com/quentindequelen/scrapix"
+    }
+  ],
+  "topbarCtaButton": {
+    "name": "Get Started",
+    "url": "/quickstart"
+  },
+  "anchors": [
+    {
+      "name": "API Reference",
+      "icon": "code",
+      "url": "/api-reference"
+    },
+    {
+      "name": "GitHub",
+      "icon": "github",
+      "url": "https://github.com/quentindequelen/scrapix"
+    }
+  ],
+  "navigation": [
+    {
+      "group": "Getting Started",
+      "pages": [
+        "introduction",
+        "quickstart",
+        "architecture"
+      ]
+    },
+    {
+      "group": "Configuration",
+      "pages": [
+        "configuration/environment-variables",
+        "configuration/crawl-configs",
+        "configuration/cli-reference"
+      ]
+    },
+    {
+      "group": "Infrastructure",
+      "pages": [
+        "infrastructure/meilisearch",
+        "infrastructure/kafka-redpanda",
+        "infrastructure/postgresql",
+        "infrastructure/clickhouse"
+      ]
+    },
+    {
+      "group": "Deployment",
+      "pages": [
+        "deployment/overview",
+        "deployment/docker-compose",
+        "deployment/kubernetes",
+        "deployment/fly-io",
+        "deployment/railway",
+        "deployment/render",
+        "deployment/google-cloud-run",
+        "deployment/aws",
+        "deployment/azure",
+        "deployment/hetzner-vps",
+        "deployment/coolify"
+      ]
+    },
+    {
+      "group": "Operations",
+      "pages": [
+        "operations/monitoring",
+        "operations/scaling",
+        "operations/troubleshooting"
+      ]
+    }
+  ],
+  "footerSocials": {
+    "github": "https://github.com/quentindequelen/scrapix"
+  }
+}

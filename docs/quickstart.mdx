@@ -1,0 +1,119 @@
+---
+title: Quickstart
+description: Get Scrapix running in 5 minutes
+---
+
+# Quickstart
+
+This guide gets you from zero to a working crawl in under 5 minutes using Docker. You'll run Scrapix in single-binary mode — no Kafka, no Postgres, just Meilisearch.
+
+## Prerequisites
+
+- [Docker](https://docs.docker.com/get-docker/) installed and running
+
+## 1. Start Meilisearch
+
+```bash
+docker run -d \
+  --name meilisearch \
+  -p 7700:7700 \
+  -e MEILI_MASTER_KEY=masterKey \
+  -v meili_data:/meili_data \
+  getmeili/meilisearch:v1.31
+```
+
+## 2. Start Scrapix
+
+```bash
+docker run -d \
+  --name scrapix \
+  -p 8080:8080 \
+  --link meilisearch \
+  -e MEILISEARCH_URL=http://meilisearch:7700 \
+  -e MEILISEARCH_API_KEY=masterKey \
+  ghcr.io/quentindequelen/scrapix:latest \
+  all
+```
+
+The `all` command starts the API server, frontier, crawler, and content worker in a single process using in-memory channels.
+
+## 3. Submit a Crawl Job
+
+```bash
+curl -X POST http://localhost:8080/crawl \
+  -H "Content-Type: application/json" \
+  -d '{
+    "start_urls": ["https://docs.meilisearch.com"],
+    "index_uid": "meilisearch-docs",
+    "max_depth": 3,
+    "max_pages": 100,
+    "meilisearch": {
+      "url": "http://meilisearch:7700",
+      "api_key": "masterKey"
+    }
+  }'
+```
+
+You'll get back a job ID:
+
+```json
+{
+  "job_id": "abc123",
+  "status": "started"
+}
+```
+
+## 4. Search Your Results
+
+Once pages are crawled and indexed, search them:
+
+```bash
+curl "http://localhost:7700/indexes/meilisearch-docs/search" \
+  -H "Authorization: Bearer masterKey" \
+  -H "Content-Type: application/json" \
+  -d '{"q": "getting started", "limit": 5}'
+```
+
+## 5. Monitor Progress
+
+Check the crawl status:
+
+```bash
+# System stats
+curl http://localhost:8080/stats
+
+# Recent errors
+curl http://localhost:8080/errors?last=10
+
+# Per-domain stats
+curl http://localhost:8080/domains?top=10
+```
+
+## Using the CLI
+
+If you prefer the CLI over `curl`:
+
+```bash
+# Install from source
+cargo install --path bins/scrapix
+
+# Submit a crawl
+scrapix crawl -p crawl-config.json
+
+# Check status
+scrapix stats
+
+# View errors
+scrapix errors --last 20
+```
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Crawl Configuration" icon="gear" href="/configuration/crawl-configs">
+    Learn about URL patterns, rate limiting, proxy rotation, and AI enrichment.
+  </Card>
+  <Card title="Deploy to Production" icon="server" href="/deployment/overview">
+    Choose a deployment platform and mode for your workload.
+  </Card>
+</CardGroup>

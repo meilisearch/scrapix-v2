@@ -1,0 +1,154 @@
+---
+title: Meilisearch
+description: Setting up and configuring Meilisearch for Scrapix
+---
+
+# Meilisearch
+
+Meilisearch is the only **required** dependency for Scrapix. All crawled documents are indexed into Meilisearch for full-text search.
+
+## Quick Setup with Docker
+
+```bash
+docker run -d \
+  --name meilisearch \
+  -p 7700:7700 \
+  -e MEILI_MASTER_KEY=your-master-key \
+  -v meili_data:/meili_data \
+  getmeili/meilisearch:v1.31
+```
+
+Then configure Scrapix:
+
+```bash
+export MEILISEARCH_URL=http://localhost:7700
+export MEILISEARCH_API_KEY=your-master-key
+```
+
+## Kubernetes StatefulSet
+
+The Scrapix Kubernetes manifests include a Meilisearch StatefulSet. In the base configuration:
+
+```yaml
+# deploy/kubernetes/base/meilisearch-statefulset.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: meilisearch
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: meilisearch
+          image: getmeili/meilisearch:v1.31
+          env:
+            - name: MEILI_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: scrapix-secrets
+                  key: MEILISEARCH_API_KEY
+          ports:
+            - containerPort: 7700
+          volumeMounts:
+            - name: data
+              mountPath: /meili_data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi
+```
+
+Production overlay increases resources:
+
+| Setting | Local | Production |
+|---------|-------|------------|
+| Storage | 2Gi | 100Gi |
+| CPU request | 50m | 500m |
+| CPU limit | — | 2000m |
+| Memory request | 64Mi | 1Gi |
+| Memory limit | — | 4Gi |
+
+## Meilisearch Cloud
+
+For managed hosting, use [Meilisearch Cloud](https://www.meilisearch.com/cloud):
+
+1. Create a project in the Meilisearch Cloud dashboard
+2. Copy your project URL and API key
+3. Set environment variables:
+
+```bash
+export MEILISEARCH_URL=https://ms-xxxxx.meilisearch.io
+export MEILISEARCH_API_KEY=your-cloud-api-key
+```
+
+No infrastructure to manage. Recommended for production deployments that want to avoid operational overhead.
+
+## Index Settings
+
+Scrapix automatically configures index settings when a crawl job specifies them. Default settings applied:
+
+| Setting | Default Value |
+|---------|--------------|
+| Primary key | `uid` |
+| Searchable attributes | `title`, `content`, `markdown`, `h1`, `h2`, `h3` |
+| Filterable attributes | `domain`, `urls_tags`, `language`, `crawled_at` |
+| Sortable attributes | `crawled_at` |
+| Max total hits | 10,000 |
+
+Override these per-job in the [crawl configuration](/configuration/crawl-configs):
+
+```json
+{
+  "meilisearch": {
+    "settings": {
+      "searchable_attributes": ["title", "content"],
+      "filterable_attributes": ["domain", "language", "category"],
+      "sortable_attributes": ["crawled_at", "relevance_score"]
+    }
+  }
+}
+```
+
+## Sizing Guidelines
+
+| Scale | Documents | Recommended RAM | Storage |
+|-------|-----------|----------------|---------|
+| Small | < 100K | 1 GB | 10 Gi |
+| Medium | 100K – 1M | 4 GB | 50 Gi |
+| Large | 1M – 10M | 8+ GB | 100+ Gi |
+
+Meilisearch keeps indexes memory-mapped. For best performance, ensure enough RAM to keep indexes in page cache.
+
+## Backup
+
+### Snapshot
+
+```bash
+curl -X POST http://localhost:7700/snapshots \
+  -H "Authorization: Bearer your-master-key"
+```
+
+Snapshots are stored in the Meilisearch data directory under `snapshots/`.
+
+### Dump
+
+```bash
+curl -X POST http://localhost:7700/dumps \
+  -H "Authorization: Bearer your-master-key"
+```
+
+Dumps are portable across Meilisearch versions. Use dumps for version upgrades and snapshots for disaster recovery.
+
+## Health Check
+
+```bash
+curl http://localhost:7700/health
+# {"status":"available"}
+```
+
+In Docker Compose and Kubernetes, Scrapix uses this endpoint for readiness probes.

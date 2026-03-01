@@ -1,0 +1,224 @@
+---
+title: Troubleshooting
+description: Common issues and diagnostic commands
+---
+
+# Troubleshooting
+
+## Diagnostic Commands
+
+Use these commands to quickly diagnose issues (requires the API server running):
+
+```bash
+# System-wide overview
+scrapix stats
+
+# Recent errors with status codes
+scrapix errors --last 20
+
+# Errors for a specific job
+scrapix errors --job <job_id>
+
+# Per-domain statistics
+scrapix domains --top 20
+
+# Filter by domain
+scrapix domains --filter example.com
+
+# API health check
+scrapix health
+```
+
+All commands support `-o json` for machine-readable output.
+
+## Common Issues
+
+### Crawl Not Starting
+
+**Symptom:** Job submitted but no pages being crawled.
+
+| Check | Command | Fix |
+|-------|---------|-----|
+| API running? | `scrapix health` | Start the API server |
+| Kafka connected? | Check API logs for broker errors | Verify `KAFKA_BROKERS` |
+| Frontier running? | `scrapix stats` — check queue sizes | Start frontier service |
+| Crawler running? | `scrapix stats` — check active fetches | Start crawler workers |
+
+**Single binary mode:** Ensure you're running `scrapix all`, not just `scrapix api`.
+
+### High Error Rate
+
+**Symptom:** Many failed pages, low success rate.
+
+```bash
+scrapix errors --last 50
+```
+
+| Error Type | Likely Cause | Fix |
+|-----------|-------------|-----|
+| 403 Forbidden | Blocked by site | Respect rate limits, add User-Agent |
+| 429 Too Many Requests | Rate limiting | Lower `CONCURRENCY`, increase `DOMAIN_DELAY_MS` |
+| Connection timeout | Slow target / network | Increase `REQUEST_TIMEOUT` |
+| DNS resolution failed | DNS issues | Check DNS, enable `DNS_CACHE=true` |
+| SSL error | Certificate issues | Ensure system CA certs are up to date |
+| Robots.txt denied | Blocked by robots.txt | Set `RESPECT_ROBOTS=false` (use responsibly) |
+
+### Crawl Stuck / No Progress
+
+**Symptom:** Job started but pages_crawled count not increasing.
+
+1. Check frontier queue:
+   ```bash
+   scrapix stats
+   ```
+   If queue is empty, all URLs may have been filtered or already crawled.
+
+2. Check consumer lag (distributed mode):
+   ```bash
+   rpk group describe scrapix-crawlers
+   ```
+   High lag means crawlers can't keep up — add more workers.
+
+3. Check for domain-specific blocking:
+   ```bash
+   scrapix domains --filter stuck-domain.com
+   ```
+
+### Meilisearch Not Receiving Documents
+
+**Symptom:** Pages crawled but documents not appearing in search.
+
+| Check | Fix |
+|-------|-----|
+| Content worker running? | Start content worker(s) |
+| `MEILISEARCH_URL` correct? | Verify connectivity from content worker to Meilisearch |
+| `MEILISEARCH_API_KEY` valid? | Check API key has write permissions |
+| `MIN_CONTENT_LENGTH` too high? | Lower it (default: 100 bytes) |
+| `SKIP_MEILISEARCH=true`? | Remove or set to false |
+
+Check Meilisearch task status:
+
+```bash
+curl http://localhost:7700/tasks?statuses=failed \
+  -H "Authorization: Bearer masterKey"
+```
+
+### Kafka Connection Issues
+
+**Symptom:** Services fail to start or produce/consume messages.
+
+```bash
+# Check Redpanda health
+rpk cluster health
+
+# List topics
+rpk topic list
+
+# Check consumer group lag
+rpk group describe scrapix-crawlers
+rpk group describe scrapix-content
+rpk group describe scrapix-frontier
+```
+
+| Issue | Fix |
+|-------|-----|
+| Connection refused | Check `KAFKA_BROKERS` points to the correct host:port |
+| Topic not found | Run topic initialization (see [Kafka setup](/infrastructure/kafka-redpanda)) |
+| Consumer lag growing | Add more workers or increase concurrency |
+| Broker out of disk | Increase disk, set retention policies |
+
+### High Memory Usage
+
+**Symptom:** Service OOMKilled or using excessive memory.
+
+| Service | Memory Driver | Fix |
+|---------|--------------|-----|
+| Frontier | Bloom filters, URL queue | Reduce `BLOOM_CAPACITY`, `MAX_PENDING_PER_JOB` |
+| Crawler | HTTP connection pool, RocksDB | Reduce `CONCURRENCY`, check `ROCKSDB_PATH` disk space |
+| Content | Batch buffer, AI responses | Reduce `BATCH_SIZE`, `AI_CONCURRENCY` |
+| Meilisearch | Index size | Add more RAM, optimize searchable attributes |
+
+### Slow Crawling
+
+**Symptom:** Low pages/second despite adequate resources.
+
+```bash
+# Check per-domain latency
+scrapix domains --top 10
+```
+
+| Cause | Fix |
+|-------|-----|
+| Rate limiting yourself | Increase `CONCURRENCY`, lower `DOMAIN_DELAY_MS` |
+| Target site is slow | Nothing to do — respect the site's capacity |
+| DNS bottleneck | Enable `DNS_CACHE=true` (default) |
+| Single domain crawl | Limited by `CONCURRENT_PER_DOMAIN` |
+| Browser rendering | Reduce `BROWSER_CONCURRENCY` or switch to HTTP mode for non-JS sites |
+
+### Build Failures
+
+**Symptom:** Docker build fails.
+
+| Error | Fix |
+|-------|-----|
+| Out of disk during build | Increase Docker disk, `docker system prune` |
+| Cargo dependency errors | Check `Cargo.lock` is committed, try `cargo update` |
+| Linking errors | Ensure Dockerfile has required system deps (openssl, pkg-config) |
+
+## Logs
+
+### Log Levels
+
+Control verbosity with `RUST_LOG`:
+
+```bash
+# Default (recommended)
+RUST_LOG=info,scrapix=debug
+
+# Verbose (all internal details)
+RUST_LOG=debug
+
+# Trace (extremely verbose, for development only)
+RUST_LOG=trace
+
+# Only errors
+RUST_LOG=error
+```
+
+### Structured Logging
+
+Scrapix uses structured logging with key-value pairs:
+
+```
+2024-01-15T10:30:45Z INFO scrapix_worker_crawler: page_fetched url="https://example.com/page" status=200 duration_ms=245
+```
+
+### Docker Logs
+
+```bash
+# Docker Compose
+docker compose logs scrapix-api -f
+docker compose logs scrapix-crawler -f
+
+# Kubernetes
+kubectl -n scrapix logs -l app=scrapix-worker-crawler -f
+```
+
+## API Diagnostic Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /health` | Health check (200 = OK) |
+| `GET /stats` | System-wide statistics |
+| `GET /errors?last=N` | Recent errors |
+| `GET /domains?top=N` | Per-domain stats |
+| `GET /jobs` | List recent jobs |
+| `GET /status/:job_id` | Job status |
+
+## Getting Help
+
+If you can't resolve an issue:
+
+1. Check logs with `RUST_LOG=debug`
+2. Run `scrapix stats -o json` and `scrapix errors -o json`
+3. Open an issue at [github.com/quentindequelen/scrapix/issues](https://github.com/quentindequelen/scrapix/issues) with the diagnostic output

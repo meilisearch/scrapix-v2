@@ -1,0 +1,224 @@
+---
+title: Hetzner VPS
+description: Budget-friendly single-server deployment with Docker and Caddy
+---
+
+# Hetzner VPS
+
+A Hetzner VPS is the most cost-effective way to run Scrapix in production. This guide sets up the **single binary** with Meilisearch, Caddy as a reverse proxy, and systemd for process management.
+
+This approach works on **any Linux VPS** — Hetzner, DigitalOcean, Linode, Vultr, OVH, etc.
+
+## Prerequisites
+
+- A VPS with at least 2 GB RAM (Hetzner CX22: 2 vCPU, 4 GB RAM, EUR 4.50/mo)
+- A domain pointed to your server's IP
+- SSH access
+
+## Step-by-Step
+
+### 1. Install Docker
+
+```bash
+ssh root@your-server
+
+# Install Docker
+curl -fsSL https://get.docker.com | sh
+```
+
+### 2. Create Docker Compose File
+
+```bash
+mkdir -p /opt/scrapix && cd /opt/scrapix
+```
+
+Create `compose.yaml`:
+
+```yaml
+services:
+  meilisearch:
+    image: getmeili/meilisearch:v1.31
+    restart: unless-stopped
+    environment:
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
+    volumes:
+      - meili_data:/meili_data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7700/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  scrapix:
+    image: ghcr.io/quentindequelen/scrapix:latest
+    command: ["all"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      MEILISEARCH_URL: http://meilisearch:7700
+      MEILISEARCH_API_KEY: ${MEILI_MASTER_KEY}
+      RUST_LOG: info,scrapix=debug
+    depends_on:
+      meilisearch:
+        condition: service_healthy
+
+volumes:
+  meili_data:
+```
+
+Create `.env`:
+
+```bash
+MEILI_MASTER_KEY=change-this-to-a-secure-key
+```
+
+### 3. Install and Configure Caddy
+
+Caddy provides automatic HTTPS with Let's Encrypt:
+
+```bash
+apt install -y debian-keyring debian-archive-keyring apt-transport-https
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
+apt update && apt install caddy
+```
+
+Create `/etc/caddy/Caddyfile`:
+
+```
+scrapix.yourdomain.com {
+    reverse_proxy localhost:8080
+}
+```
+
+```bash
+systemctl enable caddy
+systemctl restart caddy
+```
+
+### 4. Start Scrapix
+
+```bash
+cd /opt/scrapix
+docker compose up -d
+```
+
+### 5. Configure Firewall
+
+```bash
+ufw allow 22/tcp
+ufw allow 80/tcp
+ufw allow 443/tcp
+ufw enable
+```
+
+### 6. Verify
+
+```bash
+curl https://scrapix.yourdomain.com/health
+```
+
+## Adding Optional Services
+
+Extend the compose file for PostgreSQL, ClickHouse, or Redis:
+
+```yaml
+services:
+  # ... existing services ...
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: scrapix
+      POSTGRES_PASSWORD: ${PG_PASSWORD}
+      POSTGRES_DB: scrapix
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scrapix"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_USER: scrapix
+      CLICKHOUSE_PASSWORD: ${CH_PASSWORD}
+      CLICKHOUSE_DB: scrapix
+    volumes:
+      - ch_data:/var/lib/clickhouse
+
+volumes:
+  pg_data:
+  ch_data:
+```
+
+Update the Scrapix environment:
+
+```yaml
+scrapix:
+  environment:
+    DATABASE_URL: postgres://scrapix:${PG_PASSWORD}@postgres:5432/scrapix
+    CLICKHOUSE_URL: http://clickhouse:8123
+    CLICKHOUSE_DATABASE: scrapix
+    CLICKHOUSE_USER: scrapix
+    CLICKHOUSE_PASSWORD: ${CH_PASSWORD}
+```
+
+## Automatic Updates
+
+Use [Watchtower](https://github.com/containrrr/watchtower) for automatic image updates:
+
+```yaml
+services:
+  watchtower:
+    image: containrrr/watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: --interval 86400  # Check daily
+```
+
+## Monitoring
+
+Add Prometheus and Grafana (see [Monitoring](/operations/monitoring)):
+
+```bash
+# Scrapix exposes metrics at :9090/metrics
+# Add port mapping if needed
+ports:
+  - "127.0.0.1:9090:9090"
+```
+
+## Backups
+
+```bash
+# Backup Meilisearch data
+docker compose exec meilisearch curl -X POST http://localhost:7700/dumps -H "Authorization: Bearer $MEILI_MASTER_KEY"
+
+# Backup volumes
+docker run --rm -v scrapix_meili_data:/data -v /backups:/backup alpine tar czf /backup/meili-$(date +%F).tar.gz -C /data .
+```
+
+## Cost Estimate
+
+| Component | Hetzner Instance | Price |
+|-----------|-----------------|-------|
+| CX22 (2 vCPU, 4GB) | All services | EUR 4.50/mo |
+| CX32 (4 vCPU, 8GB) | With ClickHouse + Postgres | EUR 8.50/mo |
+
+This is the cheapest production option for Scrapix.
+
+## Scaling
+
+For higher throughput on a single server:
+
+1. **Vertical scaling** — Upgrade to a larger VPS (CX32, CX42)
+2. **Tune concurrency** — Increase `CONCURRENCY` to match available CPU cores
+3. **Add swap** — `fallocate -l 4G /swapfile && mkswap /swapfile && swapon /swapfile`
+
+For horizontal scaling, switch to [Kubernetes](/deployment/kubernetes) or [distributed mode on Fly.io](/deployment/fly-io).

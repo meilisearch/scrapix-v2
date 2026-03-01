@@ -1,0 +1,175 @@
+---
+title: Scaling
+description: Vertical scaling, horizontal scaling, and autoscaling strategies
+---
+
+# Scaling
+
+How to scale Scrapix from a single server to internet-scale crawling.
+
+## Single Binary Scaling
+
+When running `scrapix all`, scaling is vertical and configuration-based.
+
+### Concurrency Tuning
+
+The most impactful knobs for single-binary performance:
+
+| Variable | Default | Tuning Guidance |
+|----------|---------|-----------------|
+| `CONCURRENCY` | 50 | Crawler parallelism. Increase to CPU cores x 10 for I/O-bound workloads. |
+| `DISPATCH_BATCH_SIZE` | 2000 | URLs dispatched per batch. Increase for high-throughput. |
+| `DISPATCH_INTERVAL_MS` | 20 | Lower = more frequent dispatches. |
+| `BATCH_SIZE` | 2000 | Meilisearch indexing batch size. Match to Meilisearch capacity. |
+| `DOMAIN_DELAY_MS` | 50 | Minimum per-domain delay. Lower = faster per-domain. |
+
+### Resource Guidelines
+
+| Pages/day | vCPU | RAM | Meilisearch RAM |
+|-----------|------|-----|-----------------|
+| < 10K | 1 | 1 GB | 1 GB |
+| 10K – 50K | 2 | 2 GB | 2 GB |
+| 50K – 200K | 4 | 4 GB | 4 GB |
+| > 200K | Consider distributed mode | | |
+
+### Example: High-Throughput Single Binary
+
+```bash
+scrapix all \
+  --crawler-concurrency 200 \
+  --content-concurrency 20 \
+  --meilisearch-url http://meilisearch:7700 \
+  --meilisearch-key masterKey
+```
+
+With environment overrides:
+
+```bash
+export DISPATCH_BATCH_SIZE=5000
+export DISPATCH_INTERVAL_MS=10
+export DOMAIN_DELAY_MS=20
+export BATCH_SIZE=500
+export BATCH_TIMEOUT_SECS=2
+```
+
+## Distributed Mode Scaling
+
+In distributed mode, each service scales independently.
+
+### Which Service to Scale?
+
+| Bottleneck | Symptom | Scale |
+|------------|---------|-------|
+| Crawling too slow | Low `scrapix_pages_fetched_total` rate | Add crawler workers |
+| Indexing backlog | Growing `scrapix.pages.raw` consumer lag | Add content workers |
+| URL dispatch slow | Growing `scrapix.urls.frontier` lag | Add frontier instances |
+| API overloaded | High latency on `/crawl` endpoint | Add API replicas |
+
+### Horizontal Pod Autoscaling (Kubernetes)
+
+The production overlay includes HPA for all worker types:
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: scrapix-crawler-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: scrapix-worker-crawler
+  minReplicas: 2
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+```
+
+### KEDA Autoscaling (Kafka Lag-Based)
+
+The Scaleway overlay uses KEDA for Kafka-lag-based scaling — workers scale to zero when there's no work:
+
+```yaml
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: crawler-scaledobject
+spec:
+  scaleTargetRef:
+    name: scrapix-worker-crawler
+  minReplicaCount: 0
+  maxReplicaCount: 20
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: redpanda:9092
+        consumerGroup: scrapix-crawlers
+        topic: scrapix.urls.processing
+        lagThreshold: "100"
+```
+
+This is the most cost-effective approach — workers only run when there are URLs to process.
+
+### Partition Planning
+
+Kafka partitions set the upper limit on consumer parallelism per topic:
+
+| Topic | Default Partitions | Max Workers |
+|-------|-------------------|-------------|
+| `scrapix.urls.processing` | 12 | 12 crawlers |
+| `scrapix.pages.raw` | 6 | 6 content workers |
+| `scrapix.urls.frontier` | 12 | 12 frontier instances |
+
+To scale beyond these limits, increase partition counts:
+
+```bash
+rpk topic alter-config scrapix.urls.processing --set partitions=24
+```
+
+<Warning>
+Increasing partitions is irreversible and may cause temporary rebalancing. Plan partition counts at deployment time.
+</Warning>
+
+## Meilisearch Scaling
+
+Meilisearch is typically the indexing bottleneck at scale.
+
+### Batch Size Tuning
+
+| `BATCH_SIZE` | Throughput | Memory Impact |
+|-------------|-----------|---------------|
+| 100 | Low | Low |
+| 500 | Medium | Medium |
+| 2000 | High | High |
+| 5000 | Very high | Requires 4+ GB Meilisearch RAM |
+
+### Meilisearch Resources
+
+| Documents | Recommended RAM | CPU |
+|-----------|----------------|-----|
+| < 100K | 1 GB | 1 vCPU |
+| 100K – 1M | 4 GB | 2 vCPU |
+| 1M – 5M | 8 GB | 4 vCPU |
+| 5M+ | 16+ GB | 8+ vCPU |
+
+## Scaling Checklist
+
+<Steps>
+  <Step title="Identify the bottleneck">
+    Use `scrapix stats` and Prometheus metrics to find which component is the bottleneck.
+  </Step>
+  <Step title="Tune configuration first">
+    Adjust concurrency, batch sizes, and delays before adding more instances.
+  </Step>
+  <Step title="Scale the bottleneck">
+    Add replicas of the bottlenecked service. Ensure Kafka partition count supports the desired parallelism.
+  </Step>
+  <Step title="Monitor after scaling">
+    Watch for the bottleneck to shift (e.g., from crawlers to content workers to Meilisearch).
+  </Step>
+</Steps>

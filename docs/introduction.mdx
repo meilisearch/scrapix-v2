@@ -1,0 +1,64 @@
+---
+title: Introduction
+description: High-performance, distributed web crawler and search indexer built in Rust
+---
+
+# What is Scrapix?
+
+Scrapix is a high-performance, distributed web crawler and search indexer built in Rust. It crawls websites, extracts content, and indexes everything into [Meilisearch](https://www.meilisearch.com) for instant full-text search.
+
+## Key Features
+
+- **Fast** — Concurrent HTTP fetching with configurable parallelism (50+ simultaneous requests)
+- **Smart Extraction** — Readability-based content extraction, markdown conversion, structured data (JSON-LD, microdata)
+- **Duplicate Detection** — SimHash + MinHash near-duplicate detection at the frontier level
+- **AI Enrichment** — Optional summarization, extraction, and embeddings via OpenAI
+- **Browser Rendering** — JavaScript rendering for SPAs via headless Chromium
+- **Incremental Crawling** — ETag/Last-Modified tracking to skip unchanged pages
+- **Analytics** — ClickHouse-powered analytics with a Tinybird-compatible API
+- **Billing-Ready** — Per-account usage tracking built into every crawl event
+
+## Two Deployment Modes
+
+Scrapix runs in two modes depending on your scale:
+
+<CardGroup cols={2}>
+  <Card title="Single Binary" icon="cube">
+    Run everything with `scrapix all`. No Kafka needed — services communicate via in-process channels. Only requires Meilisearch.
+
+    **Best for:** Development, small production, single-server deployments.
+  </Card>
+  <Card title="Distributed" icon="cubes">
+    Run each service independently (`scrapix api`, `scrapix frontier`, `scrapix crawler`, `scrapix content`). Uses Kafka/Redpanda for inter-service communication.
+
+    **Best for:** High-throughput crawling, horizontal scaling, production at scale.
+  </Card>
+</CardGroup>
+
+## Infrastructure Requirements
+
+| Component | Required? | Purpose |
+|-----------|-----------|---------|
+| **Meilisearch** | Yes | Document storage and full-text search |
+| **Kafka / Redpanda** | Distributed mode only | Inter-service message queue |
+| **PostgreSQL** | Optional | User accounts, API keys, authentication |
+| **ClickHouse** | Optional | Long-term analytics and metrics |
+| **Redis / DragonflyDB** | Optional | Rate limiting, real-time counters |
+| **S3-compatible storage** | Optional | Raw HTML archival |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get Scrapix running in 5 minutes with Docker.
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/architecture">
+    Understand the data flow and system design.
+  </Card>
+  <Card title="Deployment" icon="server" href="/deployment/overview">
+    Choose the right deployment platform for your use case.
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration/environment-variables">
+    Configure environment variables and crawl jobs.
+  </Card>
+</CardGroup>

@@ -1,0 +1,352 @@
+---
+title: CLI Reference
+description: Complete reference for all Scrapix CLI commands
+---
+
+# CLI Reference
+
+The `scrapix` binary serves as both the runtime for all services and a CLI for managing crawls and infrastructure.
+
+## Service Commands
+
+Start individual services or the all-in-one binary.
+
+### `scrapix all`
+
+Run all services in a single process. Uses in-process channels by default, or Kafka if `--kafka-brokers` is set.
+
+```bash
+scrapix all \
+  --meilisearch-url http://localhost:7700 \
+  --meilisearch-key masterKey \
+  --crawler-concurrency 50 \
+  --content-concurrency 10
+```
+
+| Flag | Env | Default | Description |
+|------|-----|---------|-------------|
+| `--host` | `HOST` | `0.0.0.0` | API bind address |
+| `--port` | `PORT` | `8080` | API port |
+| `--meilisearch-url` | `MEILISEARCH_URL` | `http://localhost:7700` | Meilisearch URL |
+| `--meilisearch-key` | `MEILISEARCH_API_KEY` | `masterKey` | Meilisearch key |
+| `--crawler-concurrency` | `CONCURRENCY` | `50` | Concurrent fetchers |
+| `--content-concurrency` | — | `10` | Content worker parallelism |
+| `--kafka-brokers` | `KAFKA_BROKERS` | — | Use Kafka (optional) |
+| `--database-url` | `DATABASE_URL` | — | PostgreSQL for auth |
+| `-v, --verbose` | — | `false` | Verbose logging |
+
+### `scrapix api`
+
+Run the API server only (distributed mode).
+
+```bash
+scrapix api --brokers kafka:9092 --port 8080
+```
+
+### `scrapix frontier`
+
+Run the frontier service only.
+
+```bash
+scrapix frontier --brokers kafka:9092
+```
+
+### `scrapix crawler`
+
+Run a crawler worker.
+
+```bash
+scrapix crawler --brokers kafka:9092 --concurrency 50
+```
+
+### `scrapix content`
+
+Run a content worker.
+
+```bash
+scrapix content \
+  --brokers kafka:9092 \
+  --meilisearch-url http://meilisearch:7700 \
+  --meilisearch-key masterKey
+```
+
+## Crawl Management
+
+### `scrapix crawl`
+
+Submit a new crawl job.
+
+```bash
+# From a config file
+scrapix crawl -p config.json
+
+# Inline JSON
+scrapix crawl -c '{"start_urls":["https://example.com"],"index_uid":"test","meilisearch":{"url":"http://localhost:7700","api_key":"masterKey"}}'
+```
+
+### `scrapix local`
+
+Run a standalone crawl without infrastructure. Fetches, parses, and outputs results directly.
+
+```bash
+scrapix local -p config.json --output results.json
+```
+
+### `scrapix status`
+
+Check the status of a crawl job.
+
+```bash
+scrapix status <job_id>
+```
+
+### `scrapix jobs`
+
+List recent crawl jobs.
+
+```bash
+scrapix jobs
+```
+
+### `scrapix cancel`
+
+Cancel a running crawl job.
+
+```bash
+scrapix cancel <job_id>
+```
+
+### `scrapix events`
+
+Stream real-time job events via SSE.
+
+```bash
+scrapix events <job_id>
+```
+
+### `scrapix validate`
+
+Validate a crawl configuration file without submitting it.
+
+```bash
+scrapix validate -p config.json
+```
+
+### `scrapix health`
+
+Check if the API server is healthy.
+
+```bash
+scrapix health
+```
+
+## Diagnostics
+
+### `scrapix stats`
+
+Show system-wide statistics including job counts, domain counters, and error rates.
+
+```bash
+scrapix stats
+scrapix stats -o json
+```
+
+### `scrapix errors`
+
+Show recent crawl errors with status codes and domain breakdown.
+
+```bash
+scrapix errors --last 20
+scrapix errors --job <job_id>
+scrapix errors -o json
+```
+
+### `scrapix domains`
+
+Show per-domain request statistics including success rate and average latency.
+
+```bash
+scrapix domains --top 20
+scrapix domains --filter wikipedia
+scrapix domains -o json
+```
+
+<Note>
+Diagnostic data comes from in-memory tracking (since API startup). The error ring buffer holds the last 1,000 errors.
+</Note>
+
+## Analytics
+
+Requires ClickHouse (`CLICKHOUSE_URL` set).
+
+### `scrapix analytics pipes`
+
+List available analytics pipes.
+
+### `scrapix analytics kpis`
+
+Key performance indicators for the given time window.
+
+```bash
+scrapix analytics kpis --hours 24
+scrapix analytics kpis -o json
+```
+
+### `scrapix analytics top-domains`
+
+Top domains by request count.
+
+```bash
+scrapix analytics top-domains --hours 24 --limit 10
+```
+
+### `scrapix analytics domain-stats`
+
+Statistics for a specific domain.
+
+```bash
+scrapix analytics domain-stats --domain example.com --hours 24
+```
+
+### `scrapix analytics hourly`
+
+Hourly crawl statistics.
+
+```bash
+scrapix analytics hourly --hours 24
+```
+
+### `scrapix analytics error-dist`
+
+Error breakdown by HTTP status code.
+
+```bash
+scrapix analytics error-dist --hours 24
+```
+
+### `scrapix analytics job-stats`
+
+Statistics for a specific job.
+
+```bash
+scrapix analytics job-stats --job-id abc123
+```
+
+## Infrastructure
+
+Manage local Docker infrastructure.
+
+### `scrapix infra up`
+
+Start infrastructure services (Redpanda, Meilisearch, DragonflyDB, PostgreSQL, ClickHouse).
+
+### `scrapix infra down`
+
+Stop infrastructure.
+
+### `scrapix infra restart`
+
+Restart all infrastructure services.
+
+### `scrapix infra status`
+
+Show running infrastructure status.
+
+### `scrapix infra logs`
+
+View infrastructure logs.
+
+```bash
+scrapix infra logs
+scrapix infra logs redpanda -f
+```
+
+### `scrapix infra reset`
+
+Full reset — removes all data volumes.
+
+```bash
+scrapix infra reset
+scrapix infra reset -y  # Skip confirmation
+```
+
+## Kubernetes
+
+Manage Kubernetes deployments.
+
+### `scrapix k8s deploy`
+
+Deploy to Kubernetes using Kustomize overlays.
+
+```bash
+scrapix k8s deploy            # Local overlay
+scrapix k8s deploy -o prod    # Production overlay
+```
+
+### `scrapix k8s status`
+
+Show deployment status.
+
+```bash
+scrapix k8s status
+scrapix k8s status -w  # Watch mode
+```
+
+### `scrapix k8s logs`
+
+View component logs.
+
+```bash
+scrapix k8s logs           # All components
+scrapix k8s logs crawler   # Specific component
+scrapix k8s logs -f        # Follow
+```
+
+### `scrapix k8s scale`
+
+Scale a component.
+
+```bash
+scrapix k8s scale crawler -r 5
+```
+
+### `scrapix k8s restart`
+
+Restart components.
+
+```bash
+scrapix k8s restart        # All
+scrapix k8s restart api    # Specific
+```
+
+### `scrapix k8s port-forward`
+
+Port forward services for local access.
+
+### `scrapix k8s destroy`
+
+Destroy the Kubernetes deployment.
+
+```bash
+scrapix k8s destroy
+scrapix k8s destroy -y  # Skip confirmation
+```
+
+## Benchmarking
+
+### `scrapix bench`
+
+Run performance benchmarks.
+
+```bash
+scrapix bench all         # All benchmarks
+scrapix bench wikipedia   # Wikipedia E2E
+scrapix bench integrated  # Full pipeline
+scrapix bench parser      # Parser/extractor microbenchmarks
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-i, --iterations` | `1` | Number of iterations |
+| `-v, --verbose` | `false` | Verbose output |
+| `-o, --output` | `./bench-results` | Output directory |

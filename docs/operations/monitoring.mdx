@@ -1,0 +1,209 @@
+---
+title: Monitoring
+description: Prometheus metrics, Grafana dashboards, and alerting
+---
+
+# Monitoring
+
+Scrapix exposes Prometheus metrics from every service and ships with a pre-configured monitoring stack (Prometheus + Grafana + AlertManager).
+
+## Quick Start
+
+The monitoring stack lives in `deploy/monitoring/`:
+
+```bash
+cd deploy/monitoring
+docker compose up -d
+```
+
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| Prometheus | http://localhost:9091 | — |
+| Grafana | http://localhost:3000 | admin / scrapix |
+| AlertManager | http://localhost:9093 | — |
+
+## Metrics Endpoint
+
+Every Scrapix service exposes Prometheus metrics at `/metrics` on the metrics port (default `9090`):
+
+```bash
+curl http://localhost:9090/metrics
+```
+
+Configure the port with `METRICS_PORT`.
+
+## Key Metrics
+
+### Fetch Metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `scrapix_pages_fetched_total` | Counter | domain, status | Total pages fetched |
+| `scrapix_bytes_downloaded_total` | Counter | — | Total bytes downloaded |
+| `scrapix_fetch_duration_seconds` | Histogram | domain | HTTP fetch latency |
+| `scrapix_fetch_errors_total` | Counter | error_type, domain | Fetch errors |
+
+### Processing Metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `scrapix_pages_processed_total` | Counter | domain | Pages processed by content workers |
+| `scrapix_documents_extracted_total` | Counter | type | Documents extracted |
+| `scrapix_processing_duration_seconds` | Histogram | stage | Processing time per stage |
+
+### Queue Metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `scrapix_queue_size` | Gauge | priority | Frontier queue depth |
+| `scrapix_active_fetches` | Gauge | — | Currently active HTTP requests |
+| `scrapix_urls_discovered_total` | Counter | source | URLs discovered |
+| `scrapix_urls_filtered_total` | Counter | reason | URLs filtered out |
+
+### Robots.txt Metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `scrapix_robots_checks_total` | Counter | allowed, domain | Robots.txt check results |
+| `scrapix_robots_blocks_total` | Counter | domain | URLs blocked by robots.txt |
+| `scrapix_robots_fetch_duration_seconds` | Histogram | domain | Robots.txt fetch time |
+
+### DNS Metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `scrapix_dns_lookups_total` | Counter | — | Total DNS lookups |
+| `scrapix_dns_cache_hits_total` | Counter | — | DNS cache hits |
+| `scrapix_dns_lookup_duration_seconds` | Histogram | — | DNS resolution time |
+
+### AI/LLM Metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `scrapix_ai_requests_total` | Counter | model, success | AI API calls |
+| `scrapix_ai_tokens_used_total` | Counter | type, model | Token usage (input/output) |
+| `scrapix_ai_request_duration_seconds` | Histogram | model | AI request latency |
+
+### Storage Metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `scrapix_storage_writes_total` | Counter | backend | Storage write operations |
+| `scrapix_storage_bytes_written_total` | Counter | backend | Bytes written to storage |
+| `scrapix_storage_write_duration_seconds` | Histogram | backend | Write latency |
+
+### Browser Rendering Metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `scrapix_browser_renders_total` | Counter | success, renderer | Browser render operations |
+| `scrapix_browser_render_duration_seconds` | Histogram | renderer | Render time |
+| `scrapix_browser_instances_active` | Gauge | renderer | Active browser instances |
+
+## Prometheus Scrape Configuration
+
+The included `prometheus.yml` scrapes all services:
+
+```yaml
+scrape_configs:
+  - job_name: scrapix-api
+    static_configs:
+      - targets: ["host.docker.internal:9090"]
+
+  - job_name: scrapix-crawler-workers
+    static_configs:
+      - targets:
+          - "host.docker.internal:9091"
+          - "host.docker.internal:9092"
+          - "host.docker.internal:9093"
+
+  - job_name: scrapix-content-workers
+    static_configs:
+      - targets:
+          - "host.docker.internal:9094"
+          - "host.docker.internal:9095"
+
+  - job_name: scrapix-frontier
+    static_configs:
+      - targets: ["host.docker.internal:9096"]
+
+  - job_name: redpanda
+    static_configs:
+      - targets: ["host.docker.internal:9644"]
+    metrics_path: /public_metrics
+
+  - job_name: meilisearch
+    static_configs:
+      - targets: ["host.docker.internal:7700"]
+    metrics_path: /metrics
+```
+
+## Alert Rules
+
+Pre-configured alerts in `deploy/monitoring/prometheus/alerts.yml`:
+
+### Crawler Alerts
+
+| Alert | Condition | Severity |
+|-------|-----------|----------|
+| High Error Rate | Error rate > 10% for 5 minutes | warning |
+| Crawler Worker Down | No metrics for 2 minutes | critical |
+| Low Throughput | < 1 page/min for 10 minutes (when queue > 0) | warning |
+| High Fetch Latency | p95 > 10s for 5 minutes | warning |
+| Queue Backlog | Queue > 100K for 15 minutes | warning |
+
+### Content Alerts
+
+| Alert | Condition | Severity |
+|-------|-----------|----------|
+| Content Worker Down | No metrics for 2 minutes | critical |
+| High AI Token Usage | > 100K tokens/hour | warning |
+| Extraction Failures | Failure rate > 20% for 5 minutes | warning |
+
+### Infrastructure Alerts
+
+| Alert | Condition | Severity |
+|-------|-----------|----------|
+| Kafka Consumer Lag | Lag > 10K for 10 minutes | warning |
+| Meilisearch Down | Health check failing | critical |
+| Redis Down | Ping failing | critical |
+| High Memory Usage | > 90% for 5 minutes | warning |
+
+### Job Alerts
+
+| Alert | Condition | Severity |
+|-------|-----------|----------|
+| Stuck Job | No progress for 30 minutes | warning |
+| Long Running Job | Running > 24 hours | warning |
+
+## AlertManager Configuration
+
+Routes are pre-configured with placeholder receivers:
+
+```yaml
+route:
+  group_by: ['alertname', 'job']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - match:
+        severity: critical
+      group_wait: 10s
+      receiver: critical-receiver
+    - match:
+        severity: warning
+      receiver: warning-receiver
+```
+
+Configure receivers for your notification channels (Slack, PagerDuty, email) in `deploy/monitoring/alertmanager/alertmanager.yml`.
+
+## Grafana
+
+Grafana is pre-provisioned with Prometheus as a datasource. Import or build dashboards for:
+
+- **Crawl throughput** — pages/sec, bytes/sec over time
+- **Error rate** — by domain, status code
+- **Queue depth** — frontier queue size over time
+- **Latency percentiles** — p50, p95, p99 fetch times
+- **Worker utilization** — active fetches vs capacity

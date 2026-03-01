@@ -1,0 +1,121 @@
+---
+title: Render
+description: Single binary deployment on Render
+---
+
+# Render
+
+Render provides a straightforward PaaS for running Scrapix in **single binary mode** with a `render.yaml` blueprint.
+
+## Prerequisites
+
+- [Render account](https://render.com)
+- GitHub repository with the Scrapix code
+
+## Blueprint Deployment
+
+Create a `render.yaml` in your repo root:
+
+```yaml
+services:
+  - type: web
+    name: scrapix
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerBuildTarget: scrapix-all
+    dockerCommand: all
+    healthCheckPath: /health
+    envVars:
+      - key: MEILISEARCH_URL
+        fromService:
+          name: meilisearch
+          type: pserv
+          property: hostport
+          envVarKey: MEILISEARCH_HOSTPORT
+      - key: MEILISEARCH_API_KEY
+        sync: false
+      - key: PORT
+        value: 8080
+      - key: RUST_LOG
+        value: info,scrapix=debug
+    plan: starter
+
+  - type: pserv
+    name: meilisearch
+    runtime: docker
+    dockerfilePath: ""
+    dockerImage: getmeili/meilisearch:v1.31
+    envVars:
+      - key: MEILI_MASTER_KEY
+        sync: false
+    disk:
+      name: meili-data
+      mountPath: /meili_data
+      sizeGB: 10
+    plan: starter
+```
+
+Then deploy:
+
+1. Go to [dashboard.render.com](https://dashboard.render.com)
+2. Click **New** → **Blueprint**
+3. Connect your repository
+4. Render detects `render.yaml` and creates both services
+
+## Manual Setup
+
+### 1. Create Meilisearch as a Private Service
+
+- **Type:** Private Service
+- **Docker Image:** `getmeili/meilisearch:v1.31`
+- **Port:** 7700
+- **Disk:** 10 GB mounted at `/meili_data`
+- **Env:** `MEILI_MASTER_KEY=your-key`
+
+### 2. Create Scrapix as a Web Service
+
+- **Type:** Web Service
+- **Dockerfile Path:** `./Dockerfile`
+- **Docker Build Target:** `scrapix-all`
+- **Docker Command:** `all`
+- **Health Check Path:** `/health`
+
+### 3. Set Environment Variables
+
+| Variable | Value |
+|----------|-------|
+| `MEILISEARCH_URL` | `http://meilisearch:7700` (internal) |
+| `MEILISEARCH_API_KEY` | Your master key |
+| `PORT` | `8080` |
+| `RUST_LOG` | `info,scrapix=debug` |
+
+## Scaling
+
+Render supports vertical scaling:
+
+| Plan | RAM | CPU | Price |
+|------|-----|-----|-------|
+| Starter | 512 MB | 0.5 | $7/mo |
+| Standard | 2 GB | 1 | $25/mo |
+| Pro | 4 GB | 2 | $85/mo |
+
+For single binary mode, the Standard plan (2 GB) handles most workloads.
+
+## Cost Estimate
+
+| Component | Plan | Approx. Cost |
+|-----------|------|-------------|
+| Scrapix | Starter | $7/mo |
+| Meilisearch | Starter + 10GB disk | $7/mo + $2.50/mo |
+| **Total** | | **~$17/mo** |
+
+## Limitations
+
+- Single binary mode only
+- Render's Docker builds can be slow for Rust (~15-20 minutes)
+- Private services communicate over Render's internal network
+- No persistent disk for the Scrapix process (RocksDB resets on deploy)
+
+<Tip>
+Set `INCREMENTAL_CRAWL=false` since RocksDB data doesn't persist across deploys.
+</Tip>
