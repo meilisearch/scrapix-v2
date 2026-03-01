@@ -65,6 +65,7 @@
         "deployment/google-cloud-run",
         "deployment/aws",
         "deployment/azure",
+        "deployment/heroku",
         "deployment/hetzner-vps",
         "deployment/coolify"
       ]

@@ -1,0 +1,192 @@
+---
+title: Heroku
+description: Single binary deployment on Heroku with container stack
+---
+
+# Heroku
+
+Heroku runs Scrapix in **single binary mode** using the container stack. Deploy from a Dockerfile with git push.
+
+## Prerequisites
+
+- [Heroku CLI](https://devcenter.heroku.com/articles/heroku-cli) installed and authenticated
+- Docker installed
+
+## Step-by-Step
+
+### 1. Create the App
+
+```bash
+heroku create your-scrapix-app --stack container
+```
+
+### 2. Add `heroku.yml`
+
+Create a `heroku.yml` in your repo root:
+
+```yaml
+build:
+  docker:
+    web: Dockerfile
+  config:
+    DOCKER_BUILDKIT: 1
+    BUILD_TARGET: scrapix-all
+run:
+  web: all
+```
+
+Heroku's container stack uses this file to build and run the image. The `all` command starts Scrapix in single binary mode.
+
+### 3. Add Meilisearch
+
+Heroku doesn't have a native Meilisearch add-on. Use [Meilisearch Cloud](https://www.meilisearch.com/cloud) or deploy Meilisearch on a separate service (e.g., a Hetzner VPS or Railway).
+
+```bash
+heroku config:set MEILISEARCH_URL=https://your-meilisearch-instance.meilisearch.io
+heroku config:set MEILISEARCH_API_KEY=your-api-key
+```
+
+### 4. Set Environment Variables
+
+```bash
+heroku config:set RUST_LOG=info,scrapix=debug
+```
+
+Heroku sets `PORT` automatically — Scrapix binds to it by default.
+
+### 5. Deploy
+
+```bash
+git push heroku main
+```
+
+Or deploy directly with the container registry:
+
+```bash
+heroku container:login
+heroku container:push web --arg BUILD_TARGET=scrapix-all
+heroku container:release web
+```
+
+### 6. Verify
+
+```bash
+heroku open /health
+
+# Or
+curl https://your-scrapix-app-abc123.herokuapp.com/health
+```
+
+## Adding Optional Services
+
+### PostgreSQL
+
+```bash
+heroku addons:create heroku-postgresql:essential-0
+```
+
+Heroku sets `DATABASE_URL` automatically. Scrapix picks it up for auth and job persistence.
+
+### Redis
+
+```bash
+heroku addons:create heroku-redis:mini
+```
+
+Heroku sets `REDIS_URL` automatically. Scrapix uses it for rate limiting and caching.
+
+## Custom Dockerfile
+
+If you need more control over the build, use a `Dockerfile` with an explicit multi-stage target:
+
+```dockerfile
+# heroku.yml references this file
+FROM ghcr.io/quentindequelen/scrapix:latest AS runtime
+
+ENV PORT=8080
+EXPOSE $PORT
+
+CMD ["all"]
+```
+
+This skips the Rust build entirely by using the pre-built image.
+
+## Scaling
+
+```bash
+# Vertical scaling (dyno type)
+heroku ps:type web=standard-2x
+
+# Check current dynos
+heroku ps
+```
+
+| Dyno Type | RAM | CPU | Price |
+|-----------|-----|-----|-------|
+| Basic | 512 MB | 1x | $7/mo |
+| Standard-1X | 512 MB | 1x | $25/mo |
+| Standard-2X | 1 GB | 2x | $50/mo |
+| Performance-M | 2.5 GB | 100% | $250/mo |
+
+For single binary mode, Standard-2X (1 GB) handles most workloads.
+
+<Warning>
+Basic dynos sleep after 30 minutes of inactivity. In-progress crawls are interrupted when the dyno sleeps. Use Standard-1X or higher for reliable crawl jobs.
+</Warning>
+
+## Health Checks
+
+Heroku pings the app on the `PORT` it assigns. Scrapix responds to `GET /health` which satisfies Heroku's boot timeout check.
+
+If the app takes too long to start (> 60 seconds), increase the boot timeout:
+
+```bash
+heroku config:set BOOT_TIMEOUT=120
+```
+
+## Logging
+
+```bash
+# Tail logs
+heroku logs --tail
+
+# Filter by process
+heroku logs --tail --ps web
+```
+
+For persistent log storage, add a logging add-on:
+
+```bash
+heroku addons:create papertrail:choklad
+```
+
+## Cost Estimate
+
+| Component | Plan | Approx. Cost |
+|-----------|------|-------------|
+| Scrapix | Standard-2X | $50/mo |
+| PostgreSQL | Essential-0 | $5/mo |
+| Redis | Mini | $3/mo |
+| Meilisearch Cloud | Free tier | $0/mo |
+| **Total** | | **~$58/mo** |
+
+For a minimal setup without PostgreSQL or Redis:
+
+| Component | Plan | Approx. Cost |
+|-----------|------|-------------|
+| Scrapix | Basic | $7/mo |
+| Meilisearch Cloud | Free tier | $0/mo |
+| **Total** | | **~$7/mo** |
+
+## Limitations
+
+- Single binary mode only — Heroku doesn't support Kafka-based distributed setups
+- No persistent local storage (RocksDB data lost on dyno restart)
+- Basic dynos sleep after inactivity, interrupting crawls
+- Heroku's ephemeral filesystem resets on every deploy and dyno restart
+- 30-second request timeout on the router (long scrapes may time out)
+- Rust builds from source are slow (~15-20 min); use the pre-built image to skip this
+
+<Tip>
+Set `INCREMENTAL_CRAWL=false` on Heroku since RocksDB data doesn't persist across dyno restarts.
+</Tip>
