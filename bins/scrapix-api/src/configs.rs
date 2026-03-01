@@ -16,8 +16,10 @@ use tracing::{error, info, warn};
 
 use scrapix_core::CrawlConfig;
 
+use scrapix_core::billing::BillingTier;
+
 use crate::auth::{get_user_account_id, AuthenticatedAccount, AuthenticatedUser};
-use crate::{do_create_crawl, ApiError, AppState};
+use crate::{do_create_crawl, AccountContext, ApiError, AppState};
 
 // ============================================================================
 // Types
@@ -457,7 +459,20 @@ pub async fn trigger_config(
     let crawl_config: CrawlConfig = serde_json::from_value(config_json)
         .map_err(|e| ApiError::new(format!("Invalid stored config: {e}"), "internal_error"))?;
 
-    let response = do_create_crawl(&state, crawl_config).await?;
+    // Build account context for tier enforcement
+    let tier_str: String = sqlx::query_scalar("SELECT tier FROM accounts WHERE id = $1")
+        .bind(account_id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "free".to_string());
+    let account_ctx = AccountContext {
+        account_id: account_id.to_string(),
+        tier: tier_str.parse::<BillingTier>().unwrap_or_default(),
+    };
+
+    let response = do_create_crawl(&state, crawl_config, Some(&account_ctx)).await?;
 
     // Update last_run_at and last_job_id
     let _ =
@@ -531,6 +546,7 @@ async fn run_cron_tick(state: &Arc<AppState>, pool: &PgPool) -> Result<(), sqlx:
         let config_name: String = row.get("name");
         let cron_expr: String = row.get("cron_expression");
         let config_json: serde_json::Value = row.get("config");
+        let account_id: uuid::Uuid = row.get("account_id");
 
         // Deserialize crawl config
         let crawl_config: CrawlConfig = match serde_json::from_value(config_json) {
@@ -550,8 +566,21 @@ async fn run_cron_tick(state: &Arc<AppState>, pool: &PgPool) -> Result<(), sqlx:
             }
         };
 
+        // Build account context for tier enforcement
+        let tier_str: String = sqlx::query_scalar("SELECT tier FROM accounts WHERE id = $1")
+            .bind(account_id)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| "free".to_string());
+        let account_ctx = AccountContext {
+            account_id: account_id.to_string(),
+            tier: tier_str.parse::<BillingTier>().unwrap_or_default(),
+        };
+
         // Trigger crawl
-        match do_create_crawl(state, crawl_config).await {
+        match do_create_crawl(state, crawl_config, Some(&account_ctx)).await {
             Ok(response) => {
                 // Compute next run
                 let next_run = compute_next_run(&cron_expr).ok();

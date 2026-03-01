@@ -46,7 +46,7 @@ pub mod configs;
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        Path, Query, State,
+        Extension, Path, Query, State,
     },
     http::StatusCode,
     middleware,
@@ -70,7 +70,8 @@ use tower_http::{
 use tracing::{debug, error, info, warn};
 
 use scrapix_ai::{AiClient, AiService, FieldDefinition as AiFieldDefinition, SchemaBuilder};
-use scrapix_core::{CrawlConfig, CrawlUrl, JobState, JobStatus};
+use scrapix_core::billing::BillingTier;
+use scrapix_core::{CrawlConfig, CrawlerType, CrawlUrl, JobState, JobStatus};
 use scrapix_crawler::{HttpFetcher, HttpFetcherBuilder, RobotsCache, RobotsConfig};
 use scrapix_extractor::{
     ContentBlock, ExtractedMetadata, ExtractedSchema, Extractor, SelectorDefinition,
@@ -548,10 +549,82 @@ impl IntoResponse for ApiError {
             "bad_request" | "validation_error" => StatusCode::BAD_REQUEST,
             "unauthorized" => StatusCode::UNAUTHORIZED,
             "conflict" => StatusCode::CONFLICT,
+            "tier_limit_exceeded" => StatusCode::TOO_MANY_REQUESTS,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
         (status, Json(self)).into_response()
     }
+}
+
+// ============================================================================
+// Account context helpers
+// ============================================================================
+
+use crate::auth::{AuthenticatedAccount, AuthenticatedUser};
+
+/// Resolved account context from either API key or session auth
+pub(crate) struct AccountContext {
+    pub account_id: String,
+    pub tier: BillingTier,
+}
+
+/// Extract account context from request extensions.
+/// Returns `None` when auth is not configured (no DATABASE_URL), preserving backward compatibility.
+async fn extract_account_context(
+    db_pool: Option<&sqlx::PgPool>,
+    account_ext: &Option<Extension<AuthenticatedAccount>>,
+    user_ext: &Option<Extension<AuthenticatedUser>>,
+) -> Option<AccountContext> {
+    // API key path: tier is directly available
+    if let Some(Extension(acct)) = account_ext {
+        let tier = acct.tier.parse::<BillingTier>().unwrap_or_default();
+        return Some(AccountContext {
+            account_id: acct.account_id.clone(),
+            tier,
+        });
+    }
+
+    // Session path: look up account_id + tier via DB
+    if let (Some(Extension(user)), Some(pool)) = (user_ext, db_pool) {
+        let row = sqlx::query(
+            "SELECT a.id, a.tier FROM account_members m \
+             JOIN accounts a ON a.id = m.account_id \
+             WHERE m.user_id = $1 LIMIT 1",
+        )
+        .bind(user.user_id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten();
+
+        if let Some(row) = row {
+            use sqlx::Row;
+            let account_id: uuid::Uuid = row.get("id");
+            let tier_str: String = row.get("tier");
+            let tier = tier_str.parse::<BillingTier>().unwrap_or_default();
+            return Some(AccountContext {
+                account_id: account_id.to_string(),
+                tier,
+            });
+        }
+    }
+
+    // No auth configured or no valid credentials
+    None
+}
+
+/// Check that the authenticated account owns the given job.
+/// Returns Ok(()) when: auth is disabled, job has no account_id (legacy), or account matches.
+/// Returns Err(not_found) when account_id doesn't match (don't leak job existence).
+fn check_job_ownership(job: &JobState, account_ctx: &Option<AccountContext>) -> Result<(), ApiError> {
+    if let Some(ctx) = account_ctx {
+        if let Some(ref job_account) = job.account_id {
+            if job_account != &ctx.account_id {
+                return Err(ApiError::new("Job not found", "not_found"));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Create crawl response
@@ -1097,8 +1170,21 @@ fn preprocess_html(
 /// This bypasses the job queue for instant results
 async fn scrape_url(
     State(state): State<Arc<AppState>>,
+    account_ext: Option<Extension<AuthenticatedAccount>>,
+    user_ext: Option<Extension<AuthenticatedUser>>,
     Json(request): Json<ScrapeRequest>,
 ) -> Result<Json<ScrapeResponse>, ApiError> {
+    let account_ctx = extract_account_context(
+        state.db_pool.as_ref(),
+        &account_ext,
+        &user_ext,
+    )
+    .await;
+
+    if let Some(ref ctx) = account_ctx {
+        debug!(account_id = %ctx.account_id, "Scrape request from account");
+    }
+
     let start_time = std::time::Instant::now();
 
     // Validate URL
@@ -1458,6 +1544,7 @@ fn extract_links_from_html(html: &str, base_url: &str) -> Vec<String> {
 pub(crate) async fn do_create_crawl(
     state: &Arc<AppState>,
     config: CrawlConfig,
+    account_ctx: Option<&AccountContext>,
 ) -> Result<CreateCrawlResponse, ApiError> {
     // Validate config
     if config.start_urls.is_empty() {
@@ -1469,6 +1556,59 @@ pub(crate) async fn do_create_crawl(
 
     if config.index_uid.is_empty() {
         return Err(ApiError::new("Index UID is required", "validation_error"));
+    }
+
+    // Enforce billing tier limits when account context is available
+    if let Some(ctx) = account_ctx {
+        let tier = ctx.tier;
+
+        // Max depth
+        if let Some(max_depth) = config.max_depth {
+            if max_depth > tier.max_depth() {
+                return Err(ApiError::new(
+                    format!(
+                        "Max depth {} exceeds your {} plan limit of {}",
+                        max_depth,
+                        tier,
+                        tier.max_depth()
+                    ),
+                    "tier_limit_exceeded",
+                ));
+            }
+        }
+
+        // JS rendering
+        if config.crawler_type == CrawlerType::Browser && !tier.js_rendering_enabled() {
+            return Err(ApiError::new(
+                format!(
+                    "JS rendering (browser crawler) is not available on the {} plan",
+                    tier
+                ),
+                "tier_limit_exceeded",
+            ));
+        }
+
+        // Concurrent jobs
+        let running_jobs = state
+            .jobs
+            .read()
+            .values()
+            .filter(|j| {
+                j.account_id.as_deref() == Some(&ctx.account_id)
+                    && matches!(j.status, JobStatus::Running | JobStatus::Pending)
+            })
+            .count() as u32;
+
+        if running_jobs >= tier.max_concurrent_jobs() {
+            return Err(ApiError::new(
+                format!(
+                    "Concurrent job limit reached ({}/{}). Upgrade your plan or wait for existing jobs to complete.",
+                    running_jobs,
+                    tier.max_concurrent_jobs()
+                ),
+                "tier_limit_exceeded",
+            ));
+        }
     }
 
     // Generate job ID
@@ -1492,7 +1632,31 @@ pub(crate) async fn do_create_crawl(
     );
 
     // Create job state (tracks the target index_uid, not the temp one)
-    let mut job = state.create_job(&job_id, &target_index_uid);
+    let mut job = if let Some(ctx) = account_ctx {
+        let j = JobState::with_account(&job_id, &target_index_uid, &ctx.account_id);
+        let mut jobs = state.jobs.write();
+        // Evict old jobs if at capacity
+        if jobs.len() >= state.config.max_jobs {
+            let to_remove: Vec<String> = jobs
+                .iter()
+                .filter(|(_, j)| {
+                    matches!(
+                        j.status,
+                        JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled
+                    )
+                })
+                .map(|(id, _)| id.clone())
+                .take(state.config.max_jobs / 10)
+                .collect();
+            for id in to_remove {
+                jobs.remove(&id);
+            }
+        }
+        jobs.insert(job_id.clone(), j.clone());
+        j
+    } else {
+        state.create_job(&job_id, &target_index_uid)
+    };
     job.start_urls = config.start_urls.clone();
     job.max_pages = config.max_pages;
     job.config = serde_json::to_value(&config).ok();
@@ -1563,6 +1727,13 @@ pub(crate) async fn do_create_crawl(
         }
         .with_meilisearch(job_meilisearch_url.clone(), job_meilisearch_key.clone());
 
+        // Attach account_id to message for billing attribution
+        let msg = if let Some(ctx) = account_ctx {
+            msg.account(&ctx.account_id)
+        } else {
+            msg
+        };
+
         match state
             .producer
             .send(topic_names::URL_FRONTIER, Some(&job_id), &msg)
@@ -1588,7 +1759,16 @@ pub(crate) async fn do_create_crawl(
     }
 
     // Publish job started event
-    let event = CrawlEvent::job_started(&job_id, &target_index_uid, config.start_urls.clone());
+    let event = if let Some(ctx) = account_ctx {
+        CrawlEvent::job_started_with_account(
+            &job_id,
+            &target_index_uid,
+            &ctx.account_id,
+            config.start_urls.clone(),
+        )
+    } else {
+        CrawlEvent::job_started(&job_id, &target_index_uid, config.start_urls.clone())
+    };
     if let Err(e) = state
         .producer
         .send(topic_names::EVENTS, Some(&job_id), &event)
@@ -1646,18 +1826,34 @@ pub(crate) async fn do_create_crawl(
 /// Create a new async crawl job
 async fn create_crawl(
     State(state): State<Arc<AppState>>,
+    account_ext: Option<Extension<AuthenticatedAccount>>,
+    user_ext: Option<Extension<AuthenticatedUser>>,
     Json(config): Json<CrawlConfig>,
 ) -> Result<Json<CreateCrawlResponse>, ApiError> {
-    Ok(Json(do_create_crawl(&state, config).await?))
+    let account_ctx = extract_account_context(
+        state.db_pool.as_ref(),
+        &account_ext,
+        &user_ext,
+    )
+    .await;
+    Ok(Json(do_create_crawl(&state, config, account_ctx.as_ref()).await?))
 }
 
 /// Create a sync crawl job (waits for completion)
 async fn create_crawl_sync(
     State(state): State<Arc<AppState>>,
+    account_ext: Option<Extension<AuthenticatedAccount>>,
+    user_ext: Option<Extension<AuthenticatedUser>>,
     Json(config): Json<CrawlConfig>,
 ) -> Result<Json<JobStatusResponse>, ApiError> {
+    let account_ctx = extract_account_context(
+        state.db_pool.as_ref(),
+        &account_ext,
+        &user_ext,
+    )
+    .await;
     // First create the async job
-    let response = do_create_crawl(&state, config).await?;
+    let response = do_create_crawl(&state, config, account_ctx.as_ref()).await?;
     let job_id = response.job_id.clone();
 
     // Subscribe to events
@@ -1714,11 +1910,22 @@ async fn create_crawl_sync(
 /// Get job status
 async fn job_status(
     State(state): State<Arc<AppState>>,
+    account_ext: Option<Extension<AuthenticatedAccount>>,
+    user_ext: Option<Extension<AuthenticatedUser>>,
     Path(job_id): Path<String>,
 ) -> Result<Json<JobStatusResponse>, ApiError> {
+    let account_ctx = extract_account_context(
+        state.db_pool.as_ref(),
+        &account_ext,
+        &user_ext,
+    )
+    .await;
+
     let job = state
         .get_job(&job_id)
         .ok_or_else(|| ApiError::new("Job not found", "not_found"))?;
+
+    check_job_ownership(&job, &account_ctx)?;
 
     Ok(Json(job.into()))
 }
@@ -1726,12 +1933,22 @@ async fn job_status(
 /// SSE stream for job events
 async fn job_events(
     State(state): State<Arc<AppState>>,
+    account_ext: Option<Extension<AuthenticatedAccount>>,
+    user_ext: Option<Extension<AuthenticatedUser>>,
     Path(job_id): Path<String>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>>, ApiError> {
-    // Check if job exists
-    if state.get_job(&job_id).is_none() {
-        return Err(ApiError::new("Job not found", "not_found"));
-    }
+    let account_ctx = extract_account_context(
+        state.db_pool.as_ref(),
+        &account_ext,
+        &user_ext,
+    )
+    .await;
+
+    // Check if job exists and ownership
+    let job = state
+        .get_job(&job_id)
+        .ok_or_else(|| ApiError::new("Job not found", "not_found"))?;
+    check_job_ownership(&job, &account_ctx)?;
 
     let rx = state.event_tx.subscribe();
     let target_job_id = job_id.clone();
@@ -2187,8 +2404,23 @@ async fn handle_job_ws_connection(socket: WebSocket, state: Arc<AppState>, job_i
 /// Cancel a job
 async fn cancel_job(
     State(state): State<Arc<AppState>>,
+    account_ext: Option<Extension<AuthenticatedAccount>>,
+    user_ext: Option<Extension<AuthenticatedUser>>,
     Path(job_id): Path<String>,
 ) -> Result<Json<JobStatusResponse>, ApiError> {
+    let account_ctx = extract_account_context(
+        state.db_pool.as_ref(),
+        &account_ext,
+        &user_ext,
+    )
+    .await;
+
+    // Check ownership before cancelling
+    let existing = state
+        .get_job(&job_id)
+        .ok_or_else(|| ApiError::new("Job not found", "not_found"))?;
+    check_job_ownership(&existing, &account_ctx)?;
+
     let job = state
         .update_job(&job_id, |j| {
             j.status = JobStatus::Cancelled;
@@ -2204,9 +2436,30 @@ async fn cancel_job(
 /// List all jobs
 async fn list_jobs(
     State(state): State<Arc<AppState>>,
+    account_ext: Option<Extension<AuthenticatedAccount>>,
+    user_ext: Option<Extension<AuthenticatedUser>>,
     Query(params): Query<ListJobsQuery>,
 ) -> Json<Vec<JobStatusResponse>> {
-    let jobs = state.list_jobs(params.limit, params.offset);
+    let account_ctx = extract_account_context(
+        state.db_pool.as_ref(),
+        &account_ext,
+        &user_ext,
+    )
+    .await;
+
+    let jobs = if let Some(ctx) = &account_ctx {
+        // Filter to only this account's jobs
+        let all_jobs = state.jobs.read();
+        all_jobs
+            .values()
+            .filter(|j| j.account_id.as_deref() == Some(&ctx.account_id))
+            .skip(params.offset)
+            .take(params.limit)
+            .cloned()
+            .collect()
+    } else {
+        state.list_jobs(params.limit, params.offset)
+    };
     Json(jobs.into_iter().map(|j| j.into()).collect())
 }
 

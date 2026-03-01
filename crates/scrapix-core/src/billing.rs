@@ -266,6 +266,20 @@ impl BillingTier {
     }
 }
 
+impl std::str::FromStr for BillingTier {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "free" => Ok(Self::Free),
+            "starter" => Ok(Self::Starter),
+            "pro" => Ok(Self::Pro),
+            "enterprise" => Ok(Self::Enterprise),
+            other => Err(format!("Unknown billing tier: {other}")),
+        }
+    }
+}
+
 impl std::fmt::Display for BillingTier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -452,6 +466,17 @@ mod tests {
 
         usage.pages_crawled = 1500;
         assert!(usage.exceeds_quota(&account));
+    }
+
+    #[test]
+    fn test_billing_tier_from_str() {
+        assert_eq!("free".parse::<BillingTier>().unwrap(), BillingTier::Free);
+        assert_eq!("Pro".parse::<BillingTier>().unwrap(), BillingTier::Pro);
+        assert_eq!(
+            "ENTERPRISE".parse::<BillingTier>().unwrap(),
+            BillingTier::Enterprise
+        );
+        assert!("invalid".parse::<BillingTier>().is_err());
     }
 
     #[test]
