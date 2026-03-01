@@ -1,0 +1,269 @@
+---
+title: Authentication
+description: User accounts, API keys, sessions, and billing management
+---
+
+# Authentication
+
+When `DATABASE_URL` is configured, Scrapix enables a full authentication system with user accounts, API keys, session-based auth, and billing tier management.
+
+<Note>
+  All auth endpoints return 404 when `DATABASE_URL` is not set. Without PostgreSQL, the API runs in open mode with no authentication.
+</Note>
+
+## POST /auth/signup
+
+Create a new user account. Automatically creates a default account and assigns the user as owner.
+
+### Request Body
+
+```json
+{
+  "email": "user@example.com",
+  "password": "secure-password-123",
+  "full_name": "Jane Doe"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `email` | string | Yes | Unique email address |
+| `password` | string | Yes | Password (hashed with Argon2) |
+| `full_name` | string | No | Display name |
+
+### Response (201 Created)
+
+Sets a `scrapix_session` HttpOnly cookie and returns the user profile:
+
+```json
+{
+  "id": "a1b2c3d4-...",
+  "email": "user@example.com",
+  "full_name": "Jane Doe",
+  "account": {
+    "id": "x1y2z3-...",
+    "name": "Jane Doe's account",
+    "tier": "free",
+    "active": true,
+    "role": "owner"
+  }
+}
+```
+
+---
+
+## POST /auth/login
+
+Authenticate and receive a session cookie.
+
+### Request Body
+
+```json
+{
+  "email": "user@example.com",
+  "password": "secure-password-123"
+}
+```
+
+### Response
+
+Sets a `scrapix_session` HttpOnly cookie (7-day expiration) and returns the user profile (same format as signup).
+
+---
+
+## POST /auth/logout
+
+Clear the session cookie.
+
+### Response
+
+```json
+{
+  "message": "Logged out"
+}
+```
+
+---
+
+## GET /auth/me
+
+Get the authenticated user's profile.
+
+**Requires:** Session cookie
+
+### Response
+
+```json
+{
+  "id": "a1b2c3d4-...",
+  "email": "user@example.com",
+  "full_name": "Jane Doe",
+  "account": {
+    "id": "x1y2z3-...",
+    "name": "My Company",
+    "tier": "pro",
+    "active": true,
+    "role": "owner"
+  }
+}
+```
+
+---
+
+## PATCH /auth/me
+
+Update the authenticated user's profile.
+
+**Requires:** Session cookie
+
+### Request Body
+
+```json
+{
+  "full_name": "Jane Smith",
+  "email": "jane.smith@example.com"
+}
+```
+
+---
+
+## GET /account
+
+Get the authenticated user's account details.
+
+**Requires:** Session cookie
+
+### Response
+
+```json
+{
+  "id": "x1y2z3-...",
+  "name": "My Company",
+  "tier": "pro",
+  "active": true,
+  "stripe_customer_id": "cus_abc123"
+}
+```
+
+---
+
+## PATCH /account
+
+Update account details.
+
+**Requires:** Session cookie (owner role)
+
+### Request Body
+
+```json
+{
+  "name": "Updated Company Name"
+}
+```
+
+---
+
+## API Keys
+
+API keys provide programmatic access to protected endpoints. They are sent via the `x-api-key` header.
+
+### GET /account/api-keys
+
+List all API keys for the authenticated account.
+
+**Requires:** Session cookie
+
+### Response
+
+```json
+[
+  {
+    "id": "k1l2m3-...",
+    "name": "Production Key",
+    "prefix": "sk_live_abc1",
+    "active": true,
+    "last_used_at": "2024-01-15T10:30:00Z",
+    "created_at": "2024-01-01T00:00:00Z"
+  }
+]
+```
+
+<Note>
+  The full key is never shown after creation. Only the 12-character prefix is stored for display.
+</Note>
+
+### POST /account/api-keys
+
+Create a new API key.
+
+**Requires:** Session cookie
+
+### Request Body
+
+```json
+{
+  "name": "Production Key"
+}
+```
+
+### Response (201 Created)
+
+```json
+{
+  "id": "k1l2m3-...",
+  "name": "Production Key",
+  "prefix": "sk_live_abc1",
+  "key": "sk_live_abc123def456ghi789jkl012mno345pqr678stu901vwx234yz"
+}
+```
+
+<Warning>
+  The `key` field is only returned once at creation time. Store it securely — it cannot be retrieved again.
+</Warning>
+
+### PATCH /account/api-keys/{id}
+
+Revoke (deactivate) an API key.
+
+**Requires:** Session cookie
+
+### Request Body
+
+```json
+{
+  "active": false
+}
+```
+
+---
+
+## GET /account/billing
+
+Get the account's billing tier and Stripe customer ID.
+
+**Requires:** Session cookie
+
+### Response
+
+```json
+{
+  "tier": "pro",
+  "stripe_customer_id": "cus_abc123"
+}
+```
+
+---
+
+## Session Cookie Details
+
+| Property | Value |
+|----------|-------|
+| Name | `scrapix_session` |
+| Type | JWT (HS256) |
+| HttpOnly | Yes |
+| SameSite | Lax |
+| Expiration | 7 days |
+| Path | `/` |
+| Contains | User ID, email |
+
+The JWT is signed with `JWT_SECRET` (set via environment variable or `--jwt-secret` flag).

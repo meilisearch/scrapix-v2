@@ -1,0 +1,223 @@
+---
+title: Real-Time Events
+description: Monitor crawl jobs in real-time with SSE and WebSockets
+---
+
+# Real-Time Events
+
+Scrapix provides two protocols for streaming crawl events in real-time: **Server-Sent Events (SSE)** for simple single-job monitoring, and **WebSockets** for multi-job subscriptions and interactive UIs.
+
+## Choosing a Protocol
+
+| Feature | SSE | WebSocket |
+|---------|-----|-----------|
+| Complexity | Simple (HTTP GET) | Bidirectional (WS protocol) |
+| Multiple jobs | One connection per job | One connection, subscribe/unsubscribe |
+| Request status | Not supported | Send `get_status` message |
+| Browser support | Native `EventSource` API | Native `WebSocket` API |
+| Reconnection | Built-in auto-reconnect | Must implement manually |
+| Best for | CLI tools, simple monitoring | Dashboards, interactive UIs |
+
+## Server-Sent Events (SSE)
+
+### Basic Usage
+
+```bash
+curl -N http://localhost:8080/job/{job_id}/events
+```
+
+Events arrive as `data:` lines:
+
+```
+data: {"type":"page_crawled","job_id":"abc","url":"https://example.com/p1","status":200,"duration_ms":234}
+
+data: {"type":"document_indexed","job_id":"abc","url":"https://example.com/p1"}
+
+data: {"type":"page_crawled","job_id":"abc","url":"https://example.com/p2","status":200,"duration_ms":187}
+
+data: {"type":"job_completed","job_id":"abc","pages_crawled":2,"documents_indexed":2,"duration_secs":5}
+```
+
+### JavaScript (Browser)
+
+```javascript
+const eventSource = new EventSource(`/job/${jobId}/events`);
+
+eventSource.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+
+  switch (data.type) {
+    case 'page_crawled':
+      updateProgress(data.url, data.status);
+      break;
+    case 'job_completed':
+      showCompletion(data.pages_crawled);
+      eventSource.close();
+      break;
+    case 'job_failed':
+      showError(data.error);
+      eventSource.close();
+      break;
+  }
+};
+
+eventSource.onerror = () => {
+  // EventSource auto-reconnects by default
+  console.log('Connection lost, reconnecting...');
+};
+```
+
+### Node.js
+
+```javascript
+const response = await fetch(`http://localhost:8080/job/${jobId}/events`);
+const reader = response.body.getReader();
+const decoder = new TextDecoder();
+
+while (true) {
+  const { done, value } = await reader.read();
+  if (done) break;
+
+  const text = decoder.decode(value);
+  const lines = text.split('\n');
+
+  for (const line of lines) {
+    if (line.startsWith('data: ')) {
+      const event = JSON.parse(line.slice(6));
+      console.log(`${event.type}: ${event.url || ''}`);
+    }
+  }
+}
+```
+
+## WebSockets
+
+### Connecting
+
+```javascript
+const ws = new WebSocket('ws://localhost:8080/ws');
+```
+
+Or connect directly to a single job (auto-subscribes):
+
+```javascript
+const ws = new WebSocket(`ws://localhost:8080/ws/job/${jobId}`);
+```
+
+### Subscribing to Jobs
+
+```javascript
+ws.onopen = () => {
+  // Subscribe to multiple jobs
+  ws.send(JSON.stringify({ type: 'subscribe', job_id: 'job-1' }));
+  ws.send(JSON.stringify({ type: 'subscribe', job_id: 'job-2' }));
+};
+```
+
+### Handling Messages
+
+```javascript
+ws.onmessage = (event) => {
+  const msg = JSON.parse(event.data);
+
+  switch (msg.type) {
+    case 'subscribed':
+      console.log(`Subscribed to ${msg.job_id}`);
+      // Request current status
+      ws.send(JSON.stringify({ type: 'get_status', job_id: msg.job_id }));
+      break;
+
+    case 'status':
+      console.log(`${msg.job_id}: ${msg.status.pages_crawled} pages`);
+      break;
+
+    case 'event':
+      handleCrawlEvent(msg.job_id, msg.event);
+      break;
+
+    case 'error':
+      console.error(`Error: ${msg.message}`);
+      break;
+
+    case 'pong':
+      break; // keepalive response
+  }
+};
+```
+
+### Keepalive
+
+Send periodic pings to prevent connection timeout:
+
+```javascript
+setInterval(() => {
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'ping' }));
+  }
+}, 30000);
+```
+
+## Event Types Reference
+
+| Event | When | Key Fields |
+|-------|------|------------|
+| `page_crawled` | HTTP fetch succeeded | `url`, `status`, `content_length`, `duration_ms` |
+| `page_failed` | HTTP fetch failed | `url`, `error`, `retry_count` |
+| `document_indexed` | Document sent to Meilisearch | `url` |
+| `urls_discovered` | New links found on a page | `count` |
+| `job_started` | Crawl job began | `index_uid`, `start_urls` |
+| `job_completed` | All pages crawled | `pages_crawled`, `documents_indexed`, `errors`, `duration_secs` |
+| `job_failed` | Fatal error | `error` |
+| `page_skipped` | URL filtered or duplicate | `url`, `reason` |
+| `rate_limited` | Crawl delay enforced | `domain`, `retry_after_secs` |
+
+## Building a Progress Dashboard
+
+Here's a minimal React component using WebSockets:
+
+```tsx
+function CrawlProgress({ jobId }: { jobId: string }) {
+  const [status, setStatus] = useState({ pages_crawled: 0, pages_indexed: 0, errors: 0 });
+  const [events, setEvents] = useState<string[]>([]);
+
+  useEffect(() => {
+    const ws = new WebSocket(`ws://localhost:8080/ws/job/${jobId}`);
+
+    ws.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'status') {
+        setStatus(msg.status);
+      } else if (msg.type === 'event') {
+        setEvents(prev => [...prev.slice(-50), `${msg.event.type}: ${msg.event.url || ''}`]);
+        if (msg.event.type === 'page_crawled') {
+          setStatus(s => ({ ...s, pages_crawled: s.pages_crawled + 1 }));
+        }
+      }
+    };
+
+    return () => ws.close();
+  }, [jobId]);
+
+  return (
+    <div>
+      <p>Crawled: {status.pages_crawled} | Indexed: {status.pages_indexed} | Errors: {status.errors}</p>
+      <ul>{events.map((e, i) => <li key={i}>{e}</li>)}</ul>
+    </div>
+  );
+}
+```
+
+## CLI Monitoring
+
+The Scrapix CLI uses SSE under the hood:
+
+```bash
+# Stream events
+scrapix events {job_id}
+
+# Watch status (polls every 2 seconds)
+scrapix status {job_id} --watch
+
+# Follow events after creating a job
+scrapix crawl -p config.json --follow
+```

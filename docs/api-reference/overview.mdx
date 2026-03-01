@@ -1,0 +1,122 @@
+---
+title: API Overview
+description: REST API reference for the Scrapix web crawling platform
+---
+
+# API Reference
+
+The Scrapix API is a REST API built with [Axum](https://github.com/tokio-rs/axum) that manages distributed web crawling jobs, single-page scraping, and real-time event streaming.
+
+## Base URL
+
+```
+http://localhost:8080
+```
+
+In production, replace with your deployment URL.
+
+## Authentication
+
+Authentication is **optional** — when `DATABASE_URL` is not configured, all endpoints are open. When enabled, protected endpoints require one of:
+
+| Method | Header / Cookie | Example |
+|--------|----------------|---------|
+| API Key | `x-api-key` header | `x-api-key: sk_live_abc123...` |
+| Session | `scrapix_session` cookie | Set automatically after login |
+
+See [Authentication Guide](/guides/authentication) for setup details.
+
+## Request Format
+
+All request bodies use JSON (`Content-Type: application/json`).
+
+## Response Format
+
+All responses return JSON. Successful responses return the data directly. Errors follow a consistent format:
+
+```json
+{
+  "error": "Human-readable error message",
+  "code": "machine_readable_code",
+  "details": null
+}
+```
+
+### Error Codes
+
+| Code | HTTP Status | Description |
+|------|-------------|-------------|
+| `not_found` | 404 | Resource does not exist |
+| `bad_request` | 400 | Malformed request |
+| `validation_error` | 400 | Invalid field values |
+| `unauthorized` | 401 | Missing or invalid credentials |
+| `conflict` | 409 | Resource already exists |
+| `tier_limit_exceeded` | 429 | Billing tier limit reached |
+| `queue_error` | 500 | Failed to publish to message queue |
+| `timeout` | 500 | Operation timed out |
+
+## Endpoints Summary
+
+### Public (No Auth Required)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health` | [Health check](/api-reference/diagnostics#health-check) |
+| `GET` | `/health/services` | [Service liveness](/api-reference/diagnostics#service-health) |
+| `GET` | `/stats` | [System statistics](/api-reference/diagnostics#system-stats) |
+| `GET` | `/errors` | [Recent errors](/api-reference/diagnostics#recent-errors) |
+| `GET` | `/domains` | [Domain statistics](/api-reference/diagnostics#domain-stats) |
+| `GET` | `/ws` | [WebSocket (multi-job)](/api-reference/websockets) |
+| `GET` | `/ws/job/{id}` | [WebSocket (single job)](/api-reference/websockets#single-job) |
+
+### Protected (Auth Required When Enabled)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/scrape` | [Scrape a single URL](/api-reference/scrape) |
+| `POST` | `/crawl` | [Create async crawl job](/api-reference/crawl#create-crawl) |
+| `POST` | `/crawl/sync` | [Create sync crawl job](/api-reference/crawl#create-sync-crawl) |
+| `GET` | `/jobs` | [List all jobs](/api-reference/jobs#list-jobs) |
+| `GET` | `/job/{id}/status` | [Get job status](/api-reference/jobs#get-job-status) |
+| `GET` | `/job/{id}/events` | [SSE event stream](/api-reference/jobs#job-events-sse) |
+| `DELETE` | `/job/{id}` | [Cancel a job](/api-reference/jobs#cancel-job) |
+| `POST` | `/configs` | [Create saved config](/api-reference/configs#create-config) |
+| `GET` | `/configs` | [List saved configs](/api-reference/configs#list-configs) |
+| `GET` | `/configs/{id}` | [Get config](/api-reference/configs#get-config) |
+| `PATCH` | `/configs/{id}` | [Update config](/api-reference/configs#update-config) |
+| `DELETE` | `/configs/{id}` | [Delete config](/api-reference/configs#delete-config) |
+| `POST` | `/configs/{id}/trigger` | [Trigger config](/api-reference/configs#trigger-config) |
+
+### Auth Routes (When DATABASE_URL Set)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/auth/signup` | [Create account](/api-reference/authentication#signup) |
+| `POST` | `/auth/login` | [Log in](/api-reference/authentication#login) |
+| `POST` | `/auth/logout` | [Log out](/api-reference/authentication#logout) |
+| `GET` | `/auth/me` | [Get current user](/api-reference/authentication#get-me) |
+| `PATCH` | `/auth/me` | [Update profile](/api-reference/authentication#update-me) |
+| `GET` | `/account` | [Get account](/api-reference/authentication#get-account) |
+| `PATCH` | `/account` | [Update account](/api-reference/authentication#update-account) |
+| `GET` | `/account/api-keys` | [List API keys](/api-reference/authentication#list-api-keys) |
+| `POST` | `/account/api-keys` | [Create API key](/api-reference/authentication#create-api-key) |
+| `PATCH` | `/account/api-keys/{id}` | [Revoke API key](/api-reference/authentication#revoke-api-key) |
+| `GET` | `/account/billing` | [Get billing info](/api-reference/authentication#get-billing) |
+
+### Analytics (When CLICKHOUSE_URL Set)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/analytics/v0/pipes` | [List pipes](/api-reference/analytics#list-pipes) |
+| `GET` | `/analytics/v0/pipes/{pipe}.json` | [Query pipe](/api-reference/analytics#query-pipe) |
+
+## Rate Limiting
+
+When authentication is enabled, requests are rate-limited per account based on billing tier:
+
+| Tier | Requests/Minute |
+|------|----------------|
+| Free | 10 |
+| Starter | 60 |
+| Pro | 300 |
+| Enterprise | 1,000 |

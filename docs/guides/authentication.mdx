@@ -1,0 +1,204 @@
+---
+title: Authentication Guide
+description: Set up user accounts, API keys, and multi-tenant access control
+---
+
+# Authentication Guide
+
+Scrapix supports optional multi-tenant authentication. When enabled, each account gets isolated jobs, API keys, and billing tier enforcement.
+
+## Enabling Authentication
+
+Authentication requires PostgreSQL. Set the `DATABASE_URL` environment variable:
+
+```bash
+# .env
+DATABASE_URL=postgres://postgres:password@localhost:5433/scrapix
+JWT_SECRET=your-secure-random-secret-here
+```
+
+When `DATABASE_URL` is set, the API server:
+- Enables auth routes (`/auth/*`, `/account/*`)
+- Applies API key / session middleware to protected routes
+- Scopes jobs and configs to accounts
+- Enforces billing tier limits on crawl operations
+
+When `DATABASE_URL` is **not** set, all protected endpoints are accessible without credentials.
+
+## Setting Up the Database
+
+The PostgreSQL schema is applied automatically when using Docker Compose:
+
+```bash
+just infra   # Starts PostgreSQL with init.sql applied
+```
+
+Or manually apply the schema:
+
+```bash
+psql $DATABASE_URL -f deploy/postgres/init.sql
+```
+
+## Creating an Account
+
+### 1. Sign Up
+
+```bash
+curl -X POST http://localhost:8080/auth/signup \
+  -H "Content-Type: application/json" \
+  -c cookies.txt \
+  -d '{
+    "email": "user@example.com",
+    "password": "secure-password",
+    "full_name": "Jane Doe"
+  }'
+```
+
+This creates:
+- A **user** record
+- A **default account** (named after the user)
+- An **account_members** link with `owner` role
+- A **session cookie** (`scrapix_session`)
+
+### 2. Log In (Existing User)
+
+```bash
+curl -X POST http://localhost:8080/auth/login \
+  -H "Content-Type: application/json" \
+  -c cookies.txt \
+  -d '{
+    "email": "user@example.com",
+    "password": "secure-password"
+  }'
+```
+
+## Using API Keys
+
+API keys are the recommended auth method for programmatic access.
+
+### Create an API Key
+
+```bash
+curl -X POST http://localhost:8080/account/api-keys \
+  -H "Content-Type: application/json" \
+  -b cookies.txt \
+  -d '{"name": "Production"}'
+```
+
+Response:
+
+```json
+{
+  "id": "key-uuid",
+  "name": "Production",
+  "prefix": "sk_live_abc1",
+  "key": "sk_live_abc123def456..."
+}
+```
+
+<Warning>
+  Save the `key` value immediately — it's only shown once. The API stores a SHA256 hash, not the raw key.
+</Warning>
+
+### Using the Key
+
+Include the key in the `x-api-key` header:
+
+```bash
+curl -X POST http://localhost:8080/crawl \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: sk_live_abc123def456..." \
+  -d '{
+    "start_urls": ["https://docs.example.com"],
+    "index_uid": "docs",
+    "meilisearch": {
+      "url": "http://localhost:7700",
+      "api_key": "masterKey"
+    }
+  }'
+```
+
+### Revoke a Key
+
+```bash
+curl -X PATCH http://localhost:8080/account/api-keys/{key_id} \
+  -H "Content-Type: application/json" \
+  -b cookies.txt \
+  -d '{"active": false}'
+```
+
+## Session Authentication
+
+Sessions use JWT cookies — useful for browser-based UIs like the Scrapix Console.
+
+| Property | Value |
+|----------|-------|
+| Cookie name | `scrapix_session` |
+| Algorithm | HS256 |
+| Expiration | 7 days |
+| HttpOnly | Yes |
+| SameSite | Lax |
+
+The Console frontend (`localhost:3001`) sends cookies automatically via the CORS configuration.
+
+## Multi-Account Isolation
+
+When authenticated, all operations are scoped to the account:
+
+| Operation | Behavior |
+|-----------|----------|
+| `POST /crawl` | Job tagged with `account_id` |
+| `GET /jobs` | Only returns jobs for this account |
+| `GET /job/{id}/status` | Returns 404 if job belongs to another account |
+| `DELETE /job/{id}` | Returns 404 if job belongs to another account |
+| `GET /configs` | Only returns configs for this account |
+
+Jobs created without authentication have no `account_id` and are visible to all unauthenticated requests.
+
+## Billing Tier Enforcement
+
+Each account has a billing tier that controls resource limits:
+
+| Limit | Free | Starter | Pro | Enterprise |
+|-------|------|---------|-----|------------|
+| Rate limit (req/min) | 10 | 60 | 300 | 1,000 |
+| Monthly pages | 1,000 | 50,000 | 500,000 | 10,000,000 |
+| Monthly bandwidth | 100 MB | 5 GB | 50 GB | 500 GB |
+| Concurrent jobs | 1 | 3 | 10 | 100 |
+| Max crawl depth | 2 | 5 | 20 | 100 |
+| JS rendering | No | No | Yes | Yes |
+
+Tier limits are checked when creating crawl jobs. Exceeding a limit returns:
+
+```json
+{
+  "error": "Concurrent job limit reached (3/3). Upgrade your plan or wait for existing jobs to complete.",
+  "code": "tier_limit_exceeded"
+}
+```
+
+### Checking Billing Status
+
+```bash
+curl http://localhost:8080/account/billing -b cookies.txt
+```
+
+```json
+{
+  "tier": "starter",
+  "stripe_customer_id": null
+}
+```
+
+## Database Schema
+
+The auth system uses these PostgreSQL tables:
+
+| Table | Purpose |
+|-------|---------|
+| `users` | Email, password hash (Argon2), name |
+| `accounts` | Billing entity with tier and Stripe ID |
+| `account_members` | User-account link (owner/admin/member) |
+| `api_keys` | Key prefix, SHA256 hash, last used time |
+
+See [PostgreSQL Infrastructure](/infrastructure/postgresql) for the full schema.

@@ -1,0 +1,222 @@
+---
+title: Diagnostics
+description: Health checks, system stats, error tracking, and domain statistics
+---
+
+# Diagnostics
+
+These endpoints provide real-time visibility into system health and crawl performance. All diagnostic endpoints are public (no auth required) and return in-memory data collected since the API started.
+
+## GET /health
+
+Basic health check. Returns the API version and Kafka connectivity.
+
+### Response
+
+```json
+{
+  "status": "ok",
+  "version": "0.1.0",
+  "kafka_connected": true
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | string | `"ok"` or `"degraded"` (if Kafka is disconnected) |
+| `version` | string | API server version from Cargo.toml |
+| `kafka_connected` | boolean | Whether the Kafka producer is healthy |
+
+---
+
+## GET /health/services
+
+Per-service liveness status. Reports which distributed services (crawler, content, frontier) are actively sending events.
+
+### Response
+
+```json
+{
+  "services": [
+    {
+      "name": "kafka",
+      "status": "up",
+      "last_seen_secs_ago": null
+    },
+    {
+      "name": "crawler",
+      "status": "up",
+      "last_seen_secs_ago": 3
+    },
+    {
+      "name": "content",
+      "status": "up",
+      "last_seen_secs_ago": 5
+    },
+    {
+      "name": "frontier",
+      "status": "idle",
+      "last_seen_secs_ago": 120
+    }
+  ]
+}
+```
+
+### Status Values
+
+| Status | Meaning |
+|--------|---------|
+| `up` | Event received within the last 60 seconds |
+| `idle` | Last event was more than 60 seconds ago |
+| `down` | No events ever received from this service |
+
+---
+
+## GET /stats
+
+System-wide statistics aggregated from in-memory tracking.
+
+### Response
+
+```json
+{
+  "meilisearch": {
+    "available": true,
+    "url": "http://localhost:7700"
+  },
+  "jobs": {
+    "total": 15,
+    "running": 2,
+    "completed": 10,
+    "failed": 2,
+    "pending": 1
+  },
+  "diagnostics": {
+    "recent_errors_count": 47,
+    "tracked_domains": 23,
+    "total_requests": 12450,
+    "total_successes": 12103,
+    "total_failures": 347
+  },
+  "collected_at": "2024-01-15T10:30:00Z"
+}
+```
+
+| Section | Description |
+|---------|-------------|
+| `meilisearch` | Meilisearch connectivity (if configured) |
+| `jobs` | Job count breakdown by status |
+| `diagnostics` | Aggregate counters from the error ring buffer and domain tracker |
+
+---
+
+## GET /errors
+
+Recent crawl errors from the in-memory ring buffer (last 1,000 errors).
+
+### Query Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `last` | integer | `20` | Number of recent errors to return (max: 1000) |
+| `job_id` | string | all | Filter errors by job ID |
+
+### Response
+
+```json
+{
+  "errors": [
+    {
+      "url": "https://example.com/broken-page",
+      "domain": "example.com",
+      "error": "404 Not Found",
+      "status_code": 404,
+      "job_id": "550e8400-...",
+      "timestamp": "2024-01-15T10:31:22Z",
+      "retry_count": 0
+    },
+    {
+      "url": "https://example.com/timeout-page",
+      "domain": "example.com",
+      "error": "Connection timed out after 30s",
+      "status_code": null,
+      "job_id": "550e8400-...",
+      "timestamp": "2024-01-15T10:31:25Z",
+      "retry_count": 2
+    }
+  ],
+  "total_count": 47,
+  "by_status": {
+    "404": 23,
+    "500": 8,
+    "503": 5
+  },
+  "by_domain": [
+    ["example.com", 15],
+    ["other.com", 8]
+  ],
+  "source": "memory"
+}
+```
+
+### Example
+
+```bash
+# Last 50 errors
+curl "http://localhost:8080/errors?last=50"
+
+# Errors for a specific job
+curl "http://localhost:8080/errors?job_id=550e8400-...&last=100"
+```
+
+---
+
+## GET /domains
+
+Per-domain crawl statistics. Shows request counts, success rates, and average response times.
+
+### Query Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `top` | integer | `20` | Number of top domains to return |
+| `filter` | string | none | Substring filter for domain names |
+
+### Response
+
+```json
+{
+  "domains": [
+    {
+      "domain": "docs.example.com",
+      "total_requests": 500,
+      "successful_requests": 490,
+      "failed_requests": 10,
+      "avg_response_time_ms": 234.5
+    },
+    {
+      "domain": "blog.example.com",
+      "total_requests": 150,
+      "successful_requests": 148,
+      "failed_requests": 2,
+      "avg_response_time_ms": 187.3
+    }
+  ],
+  "total_domains": 23,
+  "source": "memory"
+}
+```
+
+### Example
+
+```bash
+# Top 10 domains
+curl "http://localhost:8080/domains?top=10"
+
+# Filter by domain
+curl "http://localhost:8080/domains?filter=example.com"
+```
+
+<Note>
+  All diagnostic data is from in-memory tracking since the API started. For persistent analytics across restarts, use the [Analytics API](/api-reference/analytics) with ClickHouse.
+</Note>

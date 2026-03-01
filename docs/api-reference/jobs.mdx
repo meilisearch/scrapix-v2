@@ -1,0 +1,240 @@
+---
+title: Jobs
+description: Monitor, list, and cancel crawl jobs
+---
+
+# Jobs
+
+After creating a crawl job, use these endpoints to monitor progress, stream events, and cancel jobs.
+
+## GET /job/{id}/status
+
+Get the current status and progress of a crawl job.
+
+When PostgreSQL is configured, this endpoint also returns historical jobs that have been evicted from memory (e.g., after an API restart).
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | string | Job ID (UUID returned by `POST /crawl`) |
+
+### Response
+
+```json
+{
+  "job_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "running",
+  "index_uid": "my-docs",
+  "pages_crawled": 142,
+  "pages_indexed": 138,
+  "documents_sent": 138,
+  "errors": 4,
+  "started_at": "2024-01-15T10:30:00Z",
+  "completed_at": null,
+  "duration_seconds": 95,
+  "error_message": null,
+  "crawl_rate": 1.49,
+  "eta_seconds": 240,
+  "start_urls": ["https://docs.example.com"],
+  "max_pages": 500,
+  "config": { "...original crawl config..." }
+}
+```
+
+### Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `job_id` | string | Unique job identifier |
+| `status` | string | `pending`, `running`, `completed`, `failed`, `cancelled`, or `paused` |
+| `index_uid` | string | Target Meilisearch index |
+| `pages_crawled` | integer | Number of pages successfully fetched |
+| `pages_indexed` | integer | Number of pages indexed to Meilisearch |
+| `documents_sent` | integer | Number of documents sent (may differ with block splitting) |
+| `errors` | integer | Number of failed page fetches |
+| `started_at` | string | ISO 8601 timestamp when crawl started |
+| `completed_at` | string | ISO 8601 timestamp when crawl finished |
+| `duration_seconds` | integer | Total elapsed time in seconds |
+| `error_message` | string | Error details if status is `failed` |
+| `crawl_rate` | float | Current crawl speed in pages/second |
+| `eta_seconds` | integer | Estimated time remaining in seconds |
+| `start_urls` | string[] | Original seed URLs |
+| `max_pages` | integer | Page limit from configuration |
+| `config` | object | Original crawl configuration |
+
+### Job Status Lifecycle
+
+```
+Pending ─── Running ─── Completed
+                │
+                ├── Failed
+                │
+                └── Cancelled (via DELETE /job/{id})
+```
+
+- **Pending**: Job created, waiting for first event
+- **Running**: Actively crawling and indexing pages
+- **Completed**: All pages crawled, idle for 30 seconds (auto-detected)
+- **Failed**: Unrecoverable error occurred
+- **Cancelled**: Manually cancelled by user
+
+### Example
+
+```bash
+curl http://localhost:8080/job/550e8400-e29b-41d4-a716-446655440000/status
+```
+
+---
+
+## GET /job/{id}/events
+
+Stream real-time crawl events via [Server-Sent Events (SSE)](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events). The connection stays open and pushes events as they occur.
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | string | Job ID |
+
+### Response
+
+`Content-Type: text/event-stream`
+
+```
+data: {"type":"page_crawled","job_id":"abc123","url":"https://example.com/page1","status":200,"content_length":12345,"duration_ms":234}
+
+data: {"type":"document_indexed","job_id":"abc123","url":"https://example.com/page1"}
+
+data: {"type":"page_failed","job_id":"abc123","url":"https://example.com/broken","error":"404 Not Found","retry_count":0}
+
+data: {"type":"job_completed","job_id":"abc123","pages_crawled":100,"documents_indexed":98,"errors":2,"duration_secs":67}
+```
+
+### Event Types
+
+| Type | Description | Key Fields |
+|------|-------------|------------|
+| `page_crawled` | Page successfully fetched | `url`, `status`, `content_length`, `duration_ms` |
+| `page_failed` | Page fetch failed | `url`, `error`, `retry_count` |
+| `document_indexed` | Document indexed to Meilisearch | `url` |
+| `urls_discovered` | New URLs found on a page | `count` |
+| `job_completed` | Job finished successfully | `pages_crawled`, `documents_indexed`, `duration_secs` |
+| `job_failed` | Job failed | `error` |
+| `page_skipped` | Page skipped (duplicate, robots.txt) | `url`, `reason` |
+| `rate_limited` | Domain rate limited | `domain`, `retry_after_secs` |
+
+A keep-alive comment is sent every 15 seconds to prevent connection timeout.
+
+### Example
+
+```bash
+curl -N http://localhost:8080/job/550e8400-e29b-41d4-a716-446655440000/events
+```
+
+<Tip>
+  For subscribing to multiple jobs simultaneously, use [WebSockets](/api-reference/websockets) instead.
+</Tip>
+
+---
+
+## GET /jobs
+
+List all jobs with pagination. When PostgreSQL is configured, returns the full job history (survives API restarts). In-memory running jobs are overlaid with the freshest counter values.
+
+### Query Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `limit` | integer | `50` | Maximum number of jobs to return |
+| `offset` | integer | `0` | Number of jobs to skip |
+
+### Response
+
+```json
+[
+  {
+    "job_id": "550e8400-...",
+    "status": "completed",
+    "index_uid": "my-docs",
+    "pages_crawled": 247,
+    "pages_indexed": 245,
+    "documents_sent": 245,
+    "errors": 2,
+    "started_at": "2024-01-15T10:30:00Z",
+    "completed_at": "2024-01-15T10:32:45Z",
+    "duration_seconds": 165,
+    "crawl_rate": 1.5,
+    "start_urls": ["https://docs.example.com"],
+    "max_pages": 500
+  },
+  {
+    "job_id": "660f9500-...",
+    "status": "running",
+    "index_uid": "blog",
+    "pages_crawled": 42,
+    "pages_indexed": 40,
+    "documents_sent": 40,
+    "errors": 0,
+    "started_at": "2024-01-15T10:35:00Z",
+    "crawl_rate": 2.1,
+    "eta_seconds": 120,
+    "start_urls": ["https://blog.example.com"]
+  }
+]
+```
+
+When authentication is enabled, results are filtered to the authenticated account's jobs only.
+
+### Example
+
+```bash
+# List latest 10 jobs
+curl "http://localhost:8080/jobs?limit=10"
+
+# Paginate through results
+curl "http://localhost:8080/jobs?limit=20&offset=20"
+```
+
+---
+
+## DELETE /job/{id}
+
+Cancel a running crawl job. Sets the job status to `cancelled` and stops further processing.
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | string | Job ID to cancel |
+
+### Response
+
+Returns the final job status after cancellation:
+
+```json
+{
+  "job_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "cancelled",
+  "index_uid": "my-docs",
+  "pages_crawled": 142,
+  "pages_indexed": 138,
+  "documents_sent": 138,
+  "errors": 4,
+  "started_at": "2024-01-15T10:30:00Z",
+  "completed_at": "2024-01-15T10:31:35Z",
+  "duration_seconds": 95,
+  "crawl_rate": 1.49,
+  "start_urls": ["https://docs.example.com"]
+}
+```
+
+<Note>
+  Cancellation is not instant — pages already in the processing pipeline will still be indexed. The job status is updated immediately, but some events may arrive after cancellation.
+</Note>
+
+### Example
+
+```bash
+curl -X DELETE http://localhost:8080/job/550e8400-e29b-41d4-a716-446655440000
+```

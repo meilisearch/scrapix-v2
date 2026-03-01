@@ -1,0 +1,207 @@
+---
+title: Saved Configs
+description: CRUD endpoints for saved crawl configurations with optional cron scheduling
+---
+
+# Saved Configs
+
+Saved configs let you store named crawl configurations in PostgreSQL for reuse. Each config can optionally have a cron expression for automatic scheduling.
+
+<Note>
+  Requires `DATABASE_URL` to be set. These endpoints are unavailable without PostgreSQL.
+</Note>
+
+## POST /configs
+
+Create a new saved crawl configuration.
+
+### Request Body
+
+```json
+{
+  "name": "documentation-crawl",
+  "description": "Weekly crawl of our documentation site",
+  "config": {
+    "start_urls": ["https://docs.example.com"],
+    "index_uid": "docs",
+    "max_depth": 5,
+    "max_pages": 1000,
+    "meilisearch": {
+      "url": "http://localhost:7700",
+      "api_key": "masterKey"
+    }
+  },
+  "cron_expression": "0 0 * * 0",
+  "cron_enabled": true
+}
+```
+
+### Parameters
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Unique name within your account |
+| `description` | string | No | Human-readable description |
+| `config` | object | Yes | Full [CrawlConfig](/configuration/crawl-configs) object |
+| `cron_expression` | string | No | Cron expression (e.g., `"0 0 * * 0"` = weekly) |
+| `cron_enabled` | boolean | No | Whether the cron schedule is active |
+
+### Response (201 Created)
+
+```json
+{
+  "id": "a1b2c3d4-...",
+  "account_id": "x1y2z3-...",
+  "name": "documentation-crawl",
+  "description": "Weekly crawl of our documentation site",
+  "config": { "..." },
+  "cron_expression": "0 0 * * 0",
+  "cron_enabled": true,
+  "last_run_at": null,
+  "next_run_at": "2024-01-21T00:00:00Z",
+  "last_job_id": null,
+  "created_at": "2024-01-15T10:30:00Z",
+  "updated_at": "2024-01-15T10:30:00Z"
+}
+```
+
+Config names must be unique within an account. A duplicate name returns HTTP 409 (Conflict).
+
+---
+
+## GET /configs
+
+List all saved configurations for the authenticated account.
+
+### Query Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `limit` | integer | `50` | Maximum results |
+| `offset` | integer | `0` | Pagination offset |
+
+### Response
+
+```json
+[
+  {
+    "id": "a1b2c3d4-...",
+    "account_id": "x1y2z3-...",
+    "name": "documentation-crawl",
+    "description": "Weekly crawl of our documentation site",
+    "config": { "..." },
+    "cron_expression": "0 0 * * 0",
+    "cron_enabled": true,
+    "last_run_at": "2024-01-14T00:00:00Z",
+    "next_run_at": "2024-01-21T00:00:00Z",
+    "last_job_id": "550e8400-...",
+    "created_at": "2024-01-10T10:30:00Z",
+    "updated_at": "2024-01-14T00:00:05Z"
+  }
+]
+```
+
+---
+
+## GET /configs/{id}
+
+Get a specific saved configuration.
+
+### Response
+
+Same as a single item from the list response.
+
+---
+
+## PATCH /configs/{id}
+
+Update a saved configuration. Only provided fields are updated.
+
+### Request Body
+
+```json
+{
+  "description": "Updated description",
+  "cron_expression": "0 */6 * * *",
+  "cron_enabled": false
+}
+```
+
+### Updatable Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Config name |
+| `description` | string | Description |
+| `config` | object | Full CrawlConfig replacement |
+| `cron_expression` | string | Cron schedule |
+| `cron_enabled` | boolean | Enable/disable schedule |
+
+### Response
+
+Returns the full updated configuration record.
+
+---
+
+## DELETE /configs/{id}
+
+Delete a saved configuration. Returns HTTP 204 (No Content) on success.
+
+```bash
+curl -X DELETE http://localhost:8080/configs/a1b2c3d4-...
+```
+
+---
+
+## POST /configs/{id}/trigger
+
+Manually trigger a crawl from a saved configuration. Creates a new crawl job using the saved config.
+
+### Response
+
+```json
+{
+  "job_id": "770f1234-...",
+  "config_id": "a1b2c3d4-...",
+  "message": "Crawl triggered successfully"
+}
+```
+
+The config's `last_run_at` and `last_job_id` are updated, and `next_run_at` is recomputed from the cron expression.
+
+---
+
+## Cron Scheduling
+
+When `cron_expression` is set and `cron_enabled` is `true`, Scrapix automatically triggers crawls on schedule.
+
+### Cron Expression Format
+
+Standard 5-field cron syntax:
+
+```
+┌───────── minute (0-59)
+│ ┌───────── hour (0-23)
+│ │ ┌───────── day of month (1-31)
+│ │ │ ┌───────── month (1-12)
+│ │ │ │ ┌───────── day of week (0-7, Sun=0 or 7)
+│ │ │ │ │
+* * * * *
+```
+
+### Common Expressions
+
+| Expression | Schedule |
+|-----------|----------|
+| `0 * * * *` | Every hour |
+| `0 */6 * * *` | Every 6 hours |
+| `0 0 * * *` | Daily at midnight |
+| `0 0 * * 0` | Weekly on Sunday |
+| `0 0 1 * *` | Monthly on the 1st |
+
+### How It Works
+
+1. The cron scheduler runs every 30 seconds
+2. It finds configs where `next_run_at <= now()` and `cron_enabled = true`
+3. Uses row-level locking (`SKIP LOCKED`) to prevent duplicate triggers
+4. Creates a crawl job, updates `last_run_at`, `last_job_id`, and computes the next `next_run_at`

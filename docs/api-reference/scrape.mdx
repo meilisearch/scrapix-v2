@@ -1,0 +1,241 @@
+---
+title: Scrape
+description: Single-page scraping endpoint — fetch, parse, and extract content from any URL instantly
+---
+
+# Scrape
+
+The `/scrape` endpoint fetches a single URL, parses the HTML, and returns structured content immediately. Unlike crawl jobs, scraping is synchronous and doesn't use the message queue — results are returned in the response body.
+
+## POST /scrape
+
+Scrape a single URL and return extracted content in the requested formats.
+
+### Request Body
+
+```json
+{
+  "url": "https://example.com/article",
+  "formats": ["markdown", "metadata", "links"],
+  "only_main_content": true,
+  "include_links": false,
+  "timeout_ms": 30000,
+  "headers": {},
+  "exclude_selectors": [],
+  "include_selectors": [],
+  "extract": {},
+  "ai": null
+}
+```
+
+### Parameters
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `url` | string | **required** | URL to scrape |
+| `formats` | string[] | all | Output formats to include (see below) |
+| `only_main_content` | boolean | `true` | Use readability algorithm to extract main content only |
+| `include_links` | boolean | `false` | Include discovered links in response |
+| `timeout_ms` | integer | `30000` | Request timeout in milliseconds |
+| `headers` | object | `{}` | Custom HTTP headers to send |
+| `exclude_selectors` | string[] | `[]` | CSS selectors to remove before extraction |
+| `include_selectors` | string[] | `[]` | CSS selectors to keep (extract only from these) |
+| `extract` | object | `{}` | Custom CSS selector extraction (see below) |
+| `ai` | object | `null` | AI enrichment options (see below) |
+
+### Output Formats
+
+| Format | Description |
+|--------|-------------|
+| `markdown` | Cleaned content converted to Markdown |
+| `html` | Cleaned HTML (nav, footer, ads removed) |
+| `raw_html` | Original unmodified HTML |
+| `content` | Plain text extracted via readability |
+| `links` | All links found on the page |
+| `metadata` | Title, description, Open Graph, Twitter cards |
+| `schema` | JSON-LD and microdata structured data |
+| `blocks` | Content split by headings into blocks |
+
+When `formats` is empty, all formats are returned.
+
+### Custom CSS Extraction
+
+The `extract` field maps field names to CSS selector definitions:
+
+```json
+{
+  "extract": {
+    "price": {
+      "selector": ".product-price",
+      "type": "text"
+    },
+    "images": {
+      "selector": "img.product-image",
+      "type": "list",
+      "attribute": "src"
+    },
+    "rating": {
+      "selector": "[data-rating]",
+      "type": "text",
+      "attribute": "data-rating"
+    }
+  }
+}
+```
+
+Each selector definition supports:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `selector` | string | **required** | CSS selector |
+| `type` | string | `"text"` | `"text"` for single value, `"list"` for multiple |
+| `attribute` | string | inner text | HTML attribute to extract |
+
+### AI Enrichment
+
+Requires `OPENAI_API_KEY` environment variable.
+
+```json
+{
+  "ai": {
+    "summary": true,
+    "extract": {
+      "prompt": "Extract the main topic, key arguments, and conclusion",
+      "schema": [
+        {
+          "name": "topic",
+          "description": "The main topic of the article",
+          "field_type": "string",
+          "required": true
+        },
+        {
+          "name": "key_points",
+          "description": "List of key arguments",
+          "field_type": "array",
+          "required": false
+        }
+      ]
+    }
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `ai.summary` | boolean | Generate a TL;DR summary |
+| `ai.extract.prompt` | string | Natural language extraction prompt |
+| `ai.extract.schema` | array | Structured field definitions for typed extraction |
+
+### Response
+
+```json
+{
+  "success": true,
+  "url": "https://example.com/article",
+  "markdown": "# Article Title\n\nContent here...",
+  "html": "<article><h1>Article Title</h1>...</article>",
+  "raw_html": "<!DOCTYPE html><html>...",
+  "content": "Article Title\n\nContent here...",
+  "metadata": {
+    "title": "Article Title",
+    "description": "A description of the article",
+    "author": "John Doe",
+    "keywords": ["web", "scraping"],
+    "canonical_url": "https://example.com/article",
+    "published_date": "2024-01-15",
+    "open_graph": {
+      "og:title": "Article Title",
+      "og:image": "https://example.com/image.jpg"
+    },
+    "twitter": {
+      "twitter:card": "summary_large_image"
+    }
+  },
+  "links": ["https://example.com/other-page", "..."],
+  "language": "en",
+  "schema": {
+    "json_ld": [{"@type": "Article", "headline": "..."}],
+    "microdata": []
+  },
+  "blocks": [
+    {
+      "heading": "Introduction",
+      "level": 2,
+      "content": "The intro paragraph...",
+      "anchor": "introduction"
+    }
+  ],
+  "extract": {
+    "price": "$29.99",
+    "images": ["https://example.com/img1.jpg", "https://example.com/img2.jpg"]
+  },
+  "ai": {
+    "summary": "This article discusses...",
+    "extract": {
+      "topic": "Web Scraping Best Practices",
+      "key_points": ["Point 1", "Point 2"]
+    }
+  },
+  "status_code": 200,
+  "scrape_duration_ms": 523
+}
+```
+
+Fields are only present if the corresponding format was requested. A `warning` field appears when AI was requested but `OPENAI_API_KEY` is not set.
+
+### Examples
+
+<Tabs>
+  <Tab title="Basic Markdown">
+    ```bash
+    curl -X POST http://localhost:8080/scrape \
+      -H "Content-Type: application/json" \
+      -d '{
+        "url": "https://example.com",
+        "formats": ["markdown", "metadata"]
+      }'
+    ```
+  </Tab>
+  <Tab title="Custom Extraction">
+    ```bash
+    curl -X POST http://localhost:8080/scrape \
+      -H "Content-Type: application/json" \
+      -d '{
+        "url": "https://shop.example.com/product/123",
+        "formats": ["metadata"],
+        "extract": {
+          "name": {"selector": "h1.product-title", "type": "text"},
+          "price": {"selector": ".price-current", "type": "text"},
+          "images": {"selector": ".gallery img", "type": "list", "attribute": "src"}
+        }
+      }'
+    ```
+  </Tab>
+  <Tab title="AI Summary">
+    ```bash
+    curl -X POST http://localhost:8080/scrape \
+      -H "Content-Type: application/json" \
+      -d '{
+        "url": "https://blog.example.com/post/123",
+        "formats": ["markdown"],
+        "ai": {
+          "summary": true,
+          "extract": {
+            "prompt": "Extract the author, publication date, and main thesis"
+          }
+        }
+      }'
+    ```
+  </Tab>
+  <Tab title="With Auth">
+    ```bash
+    curl -X POST http://localhost:8080/scrape \
+      -H "Content-Type: application/json" \
+      -H "x-api-key: sk_live_abc123..." \
+      -d '{
+        "url": "https://example.com",
+        "formats": ["markdown"]
+      }'
+    ```
+  </Tab>
+</Tabs>

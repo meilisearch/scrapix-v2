@@ -1,0 +1,214 @@
+---
+title: WebSockets
+description: Real-time event streaming via WebSocket connections
+---
+
+# WebSockets
+
+Scrapix provides WebSocket endpoints for real-time crawl event streaming. WebSockets are ideal when you need to monitor multiple jobs simultaneously or build interactive dashboards.
+
+For single-job monitoring, [SSE events](/api-reference/jobs#job-events-sse) are simpler.
+
+## GET /ws
+
+General-purpose WebSocket endpoint. Connect and subscribe to events from one or more jobs.
+
+### Connection
+
+```javascript
+const ws = new WebSocket('ws://localhost:8080/ws');
+```
+
+### Client Messages
+
+All client messages are JSON with a `type` field:
+
+#### Subscribe to a Job
+
+```json
+{"type": "subscribe", "job_id": "550e8400-..."}
+```
+
+#### Unsubscribe from a Job
+
+```json
+{"type": "unsubscribe", "job_id": "550e8400-..."}
+```
+
+#### Request Current Status
+
+```json
+{"type": "get_status", "job_id": "550e8400-..."}
+```
+
+#### Keepalive Ping
+
+```json
+{"type": "ping"}
+```
+
+### Server Messages
+
+#### Event (Crawl Activity)
+
+```json
+{
+  "type": "event",
+  "job_id": "550e8400-...",
+  "event": {
+    "type": "page_crawled",
+    "url": "https://example.com/page",
+    "status": 200,
+    "content_length": 12345,
+    "duration_ms": 234,
+    "job_id": "550e8400-..."
+  }
+}
+```
+
+#### Status (Job Snapshot)
+
+Sent in response to `get_status`:
+
+```json
+{
+  "type": "status",
+  "job_id": "550e8400-...",
+  "status": {
+    "job_id": "550e8400-...",
+    "status": "running",
+    "pages_crawled": 142,
+    "pages_indexed": 138,
+    "errors": 4,
+    "crawl_rate": 1.49,
+    "eta_seconds": 240
+  }
+}
+```
+
+#### Subscription Confirmed
+
+```json
+{"type": "subscribed", "job_id": "550e8400-..."}
+```
+
+#### Unsubscription Confirmed
+
+```json
+{"type": "unsubscribed", "job_id": "550e8400-..."}
+```
+
+#### Error
+
+```json
+{
+  "type": "error",
+  "message": "Job not found",
+  "code": "not_found"
+}
+```
+
+#### Pong
+
+```json
+{"type": "pong", "timestamp": 1705312200000}
+```
+
+---
+
+## GET /ws/job/{id}
+
+Single-job WebSocket endpoint. Automatically subscribes to the specified job on connection.
+
+### Connection
+
+```javascript
+const ws = new WebSocket('ws://localhost:8080/ws/job/550e8400-...');
+```
+
+You'll immediately start receiving events for this job without needing to send a subscribe message. You can still send `get_status` and `ping` messages.
+
+---
+
+## Event Types
+
+Events received through WebSocket match the same types as [SSE events](/api-reference/jobs#event-types):
+
+| Event Type | Description | Key Fields |
+|-----------|-------------|------------|
+| `page_crawled` | Page fetched successfully | `url`, `status`, `content_length`, `duration_ms` |
+| `page_failed` | Page fetch failed | `url`, `error`, `retry_count` |
+| `document_indexed` | Document sent to Meilisearch | `url` |
+| `urls_discovered` | New URLs found | `count` |
+| `job_started` | Crawl job began | `index_uid`, `start_urls` |
+| `job_completed` | Job finished | `pages_crawled`, `documents_indexed`, `duration_secs` |
+| `job_failed` | Job failed | `error` |
+| `page_skipped` | Page skipped | `url`, `reason` |
+| `rate_limited` | Domain rate limited | `domain`, `retry_after_secs` |
+
+---
+
+## JavaScript Example
+
+```javascript
+const ws = new WebSocket('ws://localhost:8080/ws');
+
+ws.onopen = () => {
+  // Subscribe to a job
+  ws.send(JSON.stringify({
+    type: 'subscribe',
+    job_id: '550e8400-e29b-41d4-a716-446655440000'
+  }));
+};
+
+ws.onmessage = (event) => {
+  const msg = JSON.parse(event.data);
+
+  switch (msg.type) {
+    case 'subscribed':
+      console.log(`Subscribed to job ${msg.job_id}`);
+      // Request initial status
+      ws.send(JSON.stringify({
+        type: 'get_status',
+        job_id: msg.job_id
+      }));
+      break;
+
+    case 'status':
+      console.log(`Job ${msg.job_id}: ${msg.status.pages_crawled} pages crawled`);
+      break;
+
+    case 'event':
+      if (msg.event.type === 'page_crawled') {
+        console.log(`Crawled: ${msg.event.url} (${msg.event.duration_ms}ms)`);
+      } else if (msg.event.type === 'job_completed') {
+        console.log(`Job completed! ${msg.event.pages_crawled} pages`);
+        ws.close();
+      }
+      break;
+
+    case 'error':
+      console.error(`Error: ${msg.message}`);
+      break;
+
+    case 'pong':
+      // Keepalive response
+      break;
+  }
+};
+
+// Send periodic pings to keep the connection alive
+setInterval(() => {
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'ping' }));
+  }
+}, 30000);
+```
+
+---
+
+## Connection Behavior
+
+- The broadcast channel buffer holds 1,000 events. Slow clients may miss events if they fall behind.
+- When a job completes, the server sends the final `job_completed` or `job_failed` event. The client should close the connection or unsubscribe.
+- There is no authentication on WebSocket endpoints. If you need to verify job ownership, check job access via the REST API before connecting.

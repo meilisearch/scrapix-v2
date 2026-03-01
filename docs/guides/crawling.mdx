@@ -1,0 +1,350 @@
+---
+title: Crawling Guide
+description: Crawl entire websites, discover links, and index all content to Meilisearch
+---
+
+# Crawling Guide
+
+Crawl jobs discover and follow links across multiple pages, extracting content and indexing it to Meilisearch. This guide covers common crawling patterns.
+
+## Your First Crawl
+
+```bash
+curl -X POST http://localhost:8080/crawl \
+  -H "Content-Type: application/json" \
+  -d '{
+    "start_urls": ["https://docs.example.com"],
+    "index_uid": "docs",
+    "max_depth": 3,
+    "max_pages": 100,
+    "meilisearch": {
+      "url": "http://localhost:7700",
+      "api_key": "masterKey"
+    }
+  }'
+```
+
+This starts a background job that:
+1. Fetches `https://docs.example.com`
+2. Discovers links on that page
+3. Follows links up to 3 levels deep, capped at 100 pages
+4. Indexes all content to the `docs` Meilisearch index
+
+## Monitoring Progress
+
+### Poll Status
+
+```bash
+curl http://localhost:8080/job/{job_id}/status
+```
+
+### Stream Events (SSE)
+
+```bash
+curl -N http://localhost:8080/job/{job_id}/events
+```
+
+### CLI
+
+```bash
+scrapix status {job_id} --watch
+scrapix events {job_id}
+```
+
+## URL Patterns
+
+Control which URLs get crawled and indexed:
+
+```json
+{
+  "start_urls": ["https://docs.example.com"],
+  "index_uid": "docs",
+  "url_patterns": {
+    "include": ["https://docs.example.com/**"],
+    "exclude": ["**/changelog/**", "**?lang=*"],
+    "index_only": ["**/api-reference/**"]
+  },
+  "meilisearch": {
+    "url": "http://localhost:7700",
+    "api_key": "masterKey"
+  }
+}
+```
+
+| Pattern Type | Behavior |
+|-------------|----------|
+| `include` | Only crawl URLs matching these globs |
+| `exclude` | Skip URLs matching these globs |
+| `index_only` | Crawl all links but only index pages matching these globs |
+| `allowed_domains` | Restrict to specific domains (auto-inferred from start_urls) |
+
+Glob patterns use `**` for path wildcards and `*` for single-segment wildcards.
+
+## Domain Restrictions
+
+By default, Scrapix infers allowed domains from your start URLs:
+
+```json
+{
+  "start_urls": [
+    "https://docs.example.com",
+    "https://blog.example.com"
+  ]
+}
+// Auto-allows: docs.example.com, blog.example.com
+```
+
+Override with explicit domains:
+
+```json
+{
+  "allowed_domains": ["example.com", "cdn.example.com"]
+}
+```
+
+## Rate Limiting
+
+Respect target sites by controlling crawl speed:
+
+```json
+{
+  "rate_limit": {
+    "requests_per_second": 5,
+    "per_domain_delay_ms": 200,
+    "respect_robots_txt": true,
+    "default_crawl_delay_ms": 1000
+  }
+}
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `requests_per_second` | unlimited | Global rate cap |
+| `per_domain_delay_ms` | `100` | Minimum delay between requests to the same domain |
+| `respect_robots_txt` | `true` | Honor `robots.txt` crawl-delay and disallow rules |
+| `default_crawl_delay_ms` | `1000` | Crawl-delay when `robots.txt` doesn't specify one |
+
+## JavaScript Rendering
+
+For SPAs and JavaScript-heavy pages, use the browser crawler:
+
+```json
+{
+  "start_urls": ["https://spa.example.com"],
+  "index_uid": "spa-content",
+  "crawler_type": "browser",
+  "meilisearch": {
+    "url": "http://localhost:7700",
+    "api_key": "masterKey"
+  }
+}
+```
+
+<Note>
+  Browser rendering requires a Chromium binary and is significantly slower than HTTP crawling. Use it only when needed. On the Pro and Enterprise billing tiers.
+</Note>
+
+## Meilisearch Settings
+
+Configure how documents are indexed:
+
+```json
+{
+  "meilisearch": {
+    "url": "http://localhost:7700",
+    "api_key": "masterKey",
+    "batch_size": 500,
+    "settings": {
+      "searchable_attributes": ["title", "content", "markdown"],
+      "filterable_attributes": ["url", "domain", "language", "depth"],
+      "sortable_attributes": ["crawled_at"],
+      "ranking_rules": ["words", "typo", "proximity", "attribute", "sort", "exactness"]
+    }
+  }
+}
+```
+
+## Atomic Index Replacement
+
+Re-index a site with zero downtime using `replace_index`:
+
+```json
+{
+  "start_urls": ["https://docs.example.com"],
+  "index_uid": "production-docs",
+  "replace_index": true,
+  "meilisearch": {
+    "url": "http://localhost:7700",
+    "api_key": "masterKey"
+  }
+}
+```
+
+How it works:
+1. Creates a temporary index: `production-docs_tmp_550e8400`
+2. Indexes all crawled content into the temp index
+3. On completion, atomically swaps `production-docs` with the temp index
+4. On failure, deletes the temp index (original stays untouched)
+
+This is ideal for scheduled re-crawls where you want to replace stale content.
+
+## Feature Extraction
+
+### Metadata Extraction
+
+Enabled by default. Extracts `<title>`, `<meta>` tags, Open Graph, and Twitter cards.
+
+### Structured Data (schema.org)
+
+```json
+{
+  "features": {
+    "schema": {
+      "enabled": true,
+      "only_types": ["Article", "Product", "HowTo"]
+    }
+  }
+}
+```
+
+### Custom CSS Selectors
+
+Extract specific fields from every crawled page:
+
+```json
+{
+  "features": {
+    "custom_selectors": {
+      "enabled": true,
+      "selectors": {
+        "category": ".breadcrumb > li:last-child",
+        "author": "meta[name=author]",
+        "version": ".version-badge"
+      }
+    }
+  }
+}
+```
+
+### Block Splitting
+
+Create multiple search documents per page by splitting at headings:
+
+```json
+{
+  "features": {
+    "block_split": {
+      "enabled": true
+    }
+  }
+}
+```
+
+Each block becomes a separate Meilisearch document with `h1`-`h6` fields preserving the heading hierarchy, plus an `anchor` field for deep linking.
+
+## AI Enrichment
+
+### Summarization
+
+Generate a `ai_summary` field for every crawled page:
+
+```json
+{
+  "features": {
+    "ai_summary": {
+      "enabled": true,
+      "include_pages": ["**/blog/**"]
+    }
+  }
+}
+```
+
+### AI Extraction
+
+Extract structured data from page content:
+
+```json
+{
+  "features": {
+    "ai_extraction": {
+      "enabled": true,
+      "prompt": "Extract the main topic, difficulty level, and prerequisites",
+      "model": "gpt-4o-mini",
+      "include_pages": ["**/tutorials/**"]
+    }
+  }
+}
+```
+
+Requires `OPENAI_API_KEY` environment variable.
+
+## Proxies
+
+Rotate through proxy servers:
+
+```json
+{
+  "proxy": {
+    "urls": [
+      "http://proxy1.example.com:8080",
+      "http://proxy2.example.com:8080"
+    ],
+    "rotation": "round_robin"
+  }
+}
+```
+
+Rotation strategies: `round_robin`, `random`, `least_used`.
+
+## Webhooks
+
+Get notified about crawl events:
+
+```json
+{
+  "webhooks": [
+    {
+      "url": "https://your-app.example.com/webhook",
+      "events": ["crawl_completed", "crawl_failed"],
+      "auth": {
+        "type": "bearer",
+        "token": "webhook-secret-123"
+      }
+    }
+  ]
+}
+```
+
+## Scheduled Crawls
+
+Save a configuration and set a cron schedule:
+
+```bash
+curl -X POST http://localhost:8080/configs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "weekly-docs",
+    "config": {
+      "start_urls": ["https://docs.example.com"],
+      "index_uid": "docs",
+      "replace_index": true,
+      "meilisearch": {
+        "url": "http://localhost:7700",
+        "api_key": "masterKey"
+      }
+    },
+    "cron_expression": "0 0 * * 0",
+    "cron_enabled": true
+  }'
+```
+
+See [Saved Configs](/api-reference/configs) for the full CRUD API.
+
+## Best Practices
+
+1. **Start small** — Test with `max_depth: 2` and `max_pages: 50` before scaling up
+2. **Use URL patterns** — Exclude non-content pages (login, admin, RSS feeds)
+3. **Respect rate limits** — Set `requests_per_second` to avoid overloading target sites
+4. **Use `replace_index`** — For production re-crawls, atomic swap prevents stale search results
+5. **Enable block splitting** — For documentation sites, creates better search results by matching on section-level content
+6. **Monitor with SSE** — Stream events to catch errors early instead of waiting for completion

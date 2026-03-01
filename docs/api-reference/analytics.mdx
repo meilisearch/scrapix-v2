@@ -1,0 +1,189 @@
+---
+title: Analytics
+description: ClickHouse-powered analytics API with Tinybird-compatible response format
+---
+
+# Analytics
+
+The analytics API provides long-term crawl metrics persisted to ClickHouse. Unlike the [diagnostics endpoints](/api-reference/diagnostics) (in-memory, since last restart), analytics data survives restarts and spans the full history.
+
+<Note>
+  Requires `CLICKHOUSE_URL` to be set. These endpoints return 404 when ClickHouse is not configured.
+</Note>
+
+## How It Works
+
+1. The API server batches crawl events (100 events or every 5 seconds)
+2. Events are written to ClickHouse's `crawl_events` table
+3. Pre-defined "pipes" run SQL queries against this data
+4. Responses follow a [Tinybird](https://www.tinybird.co/)-compatible format
+
+## GET /analytics/v0/pipes
+
+List all available analytics pipes.
+
+### Response
+
+```json
+{
+  "pipes": [
+    {"name": "top_domains", "description": "Top domains by request count"},
+    {"name": "domain_stats", "description": "Stats for a specific domain"},
+    {"name": "hourly_stats", "description": "Hourly crawl statistics"},
+    {"name": "error_distribution", "description": "Error breakdown by status code"},
+    {"name": "job_stats", "description": "Statistics for a specific job"},
+    {"name": "kpis", "description": "Key performance indicators"},
+    {"name": "ai_usage", "description": "AI enrichment usage statistics"}
+  ]
+}
+```
+
+## GET /analytics/v0/pipes/{pipe_name}.json
+
+Query a specific analytics pipe.
+
+### Response Format
+
+All pipes return the same wrapper format:
+
+```json
+{
+  "meta": [
+    {"name": "domain", "type": "String"},
+    {"name": "total_requests", "type": "UInt64"},
+    {"name": "success_rate", "type": "Float64"}
+  ],
+  "data": [
+    {"domain": "example.com", "total_requests": 1000, "success_rate": 98.5}
+  ],
+  "rows": 1,
+  "statistics": {
+    "elapsed": 0.015,
+    "rows_read": 1000,
+    "bytes_read": 45000
+  }
+}
+```
+
+---
+
+## Available Pipes
+
+### top_domains.json
+
+Top domains ranked by request count.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `hours` | integer | `24` | Time window in hours |
+| `limit` | integer | `10` | Number of domains |
+
+```bash
+curl "http://localhost:8080/analytics/v0/pipes/top_domains.json?hours=24&limit=10"
+```
+
+**Data fields:** `domain`, `total_requests`, `successful_requests`, `failed_requests`, `success_rate`, `avg_response_time_ms`, `total_bytes`, `unique_urls`
+
+### domain_stats.json
+
+Detailed statistics for a specific domain.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `domain` | string | Yes | Domain name |
+| `hours` | integer | No (24) | Time window |
+
+```bash
+curl "http://localhost:8080/analytics/v0/pipes/domain_stats.json?domain=example.com&hours=48"
+```
+
+### hourly_stats.json
+
+Crawl activity broken down by hour.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `hours` | integer | `24` | Time window |
+
+```bash
+curl "http://localhost:8080/analytics/v0/pipes/hourly_stats.json?hours=72"
+```
+
+**Data fields:** `hour`, `requests`, `successes`, `failures`, `success_rate`, `avg_response_time_ms`, `total_bytes`
+
+### error_distribution.json
+
+Errors grouped by HTTP status code.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `hours` | integer | `24` | Time window |
+
+```bash
+curl "http://localhost:8080/analytics/v0/pipes/error_distribution.json?hours=24"
+```
+
+**Data fields:** `status_code`, `count`, `percentage`
+
+### job_stats.json
+
+Aggregate statistics for a specific crawl job.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `job_id` | string | Yes | Job ID |
+
+```bash
+curl "http://localhost:8080/analytics/v0/pipes/job_stats.json?job_id=550e8400-..."
+```
+
+**Data fields:** `job_id`, `total_requests`, `successful_requests`, `failed_requests`, `success_rate`, `total_bytes`, `duration_secs`
+
+### kpis.json
+
+High-level key performance indicators across all crawl activity.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `hours` | integer | `24` | Time window |
+
+```bash
+curl "http://localhost:8080/analytics/v0/pipes/kpis.json?hours=24"
+```
+
+**Data fields:** `total_requests`, `total_successes`, `total_failures`, `success_rate`, `avg_response_time_ms`, `total_bytes`, `top_domain`
+
+### ai_usage.json
+
+AI enrichment usage statistics (when AI features are enabled).
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `hours` | integer | `24` | Time window |
+| `account_id` | string | all | Filter by account |
+
+```bash
+curl "http://localhost:8080/analytics/v0/pipes/ai_usage.json?hours=24"
+```
+
+**Data fields:** `account_id`, `total_requests`, `total_tokens`, `summary_requests`, `extraction_requests`
+
+---
+
+## CLI Access
+
+The `scrapix analytics` command provides CLI access to all pipes:
+
+```bash
+# Key metrics
+scrapix analytics kpis --hours 24
+
+# Top domains
+scrapix analytics top-domains --hours 24 --limit 10
+
+# Domain detail
+scrapix analytics domain-stats --domain example.com --hours 48
+
+# JSON output
+scrapix analytics kpis -o json
+```

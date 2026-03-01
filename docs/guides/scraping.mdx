@@ -1,0 +1,328 @@
+---
+title: Scraping Guide
+description: Extract content from any web page with a single API call
+---
+
+# Scraping Guide
+
+The `/scrape` endpoint lets you fetch and extract content from a single URL instantly. Unlike crawl jobs, scraping is synchronous — you get the result in the HTTP response.
+
+## Basic Scraping
+
+Fetch a page and get its content as Markdown:
+
+```bash
+curl -X POST http://localhost:8080/scrape \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://example.com/article",
+    "formats": ["markdown", "metadata"]
+  }'
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "url": "https://example.com/article",
+  "markdown": "# Article Title\n\nThe article content...",
+  "metadata": {
+    "title": "Article Title",
+    "description": "A description",
+    "author": "John Doe"
+  },
+  "status_code": 200,
+  "scrape_duration_ms": 342
+}
+```
+
+## Choosing Output Formats
+
+Request only the formats you need to reduce response size:
+
+| Format | Use Case |
+|--------|----------|
+| `markdown` | LLM input, clean readable content |
+| `html` | Cleaned HTML (ads, nav, footer removed) |
+| `raw_html` | Original unmodified HTML for custom parsing |
+| `content` | Plain text (readability algorithm) |
+| `links` | Link discovery, sitemap building |
+| `metadata` | SEO analysis, title/description extraction |
+| `schema` | Structured data (JSON-LD, microdata) |
+| `blocks` | Split content by headings for granular indexing |
+
+```bash
+# Get everything
+curl -X POST http://localhost:8080/scrape \
+  -d '{"url": "https://example.com", "formats": []}'
+
+# Just metadata and links
+curl -X POST http://localhost:8080/scrape \
+  -d '{"url": "https://example.com", "formats": ["metadata", "links"]}'
+```
+
+## Main Content Extraction
+
+By default, `only_main_content` is `true` — Scrapix uses a readability algorithm to strip navigation, footers, sidebars, and ads. Set it to `false` to get the full page:
+
+```json
+{
+  "url": "https://example.com",
+  "only_main_content": false,
+  "formats": ["markdown"]
+}
+```
+
+## Custom CSS Extraction
+
+Extract specific data from a page using CSS selectors:
+
+```json
+{
+  "url": "https://shop.example.com/product/123",
+  "formats": ["metadata"],
+  "extract": {
+    "name": {
+      "selector": "h1.product-title",
+      "type": "text"
+    },
+    "price": {
+      "selector": ".price-current",
+      "type": "text"
+    },
+    "images": {
+      "selector": ".gallery img",
+      "type": "list",
+      "attribute": "src"
+    },
+    "rating": {
+      "selector": "[data-rating]",
+      "type": "text",
+      "attribute": "data-rating"
+    },
+    "in_stock": {
+      "selector": ".availability",
+      "type": "text"
+    }
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "extract": {
+    "name": "Premium Widget",
+    "price": "$29.99",
+    "images": [
+      "https://shop.example.com/img/widget-1.jpg",
+      "https://shop.example.com/img/widget-2.jpg"
+    ],
+    "rating": "4.5",
+    "in_stock": "In Stock"
+  }
+}
+```
+
+### Selector Types
+
+- `"text"` (default) — Returns the text content or attribute value of the first match
+- `"list"` — Returns an array of values from all matches
+
+### Filtering Content
+
+Remove unwanted elements before extraction:
+
+```json
+{
+  "url": "https://example.com",
+  "exclude_selectors": [".cookie-banner", ".popup", "nav", "footer"],
+  "formats": ["markdown"]
+}
+```
+
+Or extract only from specific sections:
+
+```json
+{
+  "url": "https://example.com",
+  "include_selectors": ["article", "main"],
+  "formats": ["markdown"]
+}
+```
+
+## Content Blocks
+
+Split a page into blocks by headings — useful for creating multiple search documents from a single page:
+
+```json
+{
+  "url": "https://docs.example.com/guide",
+  "formats": ["blocks"]
+}
+```
+
+Response:
+
+```json
+{
+  "blocks": [
+    {
+      "heading": "Introduction",
+      "level": 2,
+      "content": "This guide covers...",
+      "anchor": "introduction"
+    },
+    {
+      "heading": "Installation",
+      "level": 2,
+      "content": "Run the following command...",
+      "anchor": "installation"
+    },
+    {
+      "heading": "Configuration",
+      "level": 2,
+      "content": "Edit your config file...",
+      "anchor": "configuration"
+    }
+  ]
+}
+```
+
+## Structured Data
+
+Extract JSON-LD and microdata from a page:
+
+```json
+{
+  "url": "https://blog.example.com/article",
+  "formats": ["schema"]
+}
+```
+
+```json
+{
+  "schema": {
+    "json_ld": [
+      {
+        "@type": "Article",
+        "headline": "How to Build a Web Crawler",
+        "author": {"@type": "Person", "name": "Jane Doe"},
+        "datePublished": "2024-01-15"
+      }
+    ],
+    "microdata": []
+  }
+}
+```
+
+## AI Enrichment
+
+Add AI-powered summarization and extraction (requires `OPENAI_API_KEY`):
+
+### Summarization
+
+```json
+{
+  "url": "https://blog.example.com/long-article",
+  "formats": ["markdown"],
+  "ai": {
+    "summary": true
+  }
+}
+```
+
+```json
+{
+  "ai": {
+    "summary": "This article discusses three key approaches to web scraping..."
+  }
+}
+```
+
+### Prompt-Based Extraction
+
+```json
+{
+  "url": "https://blog.example.com/article",
+  "ai": {
+    "extract": {
+      "prompt": "Extract the main topic, author's position, and list of recommendations"
+    }
+  }
+}
+```
+
+### Schema-Based Extraction
+
+For structured output with typed fields:
+
+```json
+{
+  "url": "https://recipes.example.com/pasta",
+  "ai": {
+    "extract": {
+      "schema": [
+        {"name": "dish_name", "description": "Name of the dish", "field_type": "string", "required": true},
+        {"name": "prep_time", "description": "Preparation time", "field_type": "string"},
+        {"name": "ingredients", "description": "List of ingredients", "field_type": "array"},
+        {"name": "difficulty", "description": "Easy, Medium, or Hard", "field_type": "string"}
+      ]
+    }
+  }
+}
+```
+
+## Custom Headers
+
+Send custom headers with the request (useful for authenticated pages or specific Accept headers):
+
+```json
+{
+  "url": "https://api.example.com/page",
+  "headers": {
+    "Authorization": "Bearer token123",
+    "Accept-Language": "en-US",
+    "Cookie": "session=abc123"
+  },
+  "formats": ["markdown"]
+}
+```
+
+## Timeout
+
+Adjust the request timeout (default: 30 seconds):
+
+```json
+{
+  "url": "https://slow-site.example.com",
+  "timeout_ms": 60000,
+  "formats": ["markdown"]
+}
+```
+
+## Error Handling
+
+Failed scrapes return `success: false` with the HTTP status code:
+
+```json
+{
+  "success": false,
+  "url": "https://example.com/not-found",
+  "status_code": 404,
+  "scrape_duration_ms": 125
+}
+```
+
+When AI is requested but `OPENAI_API_KEY` is not set, content is still returned with a warning:
+
+```json
+{
+  "success": true,
+  "markdown": "...",
+  "warning": "AI enrichment requires OPENAI_API_KEY environment variable"
+}
+```

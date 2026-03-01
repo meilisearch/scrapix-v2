@@ -1,0 +1,272 @@
+---
+title: AI Enrichment
+description: Add AI-powered summarization, extraction, and embeddings to crawled content
+---
+
+# AI Enrichment
+
+Scrapix integrates with OpenAI (and other providers via `AI_PROVIDER`) to enrich crawled content with summaries, structured data extraction, and embeddings.
+
+## Setup
+
+Set the API key for your AI provider:
+
+```bash
+# .env
+OPENAI_API_KEY=sk-...
+
+# Or use a different provider
+AI_PROVIDER=anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+AI enrichment works in two contexts:
+- **`/scrape` endpoint** — Per-request AI processing
+- **Crawl jobs** — Content worker applies AI to every page (or a subset via patterns)
+
+## Scrape: AI Summary
+
+Generate a TL;DR summary from any page:
+
+```bash
+curl -X POST http://localhost:8080/scrape \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://blog.example.com/long-article",
+    "formats": ["markdown"],
+    "ai": {
+      "summary": true
+    }
+  }'
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "markdown": "# The Full Article\n\n...",
+  "ai": {
+    "summary": "This article covers three key approaches to building scalable web crawlers, focusing on distributed queue management, rate limiting strategies, and content deduplication techniques."
+  }
+}
+```
+
+## Scrape: Prompt-Based Extraction
+
+Use natural language to extract structured information:
+
+```bash
+curl -X POST http://localhost:8080/scrape \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://blog.example.com/article",
+    "ai": {
+      "extract": {
+        "prompt": "Extract: 1) The main argument, 2) Supporting evidence, 3) The conclusion"
+      }
+    }
+  }'
+```
+
+```json
+{
+  "ai": {
+    "extract": {
+      "main_argument": "Distributed crawlers outperform monolithic ones at scale",
+      "supporting_evidence": ["Benchmark showing 10x throughput", "Case study from Wikipedia crawl"],
+      "conclusion": "Teams should invest in message queue infrastructure early"
+    }
+  }
+}
+```
+
+## Scrape: Schema-Based Extraction
+
+Define typed fields for consistent, structured output:
+
+```bash
+curl -X POST http://localhost:8080/scrape \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://recipes.example.com/pasta-carbonara",
+    "ai": {
+      "extract": {
+        "schema": [
+          {
+            "name": "dish_name",
+            "description": "Name of the dish",
+            "field_type": "string",
+            "required": true
+          },
+          {
+            "name": "prep_time_minutes",
+            "description": "Preparation time in minutes",
+            "field_type": "number"
+          },
+          {
+            "name": "ingredients",
+            "description": "List of ingredients with quantities",
+            "field_type": "array"
+          },
+          {
+            "name": "difficulty",
+            "description": "Easy, Medium, or Hard",
+            "field_type": "string"
+          },
+          {
+            "name": "vegetarian",
+            "description": "Whether the dish is vegetarian",
+            "field_type": "boolean"
+          }
+        ]
+      }
+    }
+  }'
+```
+
+```json
+{
+  "ai": {
+    "extract": {
+      "dish_name": "Pasta Carbonara",
+      "prep_time_minutes": 25,
+      "ingredients": ["400g spaghetti", "200g guanciale", "4 egg yolks", "100g pecorino romano"],
+      "difficulty": "Medium",
+      "vegetarian": false
+    }
+  }
+}
+```
+
+### Supported Field Types
+
+| Type | Description |
+|------|-------------|
+| `string` | Text value (default) |
+| `number` | Numeric value |
+| `boolean` | True/false |
+| `array` | List of values |
+
+## Crawl Jobs: AI Configuration
+
+### Summarization on Every Page
+
+Add `ai_summary` field to all crawled documents:
+
+```json
+{
+  "start_urls": ["https://blog.example.com"],
+  "index_uid": "blog",
+  "features": {
+    "ai_summary": {
+      "enabled": true
+    }
+  },
+  "meilisearch": {
+    "url": "http://localhost:7700",
+    "api_key": "masterKey"
+  }
+}
+```
+
+### Summarization on Specific Pages
+
+Limit AI processing to pages matching a pattern:
+
+```json
+{
+  "features": {
+    "ai_summary": {
+      "enabled": true,
+      "include_pages": ["**/blog/**", "**/articles/**"],
+      "exclude_pages": ["**/tag/**", "**/author/**"]
+    }
+  }
+}
+```
+
+### AI Extraction on Crawled Pages
+
+Extract structured data from every crawled page:
+
+```json
+{
+  "features": {
+    "ai_extraction": {
+      "enabled": true,
+      "prompt": "Extract the topic, target audience, and difficulty level",
+      "model": "gpt-4o-mini",
+      "max_tokens": 500,
+      "include_pages": ["**/tutorials/**"]
+    }
+  }
+}
+```
+
+The extracted data is stored in the `ai_extraction` field of each Meilisearch document.
+
+### Content Worker Configuration
+
+For fine-grained control, configure the content worker directly:
+
+```bash
+# Enable AI summary for all pages
+ENABLE_SUMMARY=true
+SUMMARY_MODEL=gpt-4o-mini
+
+# Enable AI extraction with a custom prompt
+ENABLE_EXTRACTION=true
+EXTRACTION_PROMPT="Extract the main topic and list of technologies mentioned from: {content}"
+EXTRACTION_MODEL=gpt-4o-mini
+AI_MAX_TOKENS=1000
+
+# Limit concurrent AI requests (avoid rate limiting)
+AI_CONCURRENCY=5
+```
+
+## Meilisearch Integration
+
+AI-enriched fields are automatically indexed and can be used for filtering and search:
+
+```json
+{
+  "meilisearch": {
+    "settings": {
+      "searchable_attributes": ["title", "content", "ai_summary"],
+      "filterable_attributes": ["ai_extraction.topic", "ai_extraction.difficulty"]
+    }
+  }
+}
+```
+
+Query enriched documents:
+
+```bash
+curl "http://localhost:7700/indexes/blog/search" \
+  -H "Authorization: Bearer masterKey" \
+  -d '{
+    "q": "web scraping",
+    "filter": "ai_extraction.difficulty = beginner"
+  }'
+```
+
+## Usage Tracking
+
+When ClickHouse is configured, AI usage (tokens, latency, provider) is tracked per request:
+
+```bash
+# Check AI usage analytics
+scrapix analytics ai-usage --hours 24
+
+# Or via API
+curl "http://localhost:8080/analytics/v0/pipes/ai_usage.json?hours=24"
+```
+
+## Cost Considerations
+
+- AI enrichment adds latency (1-3 seconds per page for summarization)
+- Token costs scale with page content length
+- Use `include_pages` / `exclude_pages` patterns to limit processing to valuable content
+- Set `AI_CONCURRENCY` to control parallel AI requests (default: 5)
+- The `gpt-4o-mini` model is recommended for cost-effective bulk processing
