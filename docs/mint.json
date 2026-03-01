@@ -1,11 +1,6 @@
 {
   "$schema": "https://mintlify.com/schema.json",
   "name": "Scrapix",
-  "logo": {
-    "dark": "/logo/dark.svg",
-    "light": "/logo/light.svg"
-  },
-  "favicon": "/favicon.svg",
   "colors": {
     "primary": "#FF6B35",
     "light": "#FF8F66",
@@ -26,11 +21,6 @@
     "url": "/quickstart"
   },
   "anchors": [
-    {
-      "name": "API Reference",
-      "icon": "code",
-      "url": "/api-reference"
-    },
     {
       "name": "GitHub",
       "icon": "github",
