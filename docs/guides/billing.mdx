@@ -1,0 +1,156 @@
+---
+title: Billing & Usage
+description: Understand billing tiers, usage limits, and how to monitor resource consumption
+---
+
+# Billing & Usage
+
+Scrapix uses a tier-based billing model that controls crawl limits, rate limits, and feature access per account. Billing enforcement is automatic when authentication is enabled.
+
+## Billing Tiers
+
+| Limit | Free | Starter | Pro | Enterprise |
+|-------|------|---------|-----|------------|
+| Rate limit (req/min) | 10 | 60 | 300 | 1,000 |
+| Monthly pages | 1,000 | 50,000 | 500,000 | 10,000,000 |
+| Monthly bandwidth | 100 MB | 5 GB | 50 GB | 500 GB |
+| Concurrent jobs | 1 | 3 | 10 | 100 |
+| Max crawl depth | 2 | 5 | 20 | 100 |
+| JS rendering | No | No | Yes | Yes |
+
+## What Gets Enforced
+
+When an authenticated request creates a crawl job, three limits are checked before the job starts:
+
+### 1. Crawl Depth
+
+If the crawl config specifies `max_depth` greater than the tier allows:
+
+```json
+{
+  "error": "Max depth 10 exceeds your starter plan limit of 5",
+  "code": "tier_limit_exceeded"
+}
+```
+
+### 2. Concurrent Jobs
+
+If the account already has the maximum number of running or pending jobs:
+
+```json
+{
+  "error": "Concurrent job limit reached (3/3). Upgrade your plan or wait for existing jobs to complete.",
+  "code": "tier_limit_exceeded"
+}
+```
+
+### 3. JS Rendering
+
+Browser crawling (`"crawler_type": "browser"`) is only available on Pro and Enterprise:
+
+```json
+{
+  "error": "JS rendering (browser crawler) is not available on the starter plan",
+  "code": "tier_limit_exceeded"
+}
+```
+
+## Checking Billing Status
+
+### Current Tier
+
+```bash
+curl http://localhost:8080/account/billing -b cookies.txt
+```
+
+```json
+{
+  "tier": "starter",
+  "stripe_customer_id": null
+}
+```
+
+### Account Details
+
+```bash
+curl http://localhost:8080/account -b cookies.txt
+```
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "My Company",
+  "tier": "pro",
+  "active": true,
+  "role": "owner"
+}
+```
+
+## Updating Tier
+
+Change the billing tier for the current account:
+
+```bash
+curl -X PATCH http://localhost:8080/account/billing \
+  -H "Content-Type: application/json" \
+  -b cookies.txt \
+  -d '{"tier": "pro"}'
+```
+
+Valid tier values: `free`, `starter`, `pro`, `enterprise`.
+
+## Usage Tracking
+
+When ClickHouse is configured, usage metrics are tracked per account:
+
+| Metric | Description |
+|--------|-------------|
+| `pages_crawled` | Total pages fetched |
+| `bytes_downloaded` | Bandwidth consumed |
+| `api_requests` | API calls made |
+| `jobs_created` | Crawl jobs started |
+| `js_renders` | Browser-rendered pages |
+| `documents_indexed` | Documents sent to Meilisearch |
+
+### Querying Usage via Analytics API
+
+```bash
+# Account usage summary (last 24 hours)
+curl "http://localhost:8080/analytics/v0/pipes/account_usage.json?account_id=acct_123&hours=24"
+
+# Top accounts by usage
+curl "http://localhost:8080/analytics/v0/pipes/top_accounts.json?hours=24&limit=10"
+```
+
+### ClickHouse Queries
+
+For direct database queries:
+
+```sql
+-- Monthly usage per account
+SELECT account_id, count() as pages, sum(content_length) as bytes
+FROM crawl_events
+WHERE crawled_at >= now() - INTERVAL 30 DAY
+GROUP BY account_id;
+
+-- Daily breakdown for billing
+SELECT toDate(crawled_at) as date, count() as requests, sum(content_length) as bytes
+FROM crawl_events
+WHERE account_id = 'acct_123'
+GROUP BY date ORDER BY date;
+```
+
+## Custom Overrides
+
+Accounts can have custom rate limits and page quotas that override the tier defaults:
+
+| Field | Description |
+|-------|-------------|
+| `rate_limit_override` | Custom requests/minute (overrides tier default) |
+| `quota_override` | Custom monthly page quota (overrides tier default) |
+
+These are set directly in the `accounts` database table and take precedence over the tier values when present.
+
+## Unauthenticated Access
+
+When `DATABASE_URL` is not set (authentication disabled), all tier limits are bypassed. Jobs created without authentication have no `account_id` and are not subject to billing enforcement.
