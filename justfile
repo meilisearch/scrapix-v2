@@ -65,19 +65,19 @@ stop-services:
 
 # Run API server with cargo-watch
 api:
-    cargo watch -w crates -w bins/scrapix-api -x 'run --bin scrapix-api'
+    cargo watch -w crates -w bins -x 'run --bin scrapix -- api'
 
 # Run frontier service with cargo-watch
 frontier:
-    cargo watch -w crates -w bins/scrapix-frontier-service -x 'run --bin scrapix-frontier-service'
+    cargo watch -w crates -w bins -x 'run --bin scrapix -- frontier'
 
 # Run crawler worker with cargo-watch
 crawler:
-    cargo watch -w crates -w bins/scrapix-worker-crawler -x 'run --bin scrapix-worker-crawler'
+    cargo watch -w crates -w bins -x 'run --bin scrapix -- crawler'
 
 # Run content worker with cargo-watch
 content:
-    cargo watch -w crates -w bins/scrapix-worker-content -x 'run --bin scrapix-worker-content'
+    cargo watch -w crates -w bins -x 'run --bin scrapix -- content'
 
 # Run Next.js console
 console:

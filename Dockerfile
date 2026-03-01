@@ -44,6 +44,7 @@ COPY bins/scrapix-worker-crawler/Cargo.toml bins/scrapix-worker-crawler/Cargo.to
 COPY bins/scrapix-worker-content/Cargo.toml bins/scrapix-worker-content/Cargo.toml
 COPY bins/scrapix-frontier-service/Cargo.toml bins/scrapix-frontier-service/Cargo.toml
 COPY bins/scrapix-cli/Cargo.toml bins/scrapix-cli/Cargo.toml
+COPY bins/scrapix/Cargo.toml bins/scrapix/Cargo.toml
 COPY benches/Cargo.toml benches/Cargo.toml
 COPY tests/Cargo.toml tests/Cargo.toml
 
@@ -57,11 +58,12 @@ RUN mkdir -p crates/scrapix-core/src && echo "" > crates/scrapix-core/src/lib.rs
     && mkdir -p crates/scrapix-storage/src && echo "" > crates/scrapix-storage/src/lib.rs \
     && mkdir -p crates/scrapix-queue/src && echo "" > crates/scrapix-queue/src/lib.rs \
     && mkdir -p crates/scrapix-telemetry/src && echo "" > crates/scrapix-telemetry/src/lib.rs \
-    && mkdir -p bins/scrapix-api/src && echo "fn main() {}" > bins/scrapix-api/src/main.rs \
-    && mkdir -p bins/scrapix-worker-crawler/src && echo "fn main() {}" > bins/scrapix-worker-crawler/src/main.rs \
-    && mkdir -p bins/scrapix-worker-content/src && echo "fn main() {}" > bins/scrapix-worker-content/src/main.rs \
-    && mkdir -p bins/scrapix-frontier-service/src && echo "fn main() {}" > bins/scrapix-frontier-service/src/main.rs \
-    && mkdir -p bins/scrapix-cli/src && echo "fn main() {}" > bins/scrapix-cli/src/main.rs \
+    && mkdir -p bins/scrapix-api/src && echo "" > bins/scrapix-api/src/lib.rs && echo "fn main() {}" > bins/scrapix-api/src/main.rs \
+    && mkdir -p bins/scrapix-worker-crawler/src && echo "" > bins/scrapix-worker-crawler/src/lib.rs && echo "fn main() {}" > bins/scrapix-worker-crawler/src/main.rs \
+    && mkdir -p bins/scrapix-worker-content/src && echo "" > bins/scrapix-worker-content/src/lib.rs && echo "fn main() {}" > bins/scrapix-worker-content/src/main.rs \
+    && mkdir -p bins/scrapix-frontier-service/src && echo "" > bins/scrapix-frontier-service/src/lib.rs && echo "fn main() {}" > bins/scrapix-frontier-service/src/main.rs \
+    && mkdir -p bins/scrapix-cli/src && echo "" > bins/scrapix-cli/src/lib.rs && echo "fn main() {}" > bins/scrapix-cli/src/main.rs \
+    && mkdir -p bins/scrapix/src && echo "fn main() {}" > bins/scrapix/src/main.rs \
     && mkdir -p benches/src && echo "" > benches/src/lib.rs \
     && mkdir -p tests/src && echo "" > tests/src/lib.rs
 
@@ -103,34 +105,34 @@ WORKDIR /app
 # Stage 3a: API Service
 # -----------------------------------------------------------------------------
 FROM runtime-base AS scrapix-api
-COPY --from=builder --chown=scrapix:scrapix /app/target/release/scrapix-api /app/scrapix-api
+COPY --from=builder --chown=scrapix:scrapix /app/target/release/scrapix /app/scrapix
 EXPOSE 8080
 ENV RUST_LOG=info
-ENTRYPOINT ["/app/scrapix-api"]
+ENTRYPOINT ["/app/scrapix", "api"]
 
 # -----------------------------------------------------------------------------
 # Stage 3b: Frontier Service
 # -----------------------------------------------------------------------------
 FROM runtime-base AS scrapix-frontier-service
-COPY --from=builder --chown=scrapix:scrapix /app/target/release/scrapix-frontier-service /app/scrapix-frontier-service
+COPY --from=builder --chown=scrapix:scrapix /app/target/release/scrapix /app/scrapix
 ENV RUST_LOG=info
-ENTRYPOINT ["/app/scrapix-frontier-service"]
+ENTRYPOINT ["/app/scrapix", "frontier"]
 
 # -----------------------------------------------------------------------------
 # Stage 3c: Crawler Worker
 # -----------------------------------------------------------------------------
 FROM runtime-base AS scrapix-worker-crawler
-COPY --from=builder --chown=scrapix:scrapix /app/target/release/scrapix-worker-crawler /app/scrapix-worker-crawler
+COPY --from=builder --chown=scrapix:scrapix /app/target/release/scrapix /app/scrapix
 ENV RUST_LOG=info
-ENTRYPOINT ["/app/scrapix-worker-crawler"]
+ENTRYPOINT ["/app/scrapix", "crawler"]
 
 # -----------------------------------------------------------------------------
 # Stage 3d: Content Worker
 # -----------------------------------------------------------------------------
 FROM runtime-base AS scrapix-worker-content
-COPY --from=builder --chown=scrapix:scrapix /app/target/release/scrapix-worker-content /app/scrapix-worker-content
+COPY --from=builder --chown=scrapix:scrapix /app/target/release/scrapix /app/scrapix
 ENV RUST_LOG=info
-ENTRYPOINT ["/app/scrapix-worker-content"]
+ENTRYPOINT ["/app/scrapix", "content"]
 
 # -----------------------------------------------------------------------------
 # Stage 3e: CLI
@@ -140,11 +142,9 @@ COPY --from=builder --chown=scrapix:scrapix /app/target/release/scrapix /app/scr
 ENTRYPOINT ["/app/scrapix"]
 
 # -----------------------------------------------------------------------------
-# Default target: All binaries in one image (for development)
+# Default target: Single unified binary (runs all services or any subcommand)
 # -----------------------------------------------------------------------------
 FROM runtime-base AS scrapix-all
-COPY --from=builder --chown=scrapix:scrapix /app/target/release/scrapix-api /app/
-COPY --from=builder --chown=scrapix:scrapix /app/target/release/scrapix-frontier-service /app/
-COPY --from=builder --chown=scrapix:scrapix /app/target/release/scrapix-worker-crawler /app/
-COPY --from=builder --chown=scrapix:scrapix /app/target/release/scrapix-worker-content /app/
-COPY --from=builder --chown=scrapix:scrapix /app/target/release/scrapix /app/
+COPY --from=builder --chown=scrapix:scrapix /app/target/release/scrapix /app/scrapix
+ENV RUST_LOG=info
+ENTRYPOINT ["/app/scrapix", "all"]

@@ -11,6 +11,8 @@
 //! scrapix crawl ...    # CLI commands (same as before)
 //! ```
 
+mod all;
+
 use clap::{Parser, Subcommand};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -37,6 +39,9 @@ enum Command {
 
     /// Run the content worker
     Content(scrapix_worker_content::Args),
+
+    /// Run all services in a single process (API + Frontier + Crawler + Content)
+    All(all::AllArgs),
 
     // --- CLI commands (forwarded to scrapix-cli) ---
 
@@ -294,6 +299,10 @@ async fn main() -> anyhow::Result<()> {
         Command::Content(args) => {
             init_tracing(args.verbose);
             scrapix_worker_content::run(args).await
+        }
+        Command::All(args) => {
+            init_tracing(args.verbose);
+            all::run_all(args).await
         }
 
         // --- CLI commands: convert to scrapix_cli::Cli and delegate ---

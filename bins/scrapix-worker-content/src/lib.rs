@@ -27,8 +27,8 @@ use scrapix_extractor::{BlockConfig, BlockSplitter, ContentBlock};
 use scrapix_frontier::{NearDuplicateConfig, NearDuplicateDetector};
 use scrapix_parser::{HtmlParser, HtmlParserConfig};
 use scrapix_queue::{
-    topic_names, ConsumerBuilder, CrawlEvent, CrawlHistoryMessage, DocumentMessage, KafkaConsumer,
-    KafkaProducer, ProducerBuilder, RawPageMessage,
+    topic_names, AnyConsumer, AnyProducer, ConsumerBuilder, CrawlEvent, CrawlHistoryMessage,
+    DocumentMessage, ProducerBuilder, RawPageMessage,
 };
 use scrapix_storage::{MeilisearchStorage, MeilisearchStorageBuilder};
 
@@ -272,8 +272,8 @@ struct AiConfig {
 
 /// The main content worker
 struct ContentWorker {
-    consumer: KafkaConsumer,
-    producer: KafkaProducer,
+    consumer: Arc<AnyConsumer>,
+    producer: Arc<AnyProducer>,
     parser: HtmlParser,
     storage: Option<Arc<MeilisearchStorage>>,
     /// Default Meilisearch URL (from env/args) for comparison
@@ -309,23 +309,26 @@ impl ContentWorker {
         info!(worker_id = %worker_id, "Initializing content worker");
 
         // Create Kafka consumer
-        let consumer = ConsumerBuilder::new(&args.brokers, &args.group_id)
+        let kafka_consumer = ConsumerBuilder::new(&args.brokers, &args.group_id)
             .client_id(format!("scrapix-content-{}", worker_id))
             .auto_offset_reset("earliest")
             .build()?;
 
         // Subscribe to raw pages topic
-        consumer.subscribe(&[topic_names::PAGES_RAW])?;
+        kafka_consumer.subscribe(&[topic_names::PAGES_RAW])?;
         info!(
             topic = topic_names::PAGES_RAW,
             "Subscribed to raw pages topic"
         );
 
         // Create Kafka producer
-        let producer = ProducerBuilder::new(&args.brokers)
+        let kafka_producer = ProducerBuilder::new(&args.brokers)
             .client_id(format!("scrapix-content-{}-producer", worker_id))
             .compression("lz4")
             .build()?;
+
+        let consumer: Arc<AnyConsumer> = Arc::new(kafka_consumer.into());
+        let producer: Arc<AnyProducer> = Arc::new(kafka_producer.into());
 
         // Create Meilisearch storage (optional)
         let storage = if !args.skip_meilisearch {
@@ -412,6 +415,188 @@ impl ContentWorker {
 
         // Spawn a background task to drain AI usage events (logs them for now;
         // could be wired to a ClickHouse batcher if CLICKHOUSE_URL is configured)
+        if let Some(mut rx) = ai_usage_rx {
+            tokio::spawn(async move {
+                while let Some(event) = rx.recv().await {
+                    debug!(
+                        provider = %event.provider,
+                        model = %event.model,
+                        prompt_tokens = event.prompt_tokens,
+                        completion_tokens = event.completion_tokens,
+                        total_tokens = event.total_tokens,
+                        duration_ms = event.duration_ms,
+                        "AI usage event"
+                    );
+                }
+            });
+            info!("AI usage tracking receiver started (drain mode)");
+        }
+
+        // Create near-duplicate detector if enabled
+        let dedup_detector = if args.enable_dedup {
+            let config = NearDuplicateConfig {
+                use_simhash: args.dedup_use_simhash,
+                simhash_threshold: args.dedup_simhash_threshold,
+                minhash_threshold: args.dedup_minhash_threshold,
+                max_fingerprints: args.dedup_max_fingerprints,
+                ..Default::default()
+            };
+            info!(
+                use_simhash = args.dedup_use_simhash,
+                simhash_threshold = args.dedup_simhash_threshold,
+                minhash_threshold = args.dedup_minhash_threshold,
+                max_fingerprints = args.dedup_max_fingerprints,
+                "Near-duplicate detection enabled"
+            );
+            Some(Arc::new(NearDuplicateDetector::new(config)))
+        } else {
+            None
+        };
+
+        // Create block splitter if enabled
+        let block_splitter = if args.enable_block_split {
+            let config = BlockConfig {
+                min_level: args.block_split_min_level,
+                max_level: args.block_split_max_level,
+                min_content_length: args.block_split_min_length,
+                include_hierarchy: true,
+                extract_anchors: true,
+                ..Default::default()
+            };
+            info!(
+                min_level = args.block_split_min_level,
+                max_level = args.block_split_max_level,
+                min_content_length = args.block_split_min_length,
+                "Block splitting enabled - will create multiple documents per page"
+            );
+            Some(BlockSplitter::new(config))
+        } else {
+            None
+        };
+
+        Ok(Self {
+            consumer,
+            producer,
+            parser,
+            storage,
+            default_meilisearch_url: args.meilisearch_url.clone(),
+            default_meilisearch_key: args.meilisearch_key.clone().unwrap_or_default(),
+            storage_cache: tokio::sync::Mutex::new(HashMap::new()),
+            ai_service,
+            ai_config,
+            dedup_detector,
+            block_splitter,
+            semaphore,
+            metrics: Arc::new(WorkerMetrics::new()),
+            shutdown: Arc::new(AtomicBool::new(false)),
+            worker_id,
+            publish_to_kafka: args.publish_to_kafka,
+            publish_history: args.publish_history,
+            skip_meilisearch: args.skip_meilisearch,
+            default_batch_size: args.batch_size,
+        })
+    }
+
+    /// Create a content worker with pre-built message bus objects.
+    ///
+    /// Used by `scrapix all` to inject in-process channel producer/consumer instead of Kafka.
+    /// The caller is responsible for subscribing the consumer to the appropriate topic before
+    /// calling this function.
+    #[allow(dead_code)]
+    pub async fn with_bus(
+        args: &Args,
+        consumer: Arc<AnyConsumer>,
+        producer: Arc<AnyProducer>,
+    ) -> anyhow::Result<Self> {
+        let worker_id = args
+            .worker_id
+            .clone()
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()[..8].to_string());
+
+        info!(worker_id = %worker_id, "Initializing content worker (pre-built bus)");
+
+        // Create Meilisearch storage (optional)
+        let storage = if !args.skip_meilisearch {
+            let mut builder =
+                MeilisearchStorageBuilder::new(&args.meilisearch_url, &args.default_index);
+
+            if let Some(ref key) = args.meilisearch_key {
+                builder = builder.api_key(key);
+            }
+
+            builder = builder.batch_size(args.batch_size);
+
+            match builder.build().await {
+                Ok(storage) => {
+                    info!(
+                        url = %args.meilisearch_url,
+                        index = %args.default_index,
+                        "Connected to Meilisearch"
+                    );
+                    Some(Arc::new(storage))
+                }
+                Err(e) => {
+                    warn!(error = %e, "Failed to connect to Meilisearch, indexing disabled");
+                    None
+                }
+            }
+        } else {
+            info!("Meilisearch indexing disabled");
+            None
+        };
+
+        // Create HTML parser
+        let parser_config = HtmlParserConfig {
+            extract_content: args.extract_content,
+            convert_to_markdown: args.convert_markdown,
+            detect_language: args.detect_language,
+            extract_schema: args.extract_schema,
+            extract_og_tags: true,
+            min_content_length: args.min_content_length,
+        };
+        let parser = HtmlParser::new(parser_config);
+
+        // Create concurrency limiter
+        let semaphore = Arc::new(Semaphore::new(args.concurrency));
+
+        // Create AI config
+        let ai_config = AiConfig {
+            enable_summary: args.enable_summary,
+            enable_extraction: args.enable_extraction,
+            extraction_prompt: args.extraction_prompt.clone(),
+            summary_model: args.summary_model.clone(),
+            extraction_model: args.extraction_model.clone(),
+            max_tokens: args.ai_max_tokens,
+        };
+
+        // Create AI service from environment if any AI feature is enabled
+        let (ai_service, ai_usage_rx) = if args.enable_summary || args.enable_extraction {
+            match AiClient::from_env_with_tracking() {
+                Ok((client, rx)) => {
+                    let client = Arc::new(client);
+                    let mut service = AiService::minimal(client);
+
+                    if args.enable_summary {
+                        service = service.with_summarization();
+                        info!(model = %args.summary_model, "AI summarization enabled");
+                    }
+
+                    if args.enable_extraction {
+                        service = service.with_extraction();
+                        info!(model = %args.extraction_model, "AI extraction enabled");
+                    }
+
+                    (Some(Arc::new(service)), Some(rx))
+                }
+                Err(e) => {
+                    warn!(error = %e, "Failed to create AI client, AI features disabled");
+                    (None, None)
+                }
+            }
+        } else {
+            (None, None)
+        };
+
         if let Some(mut rx) = ai_usage_rx {
             tokio::spawn(async move {
                 while let Some(event) = rx.recv().await {
@@ -1280,6 +1465,34 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         docs_indexed = metrics.documents_indexed,
         bytes_mb = metrics.bytes_processed / (1024 * 1024),
         "Final worker metrics"
+    );
+
+    result
+}
+
+/// Run the content worker using pre-built message bus trait objects.
+///
+/// Used by `scrapix all` to run the content worker in-process alongside other services.
+pub async fn run_with_bus(
+    args: Args,
+    consumer: Arc<AnyConsumer>,
+    producer: Arc<AnyProducer>,
+) -> anyhow::Result<()> {
+    info!(
+        concurrency = args.concurrency,
+        "Starting Scrapix content worker (in-process bus)"
+    );
+
+    let worker = Arc::new(ContentWorker::with_bus(&args, consumer, producer).await?);
+
+    let result = worker.run().await;
+
+    let metrics = worker.metrics.snapshot();
+    info!(
+        processed = metrics.pages_processed,
+        succeeded = metrics.pages_succeeded,
+        failed = metrics.pages_failed,
+        "Final content worker metrics (in-process)"
     );
 
     result

@@ -20,6 +20,7 @@ scrapix-worker-crawler = { path = "../scrapix-worker-crawler" }
 scrapix-worker-content = { path = "../scrapix-worker-content" }
 scrapix-frontier-service = { path = "../scrapix-frontier-service" }
 scrapix-cli = { path = "../scrapix-cli" }
+scrapix-queue = { path = "../../crates/scrapix-queue" }
 
 tokio = { workspace = true }
 clap = { workspace = true }

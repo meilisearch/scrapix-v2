@@ -35,7 +35,7 @@ use scrapix_crawler::{
 };
 use scrapix_frontier::LinkGraph;
 use scrapix_queue::{
-    topic_names, ConsumerBuilder, CrawlEvent, KafkaConsumer, KafkaProducer, LinksMessage,
+    topic_names, AnyConsumer, AnyProducer, ConsumerBuilder, CrawlEvent, LinksMessage,
     ProducerBuilder, RawPageMessage, UrlMessage,
 };
 use scrapix_storage::{RocksConfig, RocksStorage, RocksStorageAdapter};
@@ -347,8 +347,8 @@ struct MetricsSnapshot {
 
 /// The main crawler worker
 struct CrawlerWorker {
-    consumer: KafkaConsumer,
-    producer: KafkaProducer,
+    consumer: AnyConsumer,
+    producer: AnyProducer,
     fetcher: HttpFetcher,
     robots_cache: Arc<PersistentRobotsCache>,
     sitemap_parser: Option<SitemapParser>,
@@ -373,7 +373,7 @@ struct CrawlerWorker {
 }
 
 impl CrawlerWorker {
-    /// Create a new crawler worker
+    /// Create a new crawler worker from CLI args (uses Kafka).
     async fn new(args: &Args) -> anyhow::Result<Self> {
         let worker_id = args
             .worker_id
@@ -383,24 +383,59 @@ impl CrawlerWorker {
         info!(worker_id = %worker_id, "Initializing crawler worker");
 
         // Create Kafka consumer
-        let consumer = ConsumerBuilder::new(&args.brokers, &args.group_id)
+        let kafka_consumer = ConsumerBuilder::new(&args.brokers, &args.group_id)
             .client_id(format!("scrapix-crawler-{}", worker_id))
             .auto_offset_reset("earliest")
             .build()?;
 
         // Subscribe to processing topic (URLs ready to crawl after dedup/politeness)
-        consumer.subscribe(&[topic_names::URL_PROCESSING])?;
+        kafka_consumer.subscribe(&[topic_names::URL_PROCESSING])?;
         info!(
             topic = topic_names::URL_PROCESSING,
             "Subscribed to processing topic"
         );
 
         // Create Kafka producer
-        let producer = ProducerBuilder::new(&args.brokers)
+        let kafka_producer = ProducerBuilder::new(&args.brokers)
             .client_id(format!("scrapix-crawler-{}-producer", worker_id))
             .compression("lz4")
             .build()?;
 
+        let consumer = AnyConsumer::from(kafka_consumer);
+        let producer = AnyProducer::from(kafka_producer);
+
+        Self::build(args, worker_id, consumer, producer).await
+    }
+
+    /// Create a new crawler worker using pre-built `AnyProducer`/`AnyConsumer` (for `scrapix all`).
+    pub async fn with_bus(
+        args: &Args,
+        producer: AnyProducer,
+        consumer: AnyConsumer,
+    ) -> anyhow::Result<Self> {
+        let worker_id = args
+            .worker_id
+            .clone()
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()[..8].to_string());
+
+        info!(worker_id = %worker_id, "Initializing crawler worker (in-process bus)");
+
+        consumer.subscribe(&[topic_names::URL_PROCESSING])?;
+        info!(
+            topic = topic_names::URL_PROCESSING,
+            "Subscribed to processing topic"
+        );
+
+        Self::build(args, worker_id, consumer, producer).await
+    }
+
+    /// Shared construction logic (everything except bus creation and subscription).
+    async fn build(
+        args: &Args,
+        worker_id: String,
+        consumer: AnyConsumer,
+        producer: AnyProducer,
+    ) -> anyhow::Result<Self> {
         // Create robots.txt cache configuration
         let robots_config = RobotsConfig {
             user_agent: args.user_agent.clone(),
@@ -1271,6 +1306,35 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
             "Final link graph stats"
         );
     }
+
+    result
+}
+
+/// Run the crawler worker using pre-built message bus trait objects.
+///
+/// Used by `scrapix all` to run the crawler in-process alongside other services.
+pub async fn run_with_bus(
+    args: Args,
+    producer: AnyProducer,
+    consumer: AnyConsumer,
+) -> anyhow::Result<()> {
+    info!(
+        concurrency = args.concurrency,
+        "Starting Scrapix crawler worker (in-process bus)"
+    );
+
+    let worker = Arc::new(CrawlerWorker::with_bus(&args, producer, consumer).await?);
+    let worker_for_metrics = worker.clone();
+
+    let result = worker.run().await;
+
+    let metrics = worker_for_metrics.metrics.snapshot();
+    info!(
+        processed = metrics.urls_processed,
+        succeeded = metrics.urls_succeeded,
+        failed = metrics.urls_failed,
+        "Final crawler worker metrics (in-process)"
+    );
 
     result
 }
