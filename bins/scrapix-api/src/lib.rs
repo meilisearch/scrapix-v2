@@ -34,7 +34,7 @@
 //! - `{"type": "error", "message": "...", "code": "..."}` - Error
 //! - `{"type": "pong", "timestamp": 123456789}` - Pong response
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -42,6 +42,7 @@ use std::time::Duration;
 pub mod analytics;
 pub mod auth;
 pub mod configs;
+pub mod jobs_db;
 
 use axum::{
     extract::{
@@ -156,6 +157,8 @@ struct AppState {
     ai_service: Option<Arc<AiService>>,
     /// PostgreSQL connection pool (for saved configs, cron scheduling)
     db_pool: Option<sqlx::PgPool>,
+    /// Job IDs with pending counter updates awaiting DB flush
+    dirty_jobs: RwLock<HashSet<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -188,6 +191,7 @@ impl AppState {
             fetcher,
             ai_service,
             db_pool,
+            dirty_jobs: RwLock::new(HashSet::new()),
         }
     }
 
@@ -299,6 +303,7 @@ impl AppState {
                         }
                     }
                 });
+                self.dirty_jobs.write().insert(job_id.to_string());
 
                 // Track domain stats
                 if let Some(domain) = extract_domain(url) {
@@ -318,6 +323,7 @@ impl AppState {
                 self.update_job(job_id, |j| {
                     j.errors += 1;
                 });
+                self.dirty_jobs.write().insert(job_id.to_string());
 
                 // Track error
                 let domain = extract_domain(url).unwrap_or_else(|| "unknown".to_string());
@@ -352,6 +358,7 @@ impl AppState {
                     j.pages_indexed += 1;
                     j.documents_sent += 1;
                 });
+                self.dirty_jobs.write().insert(job_id.to_string());
             }
             CrawlEvent::JobCompleted {
                 pages_crawled,
@@ -359,7 +366,7 @@ impl AppState {
                 duration_secs,
                 ..
             } => {
-                self.update_job(job_id, |j| {
+                let updated = self.update_job(job_id, |j| {
                     j.status = JobStatus::Completed;
                     j.pages_crawled = *pages_crawled;
                     j.pages_indexed = *documents_indexed;
@@ -368,6 +375,12 @@ impl AppState {
                         j.crawl_rate = j.pages_crawled as f64 / *duration_secs as f64;
                     }
                 });
+                // Immediate DB write for lifecycle event
+                if let (Some(ref pool), Some(snapshot)) = (&self.db_pool, updated) {
+                    self.dirty_jobs.write().remove(job_id);
+                    let pool = pool.clone();
+                    tokio::spawn(async move { jobs_db::update_job_full(&pool, &snapshot).await });
+                }
             }
             CrawlEvent::JobFailed { error, .. } => {
                 // Best-effort cleanup of temp index if this was a replace_index job
@@ -405,11 +418,17 @@ impl AppState {
                     });
                 }
 
-                self.update_job(job_id, |j| {
+                let updated = self.update_job(job_id, |j| {
                     j.status = JobStatus::Failed;
                     j.error_message = Some(error.clone());
                     j.completed_at = Some(chrono::Utc::now());
                 });
+                // Immediate DB write for lifecycle event
+                if let (Some(ref pool), Some(snapshot)) = (&self.db_pool, updated) {
+                    self.dirty_jobs.write().remove(job_id);
+                    let pool = pool.clone();
+                    tokio::spawn(async move { jobs_db::update_job_full(&pool, &snapshot).await });
+                }
             }
             CrawlEvent::UrlsDiscovered { count, .. } => {
                 self.update_job(job_id, |j| {
@@ -418,6 +437,7 @@ impl AppState {
                         j.eta_seconds = Some((*count as f64 / j.crawl_rate) as u64);
                     }
                 });
+                self.dirty_jobs.write().insert(job_id.to_string());
             }
             _ => {}
         }
@@ -1797,7 +1817,7 @@ pub(crate) async fn do_create_crawl(
     } else {
         None
     };
-    state.update_job(&job_id, |j| {
+    let snapshot = state.update_job(&job_id, |j| {
         j.status = JobStatus::Running;
         j.start_urls = config.start_urls.clone();
         j.max_pages = config.max_pages;
@@ -1807,6 +1827,12 @@ pub(crate) async fn do_create_crawl(
         j.swap_meilisearch_url = swap_url;
         j.swap_meilisearch_api_key = swap_key;
     });
+
+    // Persist new job to Postgres
+    if let (Some(ref pool), Some(snapshot)) = (&state.db_pool, snapshot) {
+        let pool = pool.clone();
+        tokio::spawn(async move { jobs_db::insert_job(&pool, &snapshot).await });
+    }
 
     info!(
         job_id = %job_id,
@@ -1921,9 +1947,19 @@ async fn job_status(
     )
     .await;
 
-    let job = state
-        .get_job(&job_id)
-        .ok_or_else(|| ApiError::new("Job not found", "not_found"))?;
+    // Try in-memory first, fall back to Postgres for historical jobs
+    let job = if let Some(job) = state.get_job(&job_id) {
+        job
+    } else if let Some(ref pool) = state.db_pool {
+        if let Some(ctx) = &account_ctx {
+            jobs_db::get_job_for_account(pool, &job_id, &ctx.account_id).await
+        } else {
+            jobs_db::get_job_from_db(pool, &job_id).await
+        }
+        .ok_or_else(|| ApiError::new("Job not found", "not_found"))?
+    } else {
+        return Err(ApiError::new("Job not found", "not_found"));
+    };
 
     check_job_ownership(&job, &account_ctx)?;
 
@@ -2428,6 +2464,14 @@ async fn cancel_job(
         })
         .ok_or_else(|| ApiError::new("Job not found", "not_found"))?;
 
+    // Persist cancellation to Postgres
+    if let Some(ref pool) = state.db_pool {
+        state.dirty_jobs.write().remove(&job_id);
+        let pool = pool.clone();
+        let snapshot = job.clone();
+        tokio::spawn(async move { jobs_db::update_job_full(&pool, &snapshot).await });
+    }
+
     info!(job_id = %job_id, "Job cancelled");
 
     Ok(Json(job.into()))
@@ -2447,8 +2491,33 @@ async fn list_jobs(
     )
     .await;
 
-    let jobs = if let Some(ctx) = &account_ctx {
-        // Filter to only this account's jobs
+    // When Postgres is available, query DB for full history (survives restarts)
+    // and overlay in-memory data for running jobs (fresher counters).
+    let jobs: Vec<JobState> = if let Some(ref pool) = state.db_pool {
+        let mut db_jobs = if let Some(ctx) = &account_ctx {
+            jobs_db::list_jobs_for_account_db(
+                pool,
+                &ctx.account_id,
+                params.limit as i64,
+                params.offset as i64,
+            )
+            .await
+        } else {
+            jobs_db::list_all_jobs_db(pool, params.limit as i64, params.offset as i64).await
+        };
+
+        // Overlay in-memory state for active jobs (fresher counters)
+        let in_memory = state.jobs.read();
+        for job in &mut db_jobs {
+            if let Some(mem_job) = in_memory.get(&job.job_id) {
+                if matches!(mem_job.status, JobStatus::Running | JobStatus::Pending) {
+                    *job = mem_job.clone();
+                }
+            }
+        }
+        db_jobs
+    } else if let Some(ctx) = &account_ctx {
+        // No DB — filter in-memory by account
         let all_jobs = state.jobs.read();
         all_jobs
             .values()
@@ -2676,6 +2745,24 @@ pub async fn run_with_bus(
         db_pool,
     ));
 
+    // Recover active jobs from Postgres on startup
+    if let Some(ref pool) = state.db_pool {
+        let recovered = jobs_db::load_active_jobs(pool).await;
+        if !recovered.is_empty() {
+            let now = std::time::Instant::now();
+            let mut jobs = state.jobs.write();
+            let mut activity = state.job_last_activity.write();
+            for job in &recovered {
+                jobs.insert(job.job_id.clone(), job.clone());
+                if matches!(job.status, JobStatus::Running) {
+                    // Give idle detector a fresh 30s window for recovered running jobs
+                    activity.insert(job.job_id.clone(), now);
+                }
+            }
+            info!(count = recovered.len(), "Recovered active jobs from Postgres");
+        }
+    }
+
     // Shutdown coordination
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
@@ -2713,10 +2800,13 @@ pub async fn run_with_bus(
             None
         };
 
-    // Start periodic ClickHouse flush task if enabled
-    let flush_handle = if clickhouse_batcher.is_some() || ai_usage_batcher.is_some() {
+    // Start periodic flush task (ClickHouse batchers + Postgres dirty job counters)
+    let has_flush_work =
+        clickhouse_batcher.is_some() || ai_usage_batcher.is_some() || state.db_pool.is_some();
+    let flush_handle = if has_flush_work {
         let crawl_batcher = clickhouse_batcher.clone();
         let ai_batcher = ai_usage_batcher.clone();
+        let flush_state = state.clone();
         let mut shutdown_rx = shutdown_rx.clone();
         let handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(5));
@@ -2733,9 +2823,24 @@ pub async fn run_with_bus(
                                 warn!(error = %e, "Failed to flush ClickHouse AI usage batcher");
                             }
                         }
+                        // Flush dirty job counters to Postgres
+                        if let Some(ref pool) = flush_state.db_pool {
+                            let dirty_ids: Vec<String> =
+                                flush_state.dirty_jobs.write().drain().collect();
+                            if !dirty_ids.is_empty() {
+                                let snapshots: Vec<JobState> = {
+                                    let jobs = flush_state.jobs.read();
+                                    dirty_ids
+                                        .iter()
+                                        .filter_map(|id| jobs.get(id).cloned())
+                                        .collect()
+                                };
+                                jobs_db::flush_job_counters(pool, &snapshots).await;
+                            }
+                        }
                     }
                     _ = shutdown_rx.changed() => {
-                        info!("ClickHouse flush task shutting down, performing final flush");
+                        info!("Flush task shutting down, performing final flush");
                         if let Some(ref b) = crawl_batcher {
                             if let Err(e) = b.flush().await {
                                 warn!(error = %e, "Failed final ClickHouse crawl flush");
@@ -2746,12 +2851,32 @@ pub async fn run_with_bus(
                                 warn!(error = %e, "Failed final ClickHouse AI usage flush");
                             }
                         }
+                        // Final Postgres flush
+                        if let Some(ref pool) = flush_state.db_pool {
+                            let dirty_ids: Vec<String> =
+                                flush_state.dirty_jobs.write().drain().collect();
+                            if !dirty_ids.is_empty() {
+                                let snapshots: Vec<JobState> = {
+                                    let jobs = flush_state.jobs.read();
+                                    dirty_ids
+                                        .iter()
+                                        .filter_map(|id| jobs.get(id).cloned())
+                                        .collect()
+                                };
+                                jobs_db::flush_job_counters(pool, &snapshots).await;
+                            }
+                        }
                         break;
                     }
                 }
             }
         });
-        info!("ClickHouse event persistence enabled (flush interval: 5s)");
+        if clickhouse_batcher.is_some() || ai_usage_batcher.is_some() {
+            info!("ClickHouse event persistence enabled (flush interval: 5s)");
+        }
+        if state.db_pool.is_some() {
+            info!("Postgres job counter flush enabled (flush interval: 5s)");
+        }
         Some(handle)
     } else {
         None

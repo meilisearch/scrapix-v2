@@ -133,3 +133,41 @@ CREATE INDEX idx_crawl_configs_next_run ON crawl_configs (next_run_at)
 CREATE TRIGGER trg_crawl_configs_updated_at
     BEFORE UPDATE ON crawl_configs
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- ============================================================================
+-- Jobs (persistent crawl job state)
+-- ============================================================================
+
+CREATE TABLE jobs (
+    job_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'running', 'completed', 'failed', 'cancelled', 'paused')),
+    index_uid TEXT NOT NULL,
+    account_id UUID REFERENCES accounts(id) ON DELETE SET NULL,
+    pages_crawled BIGINT NOT NULL DEFAULT 0,
+    pages_indexed BIGINT NOT NULL DEFAULT 0,
+    documents_sent BIGINT NOT NULL DEFAULT 0,
+    errors BIGINT NOT NULL DEFAULT 0,
+    bytes_downloaded BIGINT NOT NULL DEFAULT 0,
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    crawl_rate DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    eta_seconds BIGINT,
+    error_message TEXT,
+    start_urls JSONB NOT NULL DEFAULT '[]',
+    max_pages BIGINT,
+    config JSONB,
+    swap_temp_index TEXT,
+    swap_meilisearch_url TEXT,
+    swap_meilisearch_api_key TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_jobs_account_id ON jobs (account_id);
+CREATE INDEX idx_jobs_status ON jobs (status);
+CREATE INDEX idx_jobs_created_at ON jobs (created_at DESC);
+CREATE INDEX idx_jobs_active ON jobs (job_id) WHERE status IN ('pending', 'running', 'paused');
+
+CREATE TRIGGER trg_jobs_updated_at
+    BEFORE UPDATE ON jobs FOR EACH ROW EXECUTE FUNCTION update_updated_at();
