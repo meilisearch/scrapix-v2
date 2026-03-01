@@ -6,6 +6,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[lib]
+name = "scrapix_worker_crawler"
+path = "src/lib.rs"
+
 [[bin]]
 name = "scrapix-worker-crawler"
 path = "src/main.rs"

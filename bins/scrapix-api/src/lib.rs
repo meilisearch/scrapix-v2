@@ -81,7 +81,7 @@ use scrapix_parser::{
     html_to_main_content_minihtml, html_to_markdown, html_to_minihtml,
 };
 use scrapix_queue::{
-    topic_names, ConsumerBuilder, CrawlEvent, KafkaProducer, ProducerBuilder, UrlMessage,
+    topic_names, AnyConsumer, AnyProducer, ConsumerBuilder, CrawlEvent, ProducerBuilder, UrlMessage,
 };
 use scrapix_storage::clickhouse::{
     AiUsageBatcher, AiUsageClickHouseEvent, ClickHouseStorage, CrawlEvent as ClickHouseCrawlEvent,
@@ -128,8 +128,8 @@ pub struct Args {
 
 /// Application state shared across handlers
 struct AppState {
-    /// Kafka producer for publishing URLs
-    producer: KafkaProducer,
+    /// Message bus producer for publishing URLs
+    producer: AnyProducer,
     /// Job state storage (in-memory, could be Redis)
     jobs: RwLock<HashMap<String, JobState>>,
     /// Event broadcaster for SSE
@@ -164,7 +164,7 @@ struct AppConfig {
 
 impl AppState {
     fn new(
-        producer: KafkaProducer,
+        producer: AnyProducer,
         config: AppConfig,
         clickhouse_batcher: Option<Arc<CrawlEventBatcher>>,
         ai_usage_batcher: Option<Arc<AiUsageBatcher>>,
@@ -2214,18 +2214,13 @@ async fn list_jobs(
 // Event Consumer
 // ============================================================================
 
-/// Start consuming events from Kafka to update job state.
+/// Start consuming events from a message bus to update job state.
 /// Returns a JoinHandle so the caller can await clean shutdown.
 fn start_event_consumer(
-    brokers: &str,
+    consumer: AnyConsumer,
     state: Arc<AppState>,
     shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
-    let consumer = ConsumerBuilder::new(brokers, "scrapix-api-events")
-        .client_id("scrapix-api-event-consumer")
-        .auto_offset_reset("latest") // Only process new events
-        .build()?;
-
     consumer.subscribe(&[topic_names::EVENTS])?;
     info!("Event consumer subscribed to {} topic", topic_names::EVENTS);
 
@@ -2332,21 +2327,21 @@ async fn init_clickhouse() -> (
 // Run
 // ============================================================================
 
-pub async fn run(args: Args) -> anyhow::Result<()> {
+/// Run the API server with pre-built message bus trait objects.
+///
+/// This is the primary entry point for both the standalone binary and the `scrapix all`
+/// orchestration mode, where the caller injects pre-built `ChannelProducer`/`ChannelConsumer`
+/// trait objects instead of Kafka ones.
+pub async fn run_with_bus(
+    args: Args,
+    producer: AnyProducer,
+    consumer: AnyConsumer,
+) -> anyhow::Result<()> {
     info!(
         host = %args.host,
         port = args.port,
-        brokers = %args.brokers,
         "Starting Scrapix API server"
     );
-
-    // Create Kafka producer
-    let producer = ProducerBuilder::new(&args.brokers)
-        .client_id("scrapix-api")
-        .compression("lz4")
-        .build()?;
-
-    info!(brokers = %args.brokers, "Connected to Kafka");
 
     // Initialize ClickHouse for analytics (optional)
     let (analytics_state, clickhouse_batcher, ai_usage_batcher) = init_clickhouse().await;
@@ -2432,7 +2427,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
     // Start event consumer for real-time job tracking
-    let consumer_handle = start_event_consumer(&args.brokers, state.clone(), shutdown_rx.clone())?;
+    let consumer_handle = start_event_consumer(consumer, state.clone(), shutdown_rx.clone())?;
     info!("Event consumer started for centralized job tracking");
 
     // Spawn AI usage receiver task: drains events from the AiClient channel into the ClickHouse batcher
@@ -2792,4 +2787,28 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
     info!("Shutdown complete");
 
     Ok(())
+}
+
+/// Run the API server using Kafka as the message bus (standard standalone mode).
+///
+/// Builds Kafka producer and consumer from the broker address in `args`, then delegates
+/// to [`run_with_bus`].
+pub async fn run(args: Args) -> anyhow::Result<()> {
+    // Create Kafka producer
+    let producer: AnyProducer = ProducerBuilder::new(&args.brokers)
+        .client_id("scrapix-api")
+        .compression("lz4")
+        .build()?
+        .into();
+
+    // Create Kafka consumer for event tracking
+    let consumer: AnyConsumer = ConsumerBuilder::new(&args.brokers, "scrapix-api-events")
+        .client_id("scrapix-api-event-consumer")
+        .auto_offset_reset("latest") // Only process new events
+        .build()?
+        .into();
+
+    info!(brokers = %args.brokers, "Connected to Kafka");
+
+    run_with_bus(args, producer, consumer).await
 }

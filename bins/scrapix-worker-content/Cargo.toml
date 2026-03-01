@@ -6,6 +6,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[lib]
+name = "scrapix_worker_content"
+path = "src/lib.rs"
+
 [[bin]]
 name = "scrapix-worker-content"
 path = "src/main.rs"
