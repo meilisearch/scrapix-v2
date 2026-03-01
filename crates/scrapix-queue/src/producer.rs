@@ -283,6 +283,36 @@ impl ProducerBuilder {
     }
 }
 
+// Implement the MessageProducer trait for KafkaProducer
+#[async_trait::async_trait]
+impl crate::traits::MessageProducer for KafkaProducer {
+    async fn send<T: Serialize + Send + Sync>(
+        &self,
+        topic: &str,
+        key: Option<&str>,
+        payload: &T,
+    ) -> Result<(i32, i64)> {
+        KafkaProducer::send(self, topic, key, payload).await
+    }
+
+    async fn send_raw(
+        &self,
+        topic: &str,
+        key: Option<&str>,
+        payload: &[u8],
+    ) -> Result<(i32, i64)> {
+        KafkaProducer::send_raw(self, topic, key, payload, None).await
+    }
+
+    fn flush(&self, timeout: Duration) {
+        KafkaProducer::flush(self, timeout)
+    }
+
+    fn is_healthy(&self) -> bool {
+        KafkaProducer::is_healthy(self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

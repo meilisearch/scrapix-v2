@@ -25,5 +25,9 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 url = { workspace = true }
 
+# In-process channels (for single-binary mode)
+async-channel = "2"
+parking_lot = { workspace = true }
+
 # Tracing
 tracing = { workspace = true }

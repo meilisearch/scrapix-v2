@@ -33,7 +33,7 @@ use scrapix_frontier::{
     RecrawlScheduler, UrlDedup, UrlHistory, UrlHistoryConfig,
 };
 use scrapix_queue::{
-    topic_names, ConsumerBuilder, CrawlHistoryMessage, KafkaConsumer, KafkaProducer, LinksMessage,
+    topic_names, AnyConsumer, AnyProducer, ConsumerBuilder, CrawlHistoryMessage, LinksMessage,
     ProducerBuilder, UrlMessage,
 };
 
@@ -283,10 +283,10 @@ struct ReadyUrl {
 }
 
 struct FrontierService {
-    consumer: KafkaConsumer,
-    links_consumer: Option<KafkaConsumer>,
-    history_consumer: Option<KafkaConsumer>,
-    producer: Arc<KafkaProducer>,
+    consumer: Arc<AnyConsumer>,
+    links_consumer: Option<Arc<AnyConsumer>>,
+    history_consumer: Option<Arc<AnyConsumer>>,
+    producer: Arc<AnyProducer>,
     jobs: Arc<RwLock<HashMap<String, Arc<JobFrontier>>>>,
     politeness: Arc<PolitenessScheduler>,
     link_graph: Option<Arc<LinkGraph>>,
@@ -311,21 +311,25 @@ impl FrontierService {
 
         info!(instance_id = %instance_id, "Initializing frontier service");
 
-        let consumer = ConsumerBuilder::new(&args.brokers, &args.group_id)
+        let kafka_consumer = ConsumerBuilder::new(&args.brokers, &args.group_id)
             .client_id(format!("scrapix-frontier-{}", instance_id))
             .auto_offset_reset("earliest")
             .build()?;
 
-        consumer.subscribe(&[topic_names::URL_FRONTIER])?;
+        kafka_consumer.subscribe(&[topic_names::URL_FRONTIER])?;
         info!(
             topic = topic_names::URL_FRONTIER,
             "Subscribed to frontier topic"
         );
 
-        let producer = ProducerBuilder::new(&args.brokers)
+        let consumer: Arc<AnyConsumer> = Arc::new(AnyConsumer::from(kafka_consumer));
+
+        let kafka_producer = ProducerBuilder::new(&args.brokers)
             .client_id(format!("scrapix-frontier-{}-producer", instance_id))
             .compression("lz4")
             .build()?;
+
+        let producer: Arc<AnyProducer> = Arc::new(AnyProducer::from(kafka_producer));
 
         let politeness_config = PolitenessConfig {
             default_delay_ms: args.domain_delay_ms,
@@ -366,13 +370,15 @@ impl FrontierService {
                 "LinkGraph enabled for PageRank-based prioritization"
             );
 
-            let links_consumer =
+            let kafka_links_consumer =
                 ConsumerBuilder::new(&args.brokers, format!("{}-links", args.group_id))
                     .client_id(format!("scrapix-frontier-{}-links", instance_id))
                     .auto_offset_reset("earliest")
                     .build()?;
-            links_consumer.subscribe(&[topic_names::LINKS])?;
+            kafka_links_consumer.subscribe(&[topic_names::LINKS])?;
             info!(topic = topic_names::LINKS, "Subscribed to links topic");
+
+            let links_consumer: Arc<AnyConsumer> = Arc::new(AnyConsumer::from(kafka_links_consumer));
 
             (Some(graph), Some(links_consumer))
         } else {
@@ -402,16 +408,19 @@ impl FrontierService {
                 "RecrawlScheduler enabled for incremental crawling"
             );
 
-            let history_consumer =
+            let kafka_history_consumer =
                 ConsumerBuilder::new(&args.brokers, format!("{}-history", args.group_id))
                     .client_id(format!("scrapix-frontier-{}-history", instance_id))
                     .auto_offset_reset("earliest")
                     .build()?;
-            history_consumer.subscribe(&[topic_names::CRAWL_HISTORY])?;
+            kafka_history_consumer.subscribe(&[topic_names::CRAWL_HISTORY])?;
             info!(
                 topic = topic_names::CRAWL_HISTORY,
                 "Subscribed to crawl history topic"
             );
+
+            let history_consumer: Arc<AnyConsumer> =
+                Arc::new(AnyConsumer::from(kafka_history_consumer));
 
             (Some(scheduler), Some(history), Some(history_consumer))
         } else {
@@ -422,7 +431,116 @@ impl FrontierService {
             consumer,
             links_consumer,
             history_consumer,
-            producer: Arc::new(producer),
+            producer,
+            jobs: Arc::new(RwLock::new(HashMap::new())),
+            politeness: Arc::new(politeness),
+            link_graph,
+            recrawl_scheduler,
+            url_history,
+            metrics: Arc::new(ServiceMetrics::new()),
+            shutdown: Arc::new(AtomicBool::new(false)),
+            instance_id,
+            dedup_config,
+            priority_config,
+            dispatch_batch_size: args.dispatch_batch_size,
+            dispatch_interval: Duration::from_millis(args.dispatch_interval_ms),
+            linkgraph_compute_interval: Duration::from_secs(args.linkgraph_compute_interval),
+        })
+    }
+
+    /// Create a `FrontierService` from pre-built message bus trait objects.
+    ///
+    /// Used by `scrapix all` which constructs a shared in-process bus and passes
+    /// the relevant producers/consumers to each service.
+    pub async fn with_bus(
+        args: &Args,
+        producer: Arc<AnyProducer>,
+        main_consumer: Arc<AnyConsumer>,
+        links_consumer: Option<Arc<AnyConsumer>>,
+        history_consumer: Option<Arc<AnyConsumer>>,
+    ) -> anyhow::Result<Self> {
+        let instance_id = args
+            .instance_id
+            .clone()
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()[..8].to_string());
+
+        info!(instance_id = %instance_id, "Initializing frontier service (pre-built bus)");
+
+        let politeness_config = PolitenessConfig {
+            default_delay_ms: args.domain_delay_ms,
+            min_delay_ms: 100,
+            max_delay_ms: 30_000,
+            respect_robots_delay: true,
+            robots_delay_multiplier: 1.0,
+            concurrent_per_domain: args.concurrent_per_domain,
+        };
+        let politeness = PolitenessScheduler::new(politeness_config);
+
+        let dedup_config = DedupConfig {
+            expected_items: args.bloom_capacity,
+            false_positive_rate: args.bloom_fp_rate,
+            use_partitioned: false,
+            partition_count: 16,
+        };
+
+        let priority_config = PriorityConfig {
+            max_size: args.max_pending_per_job,
+            priority_weight: 100,
+            depth_weight: -10,
+            seed_bonus: 1000,
+        };
+
+        let link_graph = if args.enable_linkgraph {
+            let config = LinkGraphConfig {
+                damping_factor: args.linkgraph_damping,
+                max_priority_boost: args.linkgraph_max_boost,
+                max_pages: args.linkgraph_max_pages,
+                ..Default::default()
+            };
+            let graph = Arc::new(LinkGraph::new(config));
+            info!(
+                damping = args.linkgraph_damping,
+                max_boost = args.linkgraph_max_boost,
+                max_pages = args.linkgraph_max_pages,
+                "LinkGraph enabled for PageRank-based prioritization"
+            );
+            Some(graph)
+        } else {
+            None
+        };
+
+        let (recrawl_scheduler, url_history) = if args.enable_recrawl {
+            let history_config = UrlHistoryConfig {
+                max_entries: args.recrawl_max_urls,
+                min_recrawl_interval: Duration::from_secs(args.recrawl_min_age),
+                max_recrawl_interval: Duration::from_secs(args.recrawl_max_age),
+                ..Default::default()
+            };
+            let history = Arc::new(UrlHistory::new(history_config));
+
+            let recrawl_config = RecrawlConfig {
+                enabled: true,
+                min_age: Duration::from_secs(args.recrawl_min_age),
+                max_age: Duration::from_secs(args.recrawl_max_age),
+                ..Default::default()
+            };
+            let scheduler = Arc::new(RecrawlScheduler::new(recrawl_config, history.clone()));
+            info!(
+                min_age_secs = args.recrawl_min_age,
+                max_age_secs = args.recrawl_max_age,
+                max_urls = args.recrawl_max_urls,
+                "RecrawlScheduler enabled for incremental crawling"
+            );
+            (Some(scheduler), Some(history))
+        } else {
+            (None, None)
+        };
+
+        Ok(Self {
+            consumer: main_consumer,
+            links_consumer,
+            history_consumer,
+            producer,
             jobs: Arc::new(RwLock::new(HashMap::new())),
             politeness: Arc::new(politeness),
             link_graph,
@@ -759,31 +877,12 @@ impl FrontierService {
     }
 
     fn start_links_consumer(&self) -> Option<tokio::task::JoinHandle<()>> {
-        let links_consumer = self.links_consumer.as_ref()?;
+        let consumer = self.links_consumer.clone()?;
         let link_graph = self.link_graph.clone()?;
         let metrics = Arc::clone(&self.metrics);
         let shutdown = Arc::clone(&self.shutdown);
 
-        let brokers = links_consumer.brokers().to_string();
-        let group_id = links_consumer.group_id().to_string();
-
         Some(tokio::spawn(async move {
-            let consumer = match ConsumerBuilder::new(&brokers, &group_id)
-                .auto_offset_reset("earliest")
-                .build()
-            {
-                Ok(c) => c,
-                Err(e) => {
-                    error!(error = %e, "Failed to create links consumer");
-                    return;
-                }
-            };
-
-            if let Err(e) = consumer.subscribe(&[topic_names::LINKS]) {
-                error!(error = %e, "Failed to subscribe to links topic");
-                return;
-            }
-
             while !shutdown.load(Ordering::Relaxed) {
                 match consumer
                     .poll_one::<LinksMessage>(Duration::from_millis(100))
@@ -810,31 +909,12 @@ impl FrontierService {
     }
 
     fn start_history_consumer(&self) -> Option<tokio::task::JoinHandle<()>> {
-        let history_consumer = self.history_consumer.as_ref()?;
+        let consumer = self.history_consumer.clone()?;
         let url_history = self.url_history.clone()?;
         let metrics = Arc::clone(&self.metrics);
         let shutdown = Arc::clone(&self.shutdown);
 
-        let brokers = history_consumer.brokers().to_string();
-        let group_id = history_consumer.group_id().to_string();
-
         Some(tokio::spawn(async move {
-            let consumer = match ConsumerBuilder::new(&brokers, &group_id)
-                .auto_offset_reset("earliest")
-                .build()
-            {
-                Ok(c) => c,
-                Err(e) => {
-                    error!(error = %e, "Failed to create history consumer");
-                    return;
-                }
-            };
-
-            if let Err(e) = consumer.subscribe(&[topic_names::CRAWL_HISTORY]) {
-                error!(error = %e, "Failed to subscribe to history topic");
-                return;
-            }
-
             while !shutdown.load(Ordering::Relaxed) {
                 match consumer
                     .poll_one::<CrawlHistoryMessage>(Duration::from_millis(100))
@@ -958,6 +1038,35 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
     let result = service.run().await;
 
     shutdown_handle.abort();
+    service.print_stats();
+
+    result
+}
+
+/// Run the frontier service using pre-built message bus trait objects.
+///
+/// Used by `scrapix all` to run the frontier in-process alongside other services,
+/// sharing an in-process channel bus instead of Kafka.
+pub async fn run_with_bus(
+    args: Args,
+    producer: Arc<AnyProducer>,
+    main_consumer: Arc<AnyConsumer>,
+    links_consumer: Option<Arc<AnyConsumer>>,
+    history_consumer: Option<Arc<AnyConsumer>>,
+) -> anyhow::Result<()> {
+    info!(
+        bloom_capacity = args.bloom_capacity,
+        domain_delay_ms = args.domain_delay_ms,
+        "Starting Scrapix frontier service (in-process bus)"
+    );
+
+    let service = Arc::new(
+        FrontierService::with_bus(&args, producer, main_consumer, links_consumer, history_consumer)
+            .await?,
+    );
+
+    let result = service.run().await;
+
     service.print_stats();
 
     result

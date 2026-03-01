@@ -1,0 +1,28 @@
+[package]
+name = "scrapix"
+description = "Unified Scrapix binary — run individual services or all-in-one"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "scrapix"
+path = "src/main.rs"
+
+[features]
+default = []
+browser = ["scrapix-worker-crawler/browser"]
+
+[dependencies]
+scrapix-api = { path = "../scrapix-api" }
+scrapix-worker-crawler = { path = "../scrapix-worker-crawler" }
+scrapix-worker-content = { path = "../scrapix-worker-content" }
+scrapix-frontier-service = { path = "../scrapix-frontier-service" }
+scrapix-cli = { path = "../scrapix-cli" }
+
+tokio = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }

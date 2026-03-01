@@ -16,6 +16,7 @@ members = [
     "bins/scrapix-worker-content",
     "bins/scrapix-frontier-service",
     "bins/scrapix-cli",
+    "bins/scrapix",
     "benches",
     "tests",
 ]

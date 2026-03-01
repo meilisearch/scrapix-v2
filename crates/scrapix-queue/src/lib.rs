@@ -50,9 +50,12 @@
 //! }
 //! ```
 
+pub mod bus;
+pub mod channel;
 pub mod consumer;
 pub mod producer;
 pub mod topics;
+pub mod traits;
 
 // Re-exports
 pub use consumer::{ConsumerBuilder, ConsumerConfig, KafkaConsumer, MessageMetadata};
@@ -61,3 +64,7 @@ pub use topics::{
     names as topic_names, CrawlEvent, CrawlHistoryMessage, DlqMessage, DocumentMessage,
     LinksMessage, RawPageMessage, UrlMessage,
 };
+
+// Message bus abstractions
+pub use channel::{ChannelBus, ChannelConsumer, ChannelProducer};
+pub use traits::{AnyConsumer, AnyProducer, MessageConsumer, MessageProducer};

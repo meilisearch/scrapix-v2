@@ -449,6 +449,41 @@ impl MessageMetadata {
     }
 }
 
+// Implement the MessageConsumer trait for KafkaConsumer
+#[async_trait::async_trait]
+impl crate::traits::MessageConsumer for KafkaConsumer {
+    fn subscribe(&self, topics: &[&str]) -> Result<()> {
+        KafkaConsumer::subscribe(self, topics)
+    }
+
+    async fn process<T, F, Fut>(&self, handler: F) -> Result<()>
+    where
+        T: DeserializeOwned + Send + 'static,
+        F: FnMut(T, MessageMetadata) -> Fut + Send,
+        Fut: std::future::Future<Output = Result<()>> + Send,
+    {
+        KafkaConsumer::process(self, handler).await
+    }
+
+    async fn process_concurrent<T, F, Fut>(
+        &self,
+        handler: F,
+        concurrency: usize,
+        shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<()>
+    where
+        T: DeserializeOwned + Send + 'static,
+        F: Fn(T, MessageMetadata) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Result<()>> + Send + 'static,
+    {
+        KafkaConsumer::process_concurrent(self, handler, concurrency, shutdown).await
+    }
+
+    async fn poll_one<T: DeserializeOwned + Send>(&self, timeout: Duration) -> Result<Option<T>> {
+        KafkaConsumer::poll_one(self, timeout).await
+    }
+}
+
 /// Builder for KafkaConsumer
 pub struct ConsumerBuilder {
     config: ConsumerConfig,
