@@ -202,3 +202,64 @@ export interface ScrapeMetadata {
   open_graph: Record<string, string>;
   twitter: Record<string, string>;
 }
+
+// ============================================================================
+// Analytics (Tinybird-style responses)
+// ============================================================================
+
+export interface AnalyticsResponse<T> {
+  meta: { name: string; type: string }[];
+  data: T[];
+  rows: number;
+  statistics: { elapsed: number; rows_read: number; bytes_read: number };
+}
+
+export interface HourlyStatsRow {
+  hour: string;
+  requests: number;
+  successes: number;
+  failures: number;
+  success_rate: number;
+  avg_response_time_ms: number;
+  total_bytes: number;
+}
+
+export interface KpisRow {
+  total_crawls: number;
+  total_bytes: number;
+  unique_domains: number;
+  success_rate: number;
+  avg_response_time_ms: number;
+  errors_count: number;
+}
+
+export interface AccountUsageRow {
+  account_id: string;
+  total_requests: number;
+  successful_requests: number;
+  failed_requests: number;
+  total_bytes: number;
+  avg_response_time_ms: number;
+  unique_domains: number;
+  total_jobs: number;
+  js_renders: number;
+}
+
+export interface DailyUsageRow {
+  date: string;
+  requests: number;
+  bytes: number;
+  jobs: number;
+  js_renders: number;
+}
+
+export interface TopDomainRow {
+  domain: string;
+  total_requests: number;
+  successful_requests: number;
+  failed_requests: number;
+  success_rate: number;
+  avg_response_time_ms: number;
+  total_bytes: number;
+  unique_urls: number;
+}

@@ -1047,6 +1047,202 @@ async fn pipe_job_event_summary(
 }
 
 // ============================================================================
+// Pipe: account_usage
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct AccountUsageParams {
+    account_id: String,
+    #[serde(default = "default_hours")]
+    hours: u32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AccountUsageRow {
+    pub account_id: String,
+    pub total_requests: u64,
+    pub successful_requests: u64,
+    pub failed_requests: u64,
+    pub total_bytes: u64,
+    pub avg_response_time_ms: f64,
+    pub unique_domains: u64,
+    pub total_jobs: u64,
+    pub js_renders: u64,
+}
+
+async fn pipe_account_usage(
+    State(state): State<Arc<AnalyticsState>>,
+    Query(params): Query<AccountUsageParams>,
+) -> Result<Json<AnalyticsResponse<AccountUsageRow>>, (StatusCode, Json<AnalyticsError>)> {
+    let start = Instant::now();
+
+    let stats = state
+        .storage
+        .get_account_usage(&params.account_id, params.hours)
+        .await
+        .map_err(|e| {
+            error!("account_usage query failed: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(AnalyticsError {
+                    error: e.to_string(),
+                    code: "QUERY_ERROR".to_string(),
+                }),
+            )
+        })?;
+
+    let data = vec![AccountUsageRow {
+        account_id: stats.account_id,
+        total_requests: stats.total_requests,
+        successful_requests: stats.successful_requests,
+        failed_requests: stats.failed_requests,
+        total_bytes: stats.total_bytes,
+        avg_response_time_ms: stats.avg_response_time_ms,
+        unique_domains: stats.unique_domains,
+        total_jobs: stats.total_jobs,
+        js_renders: stats.js_renders,
+    }];
+
+    Ok(Json(AnalyticsResponse {
+        meta: vec![
+            ColumnMeta {
+                name: "account_id".into(),
+                col_type: "String".into(),
+            },
+            ColumnMeta {
+                name: "total_requests".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "successful_requests".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "failed_requests".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "total_bytes".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "avg_response_time_ms".into(),
+                col_type: "Float64".into(),
+            },
+            ColumnMeta {
+                name: "unique_domains".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "total_jobs".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "js_renders".into(),
+                col_type: "UInt64".into(),
+            },
+        ],
+        data,
+        rows: 1,
+        statistics: QueryStats {
+            elapsed: start.elapsed().as_secs_f64(),
+            rows_read: 1,
+            bytes_read: 0,
+        },
+    }))
+}
+
+// ============================================================================
+// Pipe: account_daily_usage
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct AccountDailyUsageParams {
+    account_id: String,
+    #[serde(default = "default_days")]
+    days: u32,
+}
+
+fn default_days() -> u32 {
+    30
+}
+
+#[derive(Debug, Serialize)]
+pub struct AccountDailyUsageRow {
+    pub date: String,
+    pub requests: u64,
+    pub bytes: u64,
+    pub jobs: u64,
+    pub js_renders: u64,
+}
+
+async fn pipe_account_daily_usage(
+    State(state): State<Arc<AnalyticsState>>,
+    Query(params): Query<AccountDailyUsageParams>,
+) -> Result<Json<AnalyticsResponse<AccountDailyUsageRow>>, (StatusCode, Json<AnalyticsError>)> {
+    let start = Instant::now();
+
+    let stats = state
+        .storage
+        .get_account_daily_usage(&params.account_id, params.days)
+        .await
+        .map_err(|e| {
+            error!("account_daily_usage query failed: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(AnalyticsError {
+                    error: e.to_string(),
+                    code: "QUERY_ERROR".to_string(),
+                }),
+            )
+        })?;
+
+    let data: Vec<AccountDailyUsageRow> = stats
+        .into_iter()
+        .map(|s| AccountDailyUsageRow {
+            date: s.date.to_string(),
+            requests: s.requests,
+            bytes: s.bytes,
+            jobs: s.jobs,
+            js_renders: s.js_renders,
+        })
+        .collect();
+
+    let rows = data.len();
+    Ok(Json(AnalyticsResponse {
+        meta: vec![
+            ColumnMeta {
+                name: "date".into(),
+                col_type: "Date".into(),
+            },
+            ColumnMeta {
+                name: "requests".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "bytes".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "jobs".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "js_renders".into(),
+                col_type: "UInt64".into(),
+            },
+        ],
+        data,
+        rows,
+        statistics: QueryStats {
+            elapsed: start.elapsed().as_secs_f64(),
+            rows_read: rows,
+            bytes_read: 0,
+        },
+    }))
+}
+
+// ============================================================================
 // Pipes List
 // ============================================================================
 
@@ -1206,6 +1402,44 @@ async fn list_pipes() -> Json<Vec<PipeInfo>> {
             }],
             endpoint: "/analytics/v0/pipes/job_event_summary.json".into(),
         },
+        PipeInfo {
+            name: "account_usage".into(),
+            description: "Account usage summary (requests, bandwidth, jobs, JS renders)".into(),
+            parameters: vec![
+                ParamInfo {
+                    name: "account_id".into(),
+                    param_type: "string".into(),
+                    required: true,
+                    default: None,
+                },
+                ParamInfo {
+                    name: "hours".into(),
+                    param_type: "integer".into(),
+                    required: false,
+                    default: Some("24".into()),
+                },
+            ],
+            endpoint: "/analytics/v0/pipes/account_usage.json".into(),
+        },
+        PipeInfo {
+            name: "account_daily_usage".into(),
+            description: "Daily usage breakdown for an account".into(),
+            parameters: vec![
+                ParamInfo {
+                    name: "account_id".into(),
+                    param_type: "string".into(),
+                    required: true,
+                    default: None,
+                },
+                ParamInfo {
+                    name: "days".into(),
+                    param_type: "integer".into(),
+                    required: false,
+                    default: Some("30".into()),
+                },
+            ],
+            endpoint: "/analytics/v0/pipes/account_daily_usage.json".into(),
+        },
     ])
 }
 
@@ -1239,6 +1473,11 @@ pub fn create_analytics_router(state: Arc<AnalyticsState>) -> Router {
         .route(
             "/pipes/job_event_summary.json",
             get(pipe_job_event_summary),
+        )
+        .route("/pipes/account_usage.json", get(pipe_account_usage))
+        .route(
+            "/pipes/account_daily_usage.json",
+            get(pipe_account_daily_usage),
         )
         .with_state(state)
 }

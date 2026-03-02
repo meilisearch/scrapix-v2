@@ -13,6 +13,7 @@ import {
   LogOut,
   FolderCog,
   Database,
+  BarChart3,
 } from "lucide-react";
 import { logout } from "@/lib/auth";
 import { useRouter } from "next/navigation";
@@ -27,6 +28,7 @@ const navigation = [
   { name: "Engines", href: "/engines", icon: Database },
   { name: "API Keys", href: "/api-keys", icon: Key },
   { name: "Billing", href: "/billing", icon: CreditCard },
+  { name: "Usage", href: "/usage", icon: BarChart3 },
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 

@@ -14,6 +14,12 @@ import type {
   CreateEngineRequest,
   UpdateEngineRequest,
   MeilisearchIndex,
+  AnalyticsResponse,
+  HourlyStatsRow,
+  KpisRow,
+  AccountUsageRow,
+  DailyUsageRow,
+  TopDomainRow,
 } from "./api-types";
 
 // API calls go through Next.js rewrites (/api/scrapix/* → backend) to avoid CORS.
@@ -200,4 +206,28 @@ export async function fetchEngineIndexes(id: string): Promise<MeilisearchIndex[]
 /** WebSocket URL pointing directly at the backend (rewrites don't proxy WS). */
 export function wsUrl(path: string): string {
   return `${getWsBase()}${path}`;
+}
+
+// ============================================================================
+// Analytics
+// ============================================================================
+
+export async function fetchKpis(hours: number = 24): Promise<AnalyticsResponse<KpisRow>> {
+  return request(`/analytics/v0/pipes/kpis.json?hours=${hours}`);
+}
+
+export async function fetchHourlyStats(hours: number = 24): Promise<AnalyticsResponse<HourlyStatsRow>> {
+  return request(`/analytics/v0/pipes/hourly_stats.json?hours=${hours}`);
+}
+
+export async function fetchAccountUsage(accountId: string, hours: number = 24): Promise<AnalyticsResponse<AccountUsageRow>> {
+  return request(`/analytics/v0/pipes/account_usage.json?account_id=${encodeURIComponent(accountId)}&hours=${hours}`);
+}
+
+export async function fetchDailyUsage(accountId: string, days: number = 30): Promise<AnalyticsResponse<DailyUsageRow>> {
+  return request(`/analytics/v0/pipes/account_daily_usage.json?account_id=${encodeURIComponent(accountId)}&days=${days}`);
+}
+
+export async function fetchTopDomains(hours: number = 24, limit: number = 10): Promise<AnalyticsResponse<TopDomainRow>> {
+  return request(`/analytics/v0/pipes/top_domains.json?hours=${hours}&limit=${limit}`);
 }
