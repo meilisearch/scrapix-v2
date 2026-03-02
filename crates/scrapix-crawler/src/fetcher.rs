@@ -160,7 +160,7 @@ impl HttpFetcher {
         default_headers.insert(
             ACCEPT,
             HeaderValue::from_static(
-                "text/markdown,text/html;q=0.9,application/xhtml+xml;q=0.9,application/xml;q=0.8,*/*;q=0.1",
+                "text/html,application/xhtml+xml,text/markdown,application/xml;q=0.8",
             ),
         );
         default_headers.insert(
