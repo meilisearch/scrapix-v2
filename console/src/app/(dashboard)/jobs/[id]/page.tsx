@@ -11,6 +11,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Collapsible,
   CollapsibleContent,
@@ -569,14 +570,12 @@ export default function JobDetailPage() {
       </div>
 
       {apiError && (
-        <Card className="border-destructive">
-          <CardContent className="py-4 flex items-center gap-3">
-            <AlertCircle className="h-5 w-5 text-destructive" />
-            <p className="text-sm text-destructive">
-              {apiError instanceof Error ? apiError.message : "Failed to fetch job"}
-            </p>
-          </CardContent>
-        </Card>
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>
+            {apiError instanceof Error ? apiError.message : "Failed to fetch job"}
+          </AlertDescription>
+        </Alert>
       )}
 
       {status && (

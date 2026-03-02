@@ -5,19 +5,26 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { cn } from "@/lib/utils";
 import {
   Copy,
   ExternalLink,
   Globe,
   CheckCircle2,
   XCircle,
+  ArrowRight,
+  Loader2,
+  FileText,
+  AlertCircle,
 } from "lucide-react";
 import { toast } from "sonner";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
+import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { codeToHtml } from "shiki";
-import type { ScrapeResult } from "@/lib/api-types";
+import type { ScrapeResult, Job } from "@/lib/api-types";
+import { fetchJobStatus } from "@/lib/api";
 
 interface ResultPanelProps {
   result: ScrapeResult | null;
@@ -102,19 +109,104 @@ function CrawlResultState({
 }: {
   result: { job_id: string; status: string; message?: string };
 }) {
+  const [jobStatus, setJobStatus] = useState<Job | null>(null);
+
+  const poll = useCallback(() => {
+    fetchJobStatus(result.job_id)
+      .then(setJobStatus)
+      .catch(() => {});
+  }, [result.job_id]);
+
+  useEffect(() => {
+    poll();
+    const interval = setInterval(poll, 2000);
+    return () => clearInterval(interval);
+  }, [poll]);
+
+  const isRunning =
+    jobStatus?.status === "running" || jobStatus?.status === "pending";
+  const isCompleted = jobStatus?.status === "completed";
+  const isFailed = jobStatus?.status === "failed";
+
   return (
-    <div className="flex flex-col items-center justify-center h-full gap-4 py-20">
-      <CheckCircle2 className="h-10 w-10 text-primary opacity-70" />
+    <div className="flex flex-col items-center justify-center h-full gap-5 py-16">
+      {/* Status icon */}
+      {isRunning && (
+        <Loader2 className="h-10 w-10 text-primary animate-spin" />
+      )}
+      {isCompleted && (
+        <CheckCircle2 className="h-10 w-10 text-green-500" />
+      )}
+      {isFailed && (
+        <XCircle className="h-10 w-10 text-destructive" />
+      )}
+      {!jobStatus && (
+        <CheckCircle2 className="h-10 w-10 text-primary opacity-70" />
+      )}
+
+      {/* Job info */}
       <div className="text-center space-y-1">
-        <p className="text-sm font-medium">Crawl job created</p>
+        <p className="text-sm font-medium">
+          {isRunning
+            ? "Crawl in progress..."
+            : isCompleted
+              ? "Crawl completed"
+              : isFailed
+                ? "Crawl failed"
+                : "Crawl job created"}
+        </p>
         <p className="text-xs text-muted-foreground font-mono">
           {result.job_id}
         </p>
-        {result.message && (
-          <p className="text-xs text-muted-foreground">{result.message}</p>
-        )}
       </div>
-      <Badge variant="outline">{result.status}</Badge>
+
+      {/* Live counters */}
+      {jobStatus && (
+        <div className="grid grid-cols-3 gap-4 text-center">
+          <div>
+            <div className="flex items-center justify-center gap-1 text-muted-foreground">
+              <FileText className="h-3.5 w-3.5" />
+              <span className="text-xs">Crawled</span>
+            </div>
+            <p className="text-lg font-bold">{jobStatus.pages_crawled}</p>
+          </div>
+          <div>
+            <div className="flex items-center justify-center gap-1 text-muted-foreground">
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              <span className="text-xs">Indexed</span>
+            </div>
+            <p className="text-lg font-bold">{jobStatus.pages_indexed}</p>
+          </div>
+          <div>
+            <div className="flex items-center justify-center gap-1 text-muted-foreground">
+              <AlertCircle className="h-3.5 w-3.5" />
+              <span className="text-xs">Errors</span>
+            </div>
+            <p className={`text-lg font-bold ${jobStatus.errors > 0 ? "text-destructive" : ""}`}>
+              {jobStatus.errors}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Status badge */}
+      <Badge variant={isRunning ? "secondary" : isCompleted ? "default" : isFailed ? "destructive" : "outline"}>
+        {isRunning && (
+          <span className="relative mr-1.5 flex h-2 w-2">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-current opacity-75" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-current" />
+          </span>
+        )}
+        {jobStatus?.status ?? result.status}
+      </Badge>
+
+      {/* View full details link */}
+      <Button variant="outline" size="sm" asChild>
+        <Link href={`/jobs/${result.job_id}`}>
+          View full details
+          <ArrowRight className="ml-2 h-3.5 w-3.5" />
+        </Link>
+      </Button>
     </div>
   );
 }
@@ -383,16 +475,19 @@ function MetaRow({
   return (
     <div className={small ? "flex gap-2 items-baseline" : "space-y-0.5"}>
       <p
-        className={`text-xs text-muted-foreground ${
+        className={cn(
+          "text-xs text-muted-foreground",
           small ? "shrink-0 w-24" : "uppercase tracking-wide font-medium"
-        }`}
+        )}
       >
         {label}
       </p>
       <p
-        className={`text-sm ${mono ? "font-mono" : ""} ${
-          small ? "text-xs truncate" : ""
-        }`}
+        className={cn(
+          "text-sm",
+          mono && "font-mono",
+          small && "text-xs truncate"
+        )}
       >
         {value}
       </p>

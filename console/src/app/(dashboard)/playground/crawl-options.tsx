@@ -296,13 +296,15 @@ function PatternList({
               className="gap-1 pl-2 pr-1 py-0.5 font-mono text-xs"
             >
               {item}
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon"
+                className="ml-0.5 h-4 w-4 rounded-full p-0 hover:bg-muted-foreground/20"
                 onClick={() => removeItem(i)}
-                className="ml-0.5 rounded-full p-0.5 hover:bg-muted-foreground/20 transition-colors"
               >
                 <X className="h-3 w-3" />
-              </button>
+              </Button>
             </Badge>
           ))}
         </div>
@@ -398,13 +400,15 @@ function KeyValueList({
               <span className="text-xs font-mono text-muted-foreground flex-1 truncate">
                 {v}
               </span>
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon"
+                className="h-4 w-4 rounded-full p-0 hover:bg-muted-foreground/20 shrink-0"
                 onClick={() => removeEntry(k)}
-                className="rounded-full p-0.5 hover:bg-muted-foreground/20 transition-colors shrink-0"
               >
                 <X className="h-3 w-3" />
-              </button>
+              </Button>
             </div>
           ))}
         </div>
@@ -493,13 +497,15 @@ function SchemaTypePicker({
               className="gap-1 pl-2 pr-1 py-0.5 text-xs"
             >
               {type}
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon"
+                className="ml-0.5 h-4 w-4 rounded-full p-0 hover:bg-muted-foreground/20"
                 onClick={() => removeType(type)}
-                className="ml-0.5 rounded-full p-0.5 hover:bg-muted-foreground/20 transition-colors"
               >
                 <X className="h-3 w-3" />
-              </button>
+              </Button>
             </Badge>
           ))}
         </div>

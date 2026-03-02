@@ -11,6 +11,7 @@ import {
   CardTitle,
   CardDescription,
 } from "@/components/ui/card";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -159,16 +160,14 @@ export default function ConfigDetailPage() {
 
   if (error || !config) {
     return (
-      <Card className="border-destructive">
-        <CardContent className="py-4 flex items-center gap-3">
-          <AlertCircle className="h-5 w-5 text-destructive" />
-          <p className="text-sm text-destructive">
-            {error instanceof Error
-              ? error.message
-              : "Config not found"}
-          </p>
-        </CardContent>
-      </Card>
+      <Alert variant="destructive">
+        <AlertCircle className="h-4 w-4" />
+        <AlertDescription>
+          {error instanceof Error
+            ? error.message
+            : "Config not found"}
+        </AlertDescription>
+      </Alert>
     );
   }
 

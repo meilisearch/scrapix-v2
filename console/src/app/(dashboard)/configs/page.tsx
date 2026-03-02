@@ -9,6 +9,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Table,
   TableBody,
@@ -31,7 +32,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   Trash2,
   ExternalLink,
@@ -43,6 +43,8 @@ import {
   Clock,
   Settings2,
 } from "lucide-react";
+import { TableSkeleton } from "@/components/table-skeleton";
+import { EmptyState } from "@/components/empty-state";
 import {
   fetchConfigs,
   createConfig,
@@ -52,6 +54,11 @@ import {
 import type { SavedConfig } from "@/lib/api-types";
 import { formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 export default function ConfigsPage() {
@@ -138,15 +145,13 @@ export default function ConfigsPage() {
       </div>
 
       {error && (
-        <Card className="border-destructive">
-          <CardContent className="py-4 flex items-center gap-3">
-            <AlertCircle className="h-5 w-5 text-destructive" />
-            <p className="text-sm text-destructive">
-              Could not load configs:{" "}
-              {error instanceof Error ? error.message : "Unknown error"}
-            </p>
-          </CardContent>
-        </Card>
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>
+            Could not load configs:{" "}
+            {error instanceof Error ? error.message : "Unknown error"}
+          </AlertDescription>
+        </Alert>
       )}
 
       <Card>
@@ -193,21 +198,12 @@ export default function ConfigsPage() {
           )}
 
           {isLoading ? (
-            <div className="space-y-3">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <div key={i} className="flex items-center gap-4 py-2">
-                  <Skeleton className="h-4 w-32" />
-                  <Skeleton className="h-5 w-16 rounded-full" />
-                  <Skeleton className="h-4 w-24" />
-                  <Skeleton className="h-4 w-20 ml-auto" />
-                </div>
-              ))}
-            </div>
+            <TableSkeleton />
           ) : filteredConfigs.length === 0 ? (
-            <div className="text-center py-12">
-              {configs.length === 0 ? (
-                <div className="space-y-3">
-                  <p className="text-muted-foreground">No saved configs yet</p>
+            configs.length === 0 ? (
+              <EmptyState
+                message="No saved configs yet"
+                action={
                   <Button
                     variant="outline"
                     onClick={() => setShowCreate(true)}
@@ -215,13 +211,11 @@ export default function ConfigsPage() {
                     <Plus className="h-4 w-4 mr-2" />
                     Create your first config
                   </Button>
-                </div>
-              ) : (
-                <p className="text-muted-foreground">
-                  No matching configs found.
-                </p>
-              )}
-            </div>
+                }
+              />
+            ) : (
+              <EmptyState message="No matching configs found." />
+            )
           ) : (
             <Table>
               <TableHeader>
@@ -277,16 +271,19 @@ export default function ConfigsPage() {
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground hidden md:table-cell">
                       {config.last_run_at ? (
-                        <span
-                          title={new Date(
-                            config.last_run_at
-                          ).toLocaleString()}
-                        >
-                          {formatDistanceToNow(
-                            new Date(config.last_run_at),
-                            { addSuffix: true }
-                          )}
-                        </span>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span>
+                              {formatDistanceToNow(
+                                new Date(config.last_run_at),
+                                { addSuffix: true }
+                              )}
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {new Date(config.last_run_at).toLocaleString()}
+                          </TooltipContent>
+                        </Tooltip>
                       ) : (
                         "Never"
                       )}
@@ -298,20 +295,24 @@ export default function ConfigsPage() {
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleTrigger(config)}
-                          disabled={triggerLoading === config.id}
-                          title="Trigger crawl"
-                        >
-                          <Play
-                            className={cn(
-                              "h-4 w-4",
-                              triggerLoading === config.id && "animate-pulse"
-                            )}
-                          />
-                        </Button>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleTrigger(config)}
+                              disabled={triggerLoading === config.id}
+                            >
+                              <Play
+                                className={cn(
+                                  "h-4 w-4",
+                                  triggerLoading === config.id && "animate-pulse"
+                                )}
+                              />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Trigger crawl</TooltipContent>
+                        </Tooltip>
                         <Button variant="ghost" size="icon" asChild>
                           <Link href={`/configs/${config.id}`}>
                             <ExternalLink className="h-4 w-4" />

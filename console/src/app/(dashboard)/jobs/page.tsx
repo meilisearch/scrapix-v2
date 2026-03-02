@@ -9,6 +9,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Table,
   TableBody,
@@ -30,7 +31,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
-import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
 import {
   Trash2,
   ExternalLink,
@@ -38,13 +45,18 @@ import {
   RefreshCw,
   Search,
   Plus,
-  ChevronLeft,
-  ChevronRight,
 } from "lucide-react";
+import { TableSkeleton } from "@/components/table-skeleton";
+import { EmptyState } from "@/components/empty-state";
 import { fetchJobs, deleteJob } from "@/lib/api";
 import type { Job } from "@/lib/api-types";
 import { formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 const statusVariant: Record<
@@ -185,15 +197,13 @@ export default function JobsPage() {
       </div>
 
       {error && (
-        <Card className="border-destructive">
-          <CardContent className="py-4 flex items-center gap-3">
-            <AlertCircle className="h-5 w-5 text-destructive" />
-            <p className="text-sm text-destructive">
-              Could not reach the Scrapix API:{" "}
-              {error instanceof Error ? error.message : "Unknown error"}
-            </p>
-          </CardContent>
-        </Card>
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>
+            Could not reach the Scrapix API:{" "}
+            {error instanceof Error ? error.message : "Unknown error"}
+          </AlertDescription>
+        </Alert>
       )}
 
       <Card>
@@ -271,34 +281,23 @@ export default function JobsPage() {
           )}
 
           {isLoading ? (
-            <div className="space-y-3">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <div key={i} className="flex items-center gap-4 py-2">
-                  <Skeleton className="h-4 w-32" />
-                  <Skeleton className="h-5 w-16 rounded-full" />
-                  <Skeleton className="h-4 w-24" />
-                  <Skeleton className="h-4 w-20 ml-auto" />
-                </div>
-              ))}
-            </div>
+            <TableSkeleton />
           ) : filteredJobs.length === 0 ? (
-            <div className="text-center py-12">
-              {jobs.length === 0 ? (
-                <div className="space-y-3">
-                  <p className="text-muted-foreground">No jobs yet</p>
+            jobs.length === 0 ? (
+              <EmptyState
+                message="No jobs yet"
+                action={
                   <Button asChild variant="outline">
                     <Link href="/playground">
                       <Plus className="h-4 w-4 mr-2" />
                       Start your first crawl
                     </Link>
                   </Button>
-                </div>
-              ) : (
-                <p className="text-muted-foreground">
-                  No matching jobs found.
-                </p>
-              )}
-            </div>
+                }
+              />
+            ) : (
+              <EmptyState message="No matching jobs found." />
+            )
           ) : (
             <>
               <Table>
@@ -392,13 +391,18 @@ export default function JobsPage() {
                         </TableCell>
                         <TableCell className="text-sm text-muted-foreground hidden sm:table-cell">
                           {job.started_at ? (
-                            <span
-                              title={new Date(job.started_at).toLocaleString()}
-                            >
-                              {formatDistanceToNow(new Date(job.started_at), {
-                                addSuffix: true,
-                              })}
-                            </span>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span>
+                                  {formatDistanceToNow(new Date(job.started_at), {
+                                    addSuffix: true,
+                                  })}
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                {new Date(job.started_at).toLocaleString()}
+                              </TooltipContent>
+                            </Tooltip>
                           ) : (
                             "—"
                           )}
@@ -433,29 +437,34 @@ export default function JobsPage() {
                     {Math.min((safePage + 1) * PAGE_SIZE, filteredJobs.length)}{" "}
                     of {filteredJobs.length}
                   </p>
-                  <div className="flex items-center gap-1">
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      className="h-8 w-8"
-                      disabled={safePage === 0}
-                      onClick={() => setPage(safePage - 1)}
-                    >
-                      <ChevronLeft className="h-4 w-4" />
-                    </Button>
-                    <span className="text-sm text-muted-foreground px-2">
-                      {safePage + 1} / {totalPages}
-                    </span>
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      className="h-8 w-8"
-                      disabled={safePage >= totalPages - 1}
-                      onClick={() => setPage(safePage + 1)}
-                    >
-                      <ChevronRight className="h-4 w-4" />
-                    </Button>
-                  </div>
+                  <Pagination className="mx-0 w-auto">
+                    <PaginationContent>
+                      <PaginationItem>
+                        <PaginationPrevious
+                          onClick={() => setPage(safePage - 1)}
+                          aria-disabled={safePage === 0}
+                          className={cn(
+                            safePage === 0 && "pointer-events-none opacity-50"
+                          )}
+                        />
+                      </PaginationItem>
+                      <PaginationItem>
+                        <span className="text-sm text-muted-foreground px-2">
+                          {safePage + 1} / {totalPages}
+                        </span>
+                      </PaginationItem>
+                      <PaginationItem>
+                        <PaginationNext
+                          onClick={() => setPage(safePage + 1)}
+                          aria-disabled={safePage >= totalPages - 1}
+                          className={cn(
+                            safePage >= totalPages - 1 &&
+                              "pointer-events-none opacity-50"
+                          )}
+                        />
+                      </PaginationItem>
+                    </PaginationContent>
+                  </Pagination>
                 </div>
               )}
             </>

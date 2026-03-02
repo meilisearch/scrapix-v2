@@ -11,6 +11,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -137,17 +138,15 @@ export default function DashboardPage() {
       </div>
 
       {statsError && (
-        <Card className="border-destructive">
-          <CardContent className="py-4 flex items-center gap-3">
-            <AlertCircle className="h-5 w-5 text-destructive" />
-            <p className="text-sm text-destructive">
-              Could not reach the Scrapix API:{" "}
-              {statsError instanceof Error
-                ? statsError.message
-                : "Unknown error"}
-            </p>
-          </CardContent>
-        </Card>
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>
+            Could not reach the Scrapix API:{" "}
+            {statsError instanceof Error
+              ? statsError.message
+              : "Unknown error"}
+          </AlertDescription>
+        </Alert>
       )}
 
       {/* Stats Grid */}

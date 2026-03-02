@@ -8,6 +8,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Table,
   TableBody,
@@ -46,6 +47,8 @@ import {
   ChevronRight,
   Database,
 } from "lucide-react";
+import { TableSkeleton } from "@/components/table-skeleton";
+import { EmptyState } from "@/components/empty-state";
 import {
   fetchEngines,
   createEngine,
@@ -60,6 +63,11 @@ import type {
 } from "@/lib/api-types";
 import { formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 export default function EnginesPage() {
@@ -134,15 +142,13 @@ export default function EnginesPage() {
       </div>
 
       {error && (
-        <Card className="border-destructive">
-          <CardContent className="py-4 flex items-center gap-3">
-            <AlertCircle className="h-5 w-5 text-destructive" />
-            <p className="text-sm text-destructive">
-              Could not load engines:{" "}
-              {error instanceof Error ? error.message : "Unknown error"}
-            </p>
-          </CardContent>
-        </Card>
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>
+            Could not load engines:{" "}
+            {error instanceof Error ? error.message : "Unknown error"}
+          </AlertDescription>
+        </Alert>
       )}
 
       <Card>
@@ -189,21 +195,15 @@ export default function EnginesPage() {
           )}
 
           {isLoading ? (
-            <div className="space-y-3">
-              {Array.from({ length: 3 }).map((_, i) => (
-                <div key={i} className="flex items-center gap-4 py-2">
-                  <Skeleton className="h-4 w-32" />
-                  <Skeleton className="h-4 w-48" />
-                  <Skeleton className="h-5 w-16 rounded-full" />
-                  <Skeleton className="h-4 w-20 ml-auto" />
-                </div>
-              ))}
-            </div>
+            <TableSkeleton
+              rows={3}
+              columns={["h-4 w-32", "h-4 w-48", "h-5 w-16 rounded-full", "h-4 w-20 ml-auto"]}
+            />
           ) : filteredEngines.length === 0 ? (
-            <div className="text-center py-12">
-              {engines.length === 0 ? (
-                <div className="space-y-3">
-                  <p className="text-muted-foreground">No engines saved yet</p>
+            engines.length === 0 ? (
+              <EmptyState
+                message="No engines saved yet"
+                action={
                   <Button
                     variant="outline"
                     onClick={() => setShowCreate(true)}
@@ -211,13 +211,11 @@ export default function EnginesPage() {
                     <Plus className="h-4 w-4 mr-2" />
                     Add your first engine
                   </Button>
-                </div>
-              ) : (
-                <p className="text-muted-foreground">
-                  No matching engines found.
-                </p>
-              )}
-            </div>
+                }
+              />
+            ) : (
+              <EmptyState message="No matching engines found." />
+            )
           ) : (
             <Table>
               <TableHeader>
@@ -351,23 +349,31 @@ function EngineRow({
         <TableCell>
           <div className="flex items-center gap-1">
             {!engine.is_default && (
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={onSetDefault}
-                title="Set as default"
-              >
-                <Star className="h-4 w-4" />
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={onSetDefault}
+                  >
+                    <Star className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Set as default</TooltipContent>
+              </Tooltip>
             )}
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={onEdit}
-              title="Edit"
-            >
-              <Pencil className="h-4 w-4" />
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={onEdit}
+                >
+                  <Pencil className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Edit</TooltipContent>
+            </Tooltip>
             <Button
               variant="ghost"
               size="icon"

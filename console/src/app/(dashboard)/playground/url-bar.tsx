@@ -3,8 +3,8 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Loader2, Play, Globe, Layers } from "lucide-react";
-import { cn } from "@/lib/utils";
 
 interface UrlBarProps {
   mode: "scrape" | "crawl";
@@ -27,32 +27,30 @@ export function UrlBar({
     <div className="flex flex-col gap-2">
       <div className="flex items-start gap-2 rounded-lg border bg-card p-2">
         {/* Segmented mode toggle */}
-        <div className="flex shrink-0 rounded-md border bg-muted p-0.5">
-          <button
-            onClick={() => onModeChange("scrape")}
-            className={cn(
-              "flex items-center gap-1.5 rounded-sm px-3 py-1.5 text-sm font-medium transition-colors",
-              mode === "scrape"
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
-            )}
+        <ToggleGroup
+          type="single"
+          variant="outline"
+          value={mode}
+          onValueChange={(v) => {
+            if (v) onModeChange(v as "scrape" | "crawl");
+          }}
+          className="shrink-0"
+        >
+          <ToggleGroupItem
+            value="scrape"
+            className="gap-1.5 px-3 data-[state=on]:bg-background data-[state=on]:text-foreground"
           >
             <Globe className="h-3.5 w-3.5" />
             Scrape
-          </button>
-          <button
-            onClick={() => onModeChange("crawl")}
-            className={cn(
-              "flex items-center gap-1.5 rounded-sm px-3 py-1.5 text-sm font-medium transition-colors",
-              mode === "crawl"
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
-            )}
+          </ToggleGroupItem>
+          <ToggleGroupItem
+            value="crawl"
+            className="gap-1.5 px-3 data-[state=on]:bg-background data-[state=on]:text-foreground"
           >
             <Layers className="h-3.5 w-3.5" />
             Crawl
-          </button>
-        </div>
+          </ToggleGroupItem>
+        </ToggleGroup>
 
         {mode === "scrape" ? (
           <Input
