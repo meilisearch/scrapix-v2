@@ -1,0 +1,612 @@
+"use client";
+
+import { useState, useMemo, useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
+  Trash2,
+  AlertCircle,
+  RefreshCw,
+  Search,
+  Plus,
+  Star,
+  Pencil,
+  ChevronRight,
+  Database,
+} from "lucide-react";
+import {
+  fetchEngines,
+  createEngine,
+  updateEngine,
+  deleteEngine,
+  setDefaultEngine,
+  fetchEngineIndexes,
+} from "@/lib/api";
+import type {
+  MeilisearchEngine,
+  MeilisearchIndex,
+} from "@/lib/api-types";
+import { formatDistanceToNow } from "date-fns";
+import { toast } from "sonner";
+import { cn } from "@/lib/utils";
+
+export default function EnginesPage() {
+  const queryClient = useQueryClient();
+  const [search, setSearch] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<MeilisearchEngine | null>(null);
+  const [editTarget, setEditTarget] = useState<MeilisearchEngine | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
+
+  const {
+    data: engines = [],
+    isLoading,
+    isFetching,
+    error,
+    dataUpdatedAt,
+  } = useQuery({
+    queryKey: ["engines"],
+    queryFn: fetchEngines,
+    refetchInterval: 30_000,
+  });
+
+  const handleManualRefresh = () => {
+    queryClient.invalidateQueries({ queryKey: ["engines"] });
+  };
+
+  const filteredEngines = useMemo(() => {
+    if (!search.trim()) return engines;
+    const q = search.toLowerCase();
+    return engines.filter(
+      (e) =>
+        e.name.toLowerCase().includes(q) ||
+        e.url.toLowerCase().includes(q)
+    );
+  }, [engines, search]);
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    try {
+      await deleteEngine(deleteTarget.id);
+      queryClient.invalidateQueries({ queryKey: ["engines"] });
+      toast.success("Engine deleted");
+    } catch {
+      toast.error("Failed to delete engine");
+    } finally {
+      setDeleteTarget(null);
+    }
+  };
+
+  const handleSetDefault = async (engine: MeilisearchEngine) => {
+    try {
+      await setDefaultEngine(engine.id);
+      queryClient.invalidateQueries({ queryKey: ["engines"] });
+      toast.success(`${engine.name} set as default`);
+    } catch {
+      toast.error("Failed to set default engine");
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold tracking-tight">Engines</h2>
+          <p className="text-muted-foreground">
+            Saved Meilisearch instances for crawl indexing
+          </p>
+        </div>
+        <Button onClick={() => setShowCreate(true)}>
+          <Plus className="h-4 w-4 mr-2" />
+          Add Engine
+        </Button>
+      </div>
+
+      {error && (
+        <Card className="border-destructive">
+          <CardContent className="py-4 flex items-center gap-3">
+            <AlertCircle className="h-5 w-5 text-destructive" />
+            <p className="text-sm text-destructive">
+              Could not load engines:{" "}
+              {error instanceof Error ? error.message : "Unknown error"}
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <CardTitle>Meilisearch Engines</CardTitle>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              {dataUpdatedAt > 0 && (
+                <span>
+                  Updated{" "}
+                  {formatDistanceToNow(new Date(dataUpdatedAt), {
+                    addSuffix: true,
+                  })}
+                </span>
+              )}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                onClick={handleManualRefresh}
+                disabled={isFetching}
+              >
+                <RefreshCw
+                  className={cn(
+                    "h-3.5 w-3.5",
+                    isFetching && "animate-spin"
+                  )}
+                />
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {!isLoading && engines.length > 0 && (
+            <div className="relative sm:ml-auto sm:w-fit">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search engines..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pl-9 h-9 w-full sm:w-[200px]"
+              />
+            </div>
+          )}
+
+          {isLoading ? (
+            <div className="space-y-3">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} className="flex items-center gap-4 py-2">
+                  <Skeleton className="h-4 w-32" />
+                  <Skeleton className="h-4 w-48" />
+                  <Skeleton className="h-5 w-16 rounded-full" />
+                  <Skeleton className="h-4 w-20 ml-auto" />
+                </div>
+              ))}
+            </div>
+          ) : filteredEngines.length === 0 ? (
+            <div className="text-center py-12">
+              {engines.length === 0 ? (
+                <div className="space-y-3">
+                  <p className="text-muted-foreground">No engines saved yet</p>
+                  <Button
+                    variant="outline"
+                    onClick={() => setShowCreate(true)}
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Add your first engine
+                  </Button>
+                </div>
+              ) : (
+                <p className="text-muted-foreground">
+                  No matching engines found.
+                </p>
+              )}
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-8" />
+                  <TableHead>Name</TableHead>
+                  <TableHead>URL</TableHead>
+                  <TableHead className="hidden sm:table-cell">Created</TableHead>
+                  <TableHead className="w-[140px]" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredEngines.map((engine) => (
+                  <EngineRow
+                    key={engine.id}
+                    engine={engine}
+                    onEdit={() => setEditTarget(engine)}
+                    onDelete={() => setDeleteTarget(engine)}
+                    onSetDefault={() => handleSetDefault(engine)}
+                  />
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Delete confirmation dialog */}
+      <Dialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Engine</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete{" "}
+              <span className="font-medium">{deleteTarget?.name}</span>? This
+              action is permanent.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDelete}>
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Create engine dialog */}
+      <EngineFormDialog
+        open={showCreate}
+        onOpenChange={setShowCreate}
+        onSaved={() => {
+          queryClient.invalidateQueries({ queryKey: ["engines"] });
+        }}
+      />
+
+      {/* Edit engine dialog */}
+      <EngineFormDialog
+        open={editTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setEditTarget(null);
+        }}
+        engine={editTarget ?? undefined}
+        onSaved={() => {
+          queryClient.invalidateQueries({ queryKey: ["engines"] });
+          setEditTarget(null);
+        }}
+      />
+    </div>
+  );
+}
+
+function EngineRow({
+  engine,
+  onEdit,
+  onDelete,
+  onSetDefault,
+}: {
+  engine: MeilisearchEngine;
+  onEdit: () => void;
+  onDelete: () => void;
+  onSetDefault: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <>
+      <TableRow>
+        <TableCell className="px-2">
+          <Collapsible open={open} onOpenChange={setOpen}>
+            <CollapsibleTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-7 w-7">
+                <ChevronRight
+                  className={cn(
+                    "h-4 w-4 transition-transform",
+                    open && "rotate-90"
+                  )}
+                />
+              </Button>
+            </CollapsibleTrigger>
+          </Collapsible>
+        </TableCell>
+        <TableCell>
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-sm">{engine.name}</span>
+            {engine.is_default && (
+              <Badge variant="default" className="gap-1 text-xs">
+                <Star className="h-3 w-3" />
+                Default
+              </Badge>
+            )}
+          </div>
+        </TableCell>
+        <TableCell>
+          <span className="text-sm font-mono text-muted-foreground">
+            {engine.url}
+          </span>
+        </TableCell>
+        <TableCell className="text-sm text-muted-foreground hidden sm:table-cell">
+          {formatDistanceToNow(new Date(engine.created_at), {
+            addSuffix: true,
+          })}
+        </TableCell>
+        <TableCell>
+          <div className="flex items-center gap-1">
+            {!engine.is_default && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={onSetDefault}
+                title="Set as default"
+              >
+                <Star className="h-4 w-4" />
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onEdit}
+              title="Edit"
+            >
+              <Pencil className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onDelete}
+            >
+              <Trash2 className="h-4 w-4 text-destructive" />
+            </Button>
+          </div>
+        </TableCell>
+      </TableRow>
+      {open && (
+        <TableRow>
+          <TableCell colSpan={5} className="p-0">
+            <IndexList engineId={engine.id} />
+          </TableCell>
+        </TableRow>
+      )}
+    </>
+  );
+}
+
+function IndexList({ engineId }: { engineId: string }) {
+  const { data: indexes, isLoading, error } = useQuery({
+    queryKey: ["engine-indexes", engineId],
+    queryFn: () => fetchEngineIndexes(engineId),
+  });
+
+  if (isLoading) {
+    return (
+      <div className="px-8 py-4 space-y-2">
+        <Skeleton className="h-4 w-48" />
+        <Skeleton className="h-4 w-36" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="px-8 py-4 flex items-center gap-2 text-sm text-destructive">
+        <AlertCircle className="h-4 w-4" />
+        {error instanceof Error ? error.message : "Failed to fetch indexes"}
+      </div>
+    );
+  }
+
+  if (!indexes || indexes.length === 0) {
+    return (
+      <div className="px-8 py-4 text-sm text-muted-foreground">
+        No indexes found on this engine.
+      </div>
+    );
+  }
+
+  return (
+    <div className="px-8 py-3">
+      <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium mb-2">
+        Indexes ({indexes.length})
+      </p>
+      <div className="space-y-1.5">
+        {indexes.map((idx) => (
+          <div
+            key={idx.uid}
+            className="flex items-center gap-3 rounded-md bg-muted/50 px-3 py-2"
+          >
+            <Database className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="text-sm font-mono font-medium">{idx.uid}</span>
+            {idx.primaryKey && (
+              <span className="text-xs text-muted-foreground">
+                pk: {idx.primaryKey}
+              </span>
+            )}
+            <span className="text-xs text-muted-foreground ml-auto">
+              Updated{" "}
+              {formatDistanceToNow(new Date(idx.updatedAt), {
+                addSuffix: true,
+              })}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function EngineFormDialog({
+  open,
+  onOpenChange,
+  engine,
+  onSaved,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  engine?: MeilisearchEngine;
+  onSaved: () => void;
+}) {
+  const isEdit = !!engine;
+  const [name, setName] = useState(engine?.name ?? "");
+  const [url, setUrl] = useState(engine?.url ?? "");
+  const [apiKey, setApiKey] = useState(engine?.api_key ?? "");
+  const [isDefault, setIsDefault] = useState(engine?.is_default ?? false);
+  const [submitting, setSubmitting] = useState(false);
+
+  const engineId = engine?.id;
+
+  // Reset form when engine changes
+  useEffect(() => {
+    setName(engine?.name ?? "");
+    setUrl(engine?.url ?? "");
+    setApiKey(engine?.api_key ?? "");
+    setIsDefault(engine?.is_default ?? false);
+  }, [engine]);
+
+  const handleSubmit = async () => {
+    if (!name.trim()) {
+      toast.error("Name is required");
+      return;
+    }
+    if (!url.trim()) {
+      toast.error("URL is required");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      if (isEdit && engineId) {
+        await updateEngine(engineId, {
+          name: name.trim(),
+          url: url.trim(),
+          api_key: apiKey,
+        });
+        toast.success("Engine updated");
+      } else {
+        await createEngine({
+          name: name.trim(),
+          url: url.trim(),
+          api_key: apiKey || undefined,
+          is_default: isDefault || undefined,
+        });
+        toast.success("Engine created");
+      }
+      onSaved();
+      onOpenChange(false);
+      if (!isEdit) {
+        setName("");
+        setUrl("");
+        setApiKey("");
+        setIsDefault(false);
+      }
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : `Failed to ${isEdit ? "update" : "create"} engine`
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Database className="h-5 w-5" />
+            {isEdit ? "Edit Engine" : "Add Engine"}
+          </DialogTitle>
+          <DialogDescription>
+            {isEdit
+              ? "Update the Meilisearch engine connection details."
+              : "Save a Meilisearch instance for reuse in crawl configurations."}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="engine-name">Name</Label>
+            <Input
+              id="engine-name"
+              placeholder="Production Meilisearch"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="engine-url">URL</Label>
+            <Input
+              id="engine-url"
+              placeholder="http://localhost:7700"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              className="font-mono text-sm"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="engine-key">API Key (optional)</Label>
+            <Input
+              id="engine-key"
+              placeholder="masterKey"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              className="font-mono text-sm"
+            />
+          </div>
+
+          {!isEdit && (
+            <div className="flex items-center justify-between rounded-lg border p-3">
+              <div>
+                <Label htmlFor="engine-default" className="text-sm font-medium">
+                  Set as default
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Auto-selected in the playground crawl form
+                </p>
+              </div>
+              <Switch
+                id="engine-default"
+                checked={isDefault}
+                onCheckedChange={setIsDefault}
+              />
+            </div>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={handleSubmit} disabled={submitting}>
+            {submitting
+              ? isEdit
+                ? "Saving..."
+                : "Creating..."
+              : isEdit
+                ? "Save Changes"
+                : "Add Engine"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}

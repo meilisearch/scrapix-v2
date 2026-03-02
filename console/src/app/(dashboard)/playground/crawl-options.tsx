@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,6 +33,8 @@ import {
 } from "@/components/ui/command";
 import { Globe, Monitor, Plus, X, ChevronsUpDown, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { fetchEngines } from "@/lib/api";
+import type { MeilisearchEngine } from "@/lib/api-types";
 
 const OPENAI_CHAT_MODELS = [
   { value: "gpt-4o", label: "GPT-4o" },
@@ -123,6 +126,7 @@ export interface CrawlState {
   user_agents: string;
   proxy_urls: string;
   proxy_rotation: "round_robin" | "random" | "least_used";
+  meilisearch_engine_id: string;
   meilisearch_url: string;
   meilisearch_api_key: string;
   meilisearch_primary_key: string;
@@ -169,6 +173,7 @@ export const defaultCrawlState: CrawlState = {
   user_agents: "",
   proxy_urls: "",
   proxy_rotation: "round_robin",
+  meilisearch_engine_id: "",
   meilisearch_url: "http://localhost:7700",
   meilisearch_api_key: "masterKey",
   meilisearch_primary_key: "",
@@ -1055,30 +1060,7 @@ export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
               </p>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="ms-url" className="text-sm font-medium">
-                  URL
-                </Label>
-                <Input
-                  id="ms-url"
-                  value={state.meilisearch_url}
-                  onChange={(e) => set("meilisearch_url", e.target.value)}
-                  className="font-mono text-xs"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="ms-key" className="text-sm font-medium">
-                  API Key
-                </Label>
-                <Input
-                  id="ms-key"
-                  value={state.meilisearch_api_key}
-                  onChange={(e) => set("meilisearch_api_key", e.target.value)}
-                  className="font-mono text-xs"
-                />
-              </div>
-            </div>
+            <MeilisearchEngineSelector state={state} onChange={onChange} />
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
@@ -1116,5 +1098,112 @@ export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
         </ScrollArea>
       </TabsContent>
     </Tabs>
+  );
+}
+
+function MeilisearchEngineSelector({
+  state,
+  onChange,
+}: {
+  state: CrawlState;
+  onChange: (state: CrawlState) => void;
+}) {
+  const { data: engines = [] } = useQuery({
+    queryKey: ["engines"],
+    queryFn: fetchEngines,
+    staleTime: 60_000,
+  });
+
+  // Auto-select default engine on first load
+  const [initialized, setInitialized] = useState(false);
+  useEffect(() => {
+    if (initialized || engines.length === 0) return;
+    setInitialized(true);
+    const defaultEngine = engines.find((e) => e.is_default);
+    if (defaultEngine && !state.meilisearch_engine_id) {
+      onChange({
+        ...state,
+        meilisearch_engine_id: defaultEngine.id,
+        meilisearch_url: defaultEngine.url,
+        meilisearch_api_key: defaultEngine.api_key,
+      });
+    }
+  }, [engines, initialized, state, onChange]);
+
+  const isCustom = state.meilisearch_engine_id === "" || state.meilisearch_engine_id === "custom";
+
+  const handleEngineChange = (value: string) => {
+    if (value === "custom") {
+      onChange({
+        ...state,
+        meilisearch_engine_id: "",
+        meilisearch_url: "http://localhost:7700",
+        meilisearch_api_key: "masterKey",
+      });
+      return;
+    }
+    const engine = engines.find((e) => e.id === value);
+    if (engine) {
+      onChange({
+        ...state,
+        meilisearch_engine_id: engine.id,
+        meilisearch_url: engine.url,
+        meilisearch_api_key: engine.api_key,
+      });
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      {engines.length > 0 && (
+        <div className="space-y-1.5">
+          <Label className="text-sm font-medium">Engine</Label>
+          <Select
+            value={isCustom ? "custom" : state.meilisearch_engine_id}
+            onValueChange={handleEngineChange}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="Select an engine..." />
+            </SelectTrigger>
+            <SelectContent>
+              {engines.map((engine) => (
+                <SelectItem key={engine.id} value={engine.id}>
+                  {engine.name}
+                  {engine.is_default ? " (default)" : ""}
+                </SelectItem>
+              ))}
+              <SelectItem value="custom">Custom</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1.5">
+          <Label htmlFor="ms-url" className="text-sm font-medium">
+            URL
+          </Label>
+          <Input
+            id="ms-url"
+            value={state.meilisearch_url}
+            onChange={(e) => onChange({ ...state, meilisearch_url: e.target.value })}
+            className="font-mono text-xs"
+            readOnly={!isCustom}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="ms-key" className="text-sm font-medium">
+            API Key
+          </Label>
+          <Input
+            id="ms-key"
+            value={state.meilisearch_api_key}
+            onChange={(e) => onChange({ ...state, meilisearch_api_key: e.target.value })}
+            className="font-mono text-xs"
+            readOnly={!isCustom}
+          />
+        </div>
+      </div>
+    </div>
   );
 }

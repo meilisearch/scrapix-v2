@@ -10,6 +10,10 @@ import type {
   CreateConfigRequest,
   UpdateConfigRequest,
   TriggerResponse,
+  MeilisearchEngine,
+  CreateEngineRequest,
+  UpdateEngineRequest,
+  MeilisearchIndex,
 } from "./api-types";
 
 // API calls go through Next.js rewrites (/api/scrapix/* → backend) to avoid CORS.
@@ -146,6 +150,51 @@ export async function triggerConfig(id: string): Promise<TriggerResponse> {
   return request(`/configs/${encodeURIComponent(id)}/trigger`, {
     method: "POST",
   });
+}
+
+// ============================================================================
+// Meilisearch Engines
+// ============================================================================
+
+export async function fetchEngines(): Promise<MeilisearchEngine[]> {
+  return request("/engines");
+}
+
+export async function fetchEngine(id: string): Promise<MeilisearchEngine> {
+  return request(`/engines/${encodeURIComponent(id)}`);
+}
+
+export async function createEngine(req: CreateEngineRequest): Promise<MeilisearchEngine> {
+  return request("/engines", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+}
+
+export async function updateEngine(id: string, req: UpdateEngineRequest): Promise<MeilisearchEngine> {
+  return request(`/engines/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+}
+
+export async function deleteEngine(id: string): Promise<void> {
+  await fetch(`${BASE}/engines/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+}
+
+export async function setDefaultEngine(id: string): Promise<MeilisearchEngine> {
+  return request(`/engines/${encodeURIComponent(id)}/default`, {
+    method: "POST",
+  });
+}
+
+export async function fetchEngineIndexes(id: string): Promise<MeilisearchIndex[]> {
+  return request(`/engines/${encodeURIComponent(id)}/indexes`);
 }
 
 /** WebSocket URL pointing directly at the backend (rewrites don't proxy WS). */

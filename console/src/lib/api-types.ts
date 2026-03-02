@@ -160,6 +160,38 @@ export interface ScrapeResult {
   metadata?: ScrapeMetadata;
 }
 
+// From GET /engines, POST /engines, etc.
+export interface MeilisearchEngine {
+  id: string;
+  account_id: string;
+  name: string;
+  url: string;
+  api_key: string;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateEngineRequest {
+  name: string;
+  url: string;
+  api_key?: string;
+  is_default?: boolean;
+}
+
+export interface UpdateEngineRequest {
+  name?: string;
+  url?: string;
+  api_key?: string;
+}
+
+export interface MeilisearchIndex {
+  uid: string;
+  primaryKey: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ScrapeMetadata {
   title?: string;
   description?: string;

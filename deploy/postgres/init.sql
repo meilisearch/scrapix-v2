@@ -171,3 +171,25 @@ CREATE INDEX idx_jobs_active ON jobs (job_id) WHERE status IN ('pending', 'runni
 
 CREATE TRIGGER trg_jobs_updated_at
     BEFORE UPDATE ON jobs FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- ============================================================================
+-- Meilisearch Engines (saved Meilisearch instances)
+-- ============================================================================
+
+CREATE TABLE meilisearch_engines (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id UUID NOT NULL REFERENCES accounts (id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL,
+    api_key TEXT NOT NULL DEFAULT '',
+    is_default BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (account_id, name)
+);
+
+CREATE INDEX idx_meilisearch_engines_account_id ON meilisearch_engines (account_id);
+
+CREATE TRIGGER trg_meilisearch_engines_updated_at
+    BEFORE UPDATE ON meilisearch_engines
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();

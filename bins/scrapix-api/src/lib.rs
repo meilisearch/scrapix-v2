@@ -42,6 +42,7 @@ use std::time::Duration;
 pub mod analytics;
 pub mod auth;
 pub mod configs;
+pub mod engines;
 pub mod jobs_db;
 
 use axum::{
@@ -3055,7 +3056,19 @@ pub async fn run_with_bus(
                     .patch(configs::update_config)
                     .delete(configs::delete_config),
             )
-            .route("/configs/{id}/trigger", post(configs::trigger_config));
+            .route("/configs/{id}/trigger", post(configs::trigger_config))
+            .route(
+                "/engines",
+                post(engines::create_engine).get(engines::list_engines),
+            )
+            .route(
+                "/engines/{id}",
+                get(engines::get_engine)
+                    .patch(engines::update_engine)
+                    .delete(engines::delete_engine),
+            )
+            .route("/engines/{id}/default", post(engines::set_default_engine))
+            .route("/engines/{id}/indexes", get(engines::list_engine_indexes));
     }
 
     // Apply auth middleware if configured (accepts API key or session cookie)
