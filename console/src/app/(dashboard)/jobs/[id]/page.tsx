@@ -45,8 +45,9 @@ import {
   ChevronDown,
   MoreVertical,
   Eraser,
+  RotateCw,
 } from "lucide-react";
-import { fetchJobStatus, deleteJob, wsUrl } from "@/lib/api";
+import { fetchJobStatus, deleteJob, createCrawl, wsUrl } from "@/lib/api";
 import type { JobStatus, WsServerMessage, CrawlEvent } from "@/lib/api-types";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
@@ -373,6 +374,18 @@ export default function JobDetailPage() {
     }
   };
 
+  const handleRetry = async () => {
+    if (!status?.config) return;
+    try {
+      const { job_id } = await createCrawl(status.config);
+      toast.success(`New job created: ${job_id.slice(0, 8)}...`);
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      router.push(`/jobs/${job_id}`);
+    } catch {
+      toast.error("Failed to retry job");
+    }
+  };
+
   const formatDuration = (seconds: number) => {
     if (seconds < 60) return `${seconds}s`;
     const m = Math.floor(seconds / 60);
@@ -531,6 +544,14 @@ export default function JobDetailPage() {
                 <DropdownMenuSeparator />
               </>
             )}
+            <DropdownMenuItem
+              disabled={isRunning || !status?.config}
+              onClick={handleRetry}
+            >
+              <RotateCw className="mr-2 h-4 w-4" />
+              Retry job
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
             <DropdownMenuItem
               className="text-destructive focus:text-destructive"
               onClick={() => setDeleteOpen(true)}
