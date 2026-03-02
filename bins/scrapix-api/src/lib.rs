@@ -2882,16 +2882,16 @@ pub async fn run_with_bus(
         None
     };
 
-    // Start idle-job completion detector (checks every 5s, completes jobs idle for 30s)
+    // Start idle-job completion detector (checks every 2s, completes jobs idle for 10s)
     let idle_state = state.clone();
     let mut idle_shutdown_rx = shutdown_rx.clone();
     let idle_handle = tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(5));
+        let mut interval = tokio::time::interval(Duration::from_secs(2));
         loop {
             tokio::select! {
                 _ = interval.tick() => {
                     let now = std::time::Instant::now();
-                    let idle_threshold = Duration::from_secs(30);
+                    let idle_threshold = Duration::from_secs(10);
 
                     // Find running jobs that have been idle
                     // Also extract swap metadata for atomic index swap
