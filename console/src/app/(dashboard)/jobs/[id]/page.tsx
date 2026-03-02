@@ -676,7 +676,7 @@ export default function JobDetailPage() {
                 <p className="font-mono text-sm mt-1">{status.index_uid}</p>
               </CardContent>
             </Card>
-            {progressPercent === null && status.max_pages == null && (
+            {progressPercent === null && status.max_pages == null ? (
               <Card>
                 <CardContent className="py-4">
                   <p className="text-sm text-muted-foreground">Pages</p>
@@ -692,37 +692,34 @@ export default function JobDetailPage() {
                   </p>
                 </CardContent>
               </Card>
-            )}
-          </div>
-
-          {/* Crawl Configuration */}
-          {status.config && (
-            <Collapsible>
-              <Card>
-                <CollapsibleTrigger asChild>
-                  <CardHeader className="group cursor-pointer select-none pb-3 hover:bg-muted/50 transition-colors">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Settings2 className="h-4 w-4 text-muted-foreground" />
-                        <CardTitle className="text-base">
-                          Configuration
-                        </CardTitle>
+            ) : status.config ? (
+              <Collapsible>
+                <Card>
+                  <CollapsibleTrigger asChild>
+                    <CardHeader className="group cursor-pointer select-none pb-3 hover:bg-muted/50 transition-colors">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Settings2 className="h-4 w-4 text-muted-foreground" />
+                          <CardTitle className="text-base">
+                            Configuration
+                          </CardTitle>
+                        </div>
+                        <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
                       </div>
-                      <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
-                    </div>
-                    <CardDescription>
-                      Crawl parameters used for this job
-                    </CardDescription>
-                  </CardHeader>
-                </CollapsibleTrigger>
-                <CollapsibleContent>
-                  <CardContent className="pt-0">
-                    <ConfigSummary config={status.config} />
-                  </CardContent>
-                </CollapsibleContent>
-              </Card>
-            </Collapsible>
-          )}
+                      <CardDescription>
+                        Crawl parameters used for this job
+                      </CardDescription>
+                    </CardHeader>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <CardContent className="pt-0">
+                      <ConfigSummary config={status.config} />
+                    </CardContent>
+                  </CollapsibleContent>
+                </Card>
+              </Collapsible>
+            ) : null}
+          </div>
         </>
       )}
 
