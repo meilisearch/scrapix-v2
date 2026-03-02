@@ -235,6 +235,96 @@ impl Default for CrawlEvent {
     }
 }
 
+/// A job lifecycle event record (all event types).
+#[derive(Debug, Clone, Serialize, Deserialize, Row)]
+pub struct JobEvent {
+    /// Event type (JobStarted, PageCrawled, etc.).
+    pub event_type: String,
+    /// Job ID.
+    pub job_id: String,
+    /// Account ID for billing attribution.
+    #[serde(default)]
+    pub account_id: String,
+    /// Index UID (for JobStarted).
+    #[serde(default)]
+    pub index_uid: String,
+    /// URL (for PageCrawled, PageFailed, DocumentIndexed, UrlsDiscovered, PageSkipped).
+    #[serde(default)]
+    pub url: String,
+    /// Domain (for PageCrawled, RateLimited).
+    #[serde(default)]
+    pub domain: String,
+    /// HTTP status code (for PageCrawled).
+    pub status_code: u16,
+    /// Duration in milliseconds (for PageCrawled).
+    pub duration_ms: u32,
+    /// Content length in bytes (for PageCrawled).
+    pub content_length: u64,
+    /// Error message (for PageFailed, JobFailed).
+    #[serde(default)]
+    pub error: String,
+    /// Document ID (for DocumentIndexed).
+    #[serde(default)]
+    pub document_id: String,
+    /// Source URL (for UrlsDiscovered).
+    #[serde(default)]
+    pub source_url: String,
+    /// Count (for UrlsDiscovered).
+    pub count: u32,
+    /// Reason (for PageSkipped).
+    #[serde(default)]
+    pub reason: String,
+    /// Wait time in ms (for RateLimited).
+    pub wait_ms: u64,
+    /// Retry count (for PageFailed).
+    pub retry_count: u32,
+    /// Pages crawled (for JobCompleted).
+    pub pages_crawled: u64,
+    /// Documents indexed (for JobCompleted).
+    pub documents_indexed: u64,
+    /// Error count (for JobCompleted).
+    pub errors: u64,
+    /// Bytes downloaded (for JobCompleted).
+    pub bytes_downloaded: u64,
+    /// Duration in seconds (for JobCompleted).
+    pub duration_secs: u64,
+    /// Start URLs (for JobStarted).
+    pub start_urls: Vec<String>,
+    /// When the event occurred.
+    #[serde(with = "clickhouse::serde::time::datetime")]
+    pub timestamp: time::OffsetDateTime,
+}
+
+impl Default for JobEvent {
+    fn default() -> Self {
+        Self {
+            event_type: String::new(),
+            job_id: String::new(),
+            account_id: String::new(),
+            index_uid: String::new(),
+            url: String::new(),
+            domain: String::new(),
+            status_code: 0,
+            duration_ms: 0,
+            content_length: 0,
+            error: String::new(),
+            document_id: String::new(),
+            source_url: String::new(),
+            count: 0,
+            reason: String::new(),
+            wait_ms: 0,
+            retry_count: 0,
+            pages_crawled: 0,
+            documents_indexed: 0,
+            errors: 0,
+            bytes_downloaded: 0,
+            duration_secs: 0,
+            start_urls: Vec::new(),
+            timestamp: time::OffsetDateTime::now_utc(),
+        }
+    }
+}
+
 /// Content extraction event.
 #[derive(Debug, Clone, Serialize, Deserialize, Row)]
 pub struct ContentEvent {
@@ -388,6 +478,21 @@ pub struct JobStats {
     pub last_activity_at: time::OffsetDateTime,
 }
 
+/// Job event type summary row.
+#[derive(Debug, Clone, Serialize, Deserialize, Row)]
+pub struct JobEventSummaryRow {
+    /// Event type name.
+    pub event_type: String,
+    /// Number of events of this type.
+    pub event_count: u64,
+    /// First occurrence.
+    #[serde(with = "clickhouse::serde::time::datetime")]
+    pub first_seen: time::OffsetDateTime,
+    /// Last occurrence.
+    #[serde(with = "clickhouse::serde::time::datetime")]
+    pub last_seen: time::OffsetDateTime,
+}
+
 // ============================================================================
 // ClickHouse Storage
 // ============================================================================
@@ -538,6 +643,48 @@ impl ClickHouseStorage {
             .execute()
             .await?;
 
+        // Job events table (all event types, ordered by job timeline)
+        let job_events_table = self.table_name("job_events");
+        self.client
+            .query(&format!(
+                r#"
+                CREATE TABLE IF NOT EXISTS {} (
+                    event_type LowCardinality(String),
+                    job_id String,
+                    account_id LowCardinality(String),
+                    index_uid String,
+                    url String,
+                    domain LowCardinality(String),
+                    status_code UInt16,
+                    duration_ms UInt32,
+                    content_length UInt64,
+                    error String,
+                    document_id String,
+                    source_url String,
+                    count UInt32,
+                    reason String,
+                    wait_ms UInt64,
+                    retry_count UInt32,
+                    pages_crawled UInt64,
+                    documents_indexed UInt64,
+                    errors UInt64,
+                    bytes_downloaded UInt64,
+                    duration_secs UInt64,
+                    start_urls Array(String),
+                    timestamp DateTime,
+                    INDEX idx_job_id job_id TYPE bloom_filter GRANULARITY 1,
+                    INDEX idx_event_type event_type TYPE set(20) GRANULARITY 1,
+                    INDEX idx_account_id account_id TYPE bloom_filter GRANULARITY 1
+                ) ENGINE = MergeTree()
+                PARTITION BY toYYYYMM(timestamp)
+                ORDER BY (job_id, timestamp)
+                TTL timestamp + INTERVAL 90 DAY
+                "#,
+                job_events_table
+            ))
+            .execute()
+            .await?;
+
         // AI usage events table
         let ai_usage_events_table = self.table_name("ai_usage_events");
         self.client
@@ -639,6 +786,111 @@ impl ClickHouseStorage {
         insert.end().await?;
         debug!(count = events.len(), "Inserted content events batch");
         Ok(())
+    }
+
+    // ========================================================================
+    // Job Event Operations
+    // ========================================================================
+
+    /// Insert multiple job events in batch.
+    #[instrument(skip(self, events), fields(count = events.len()))]
+    pub async fn insert_job_events(
+        &self,
+        events: Vec<JobEvent>,
+    ) -> Result<(), ClickHouseError> {
+        if events.is_empty() {
+            return Ok(());
+        }
+
+        let table = self.table_name("job_events");
+        let mut insert = self.client.insert(&table)?;
+
+        for event in &events {
+            insert.write(event).await?;
+        }
+
+        insert.end().await?;
+        debug!(count = events.len(), "Inserted job events batch");
+        Ok(())
+    }
+
+    /// Get job events timeline for a specific job.
+    #[instrument(skip(self))]
+    pub async fn get_job_events(
+        &self,
+        job_id: &str,
+        event_type_filter: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<JobEvent>, ClickHouseError> {
+        let table = self.table_name("job_events");
+
+        let events = if let Some(et) = event_type_filter {
+            self.client
+                .query(&format!(
+                    r#"
+                    SELECT *
+                    FROM {}
+                    WHERE job_id = ? AND event_type = ?
+                    ORDER BY timestamp DESC
+                    LIMIT ?
+                    "#,
+                    table
+                ))
+                .bind(job_id)
+                .bind(et)
+                .bind(limit)
+                .fetch_all::<JobEvent>()
+                .await?
+        } else {
+            self.client
+                .query(&format!(
+                    r#"
+                    SELECT *
+                    FROM {}
+                    WHERE job_id = ?
+                    ORDER BY timestamp DESC
+                    LIMIT ?
+                    "#,
+                    table
+                ))
+                .bind(job_id)
+                .bind(limit)
+                .fetch_all::<JobEvent>()
+                .await?
+        };
+
+        Ok(events)
+    }
+
+    /// Get event type summary (counts) for a specific job.
+    #[instrument(skip(self))]
+    pub async fn get_job_event_summary(
+        &self,
+        job_id: &str,
+    ) -> Result<Vec<JobEventSummaryRow>, ClickHouseError> {
+        let table = self.table_name("job_events");
+
+        let rows = self
+            .client
+            .query(&format!(
+                r#"
+                SELECT
+                    event_type,
+                    count() as event_count,
+                    min(timestamp) as first_seen,
+                    max(timestamp) as last_seen
+                FROM {}
+                WHERE job_id = ?
+                GROUP BY event_type
+                ORDER BY event_count DESC
+                "#,
+                table
+            ))
+            .bind(job_id)
+            .fetch_all::<JobEventSummaryRow>()
+            .await?;
+
+        Ok(rows)
     }
 
     // ========================================================================
@@ -1392,6 +1644,74 @@ impl Drop for AiUsageBatcher {
             warn!(
                 count = batch.len(),
                 "AiUsageBatcher dropped with pending events"
+            );
+        }
+    }
+}
+
+// ============================================================================
+// Job Event Batcher
+// ============================================================================
+
+/// Batches job events for efficient bulk inserts.
+pub struct JobEventBatcher {
+    storage: ClickHouseStorage,
+    batch: parking_lot::Mutex<Vec<JobEvent>>,
+    batch_size: usize,
+}
+
+impl JobEventBatcher {
+    /// Create a new job event batcher.
+    pub fn new(storage: ClickHouseStorage, batch_size: usize) -> Self {
+        Self {
+            storage,
+            batch: parking_lot::Mutex::new(Vec::with_capacity(batch_size)),
+            batch_size,
+        }
+    }
+
+    /// Add an event to the batch. Flushes automatically when batch is full.
+    pub async fn add(&self, event: JobEvent) -> Result<(), ClickHouseError> {
+        let should_flush = {
+            let mut batch = self.batch.lock();
+            batch.push(event);
+            batch.len() >= self.batch_size
+        };
+
+        if should_flush {
+            self.flush().await?;
+        }
+
+        Ok(())
+    }
+
+    /// Flush all pending events.
+    pub async fn flush(&self) -> Result<(), ClickHouseError> {
+        let events = {
+            let mut batch = self.batch.lock();
+            std::mem::take(&mut *batch)
+        };
+
+        if !events.is_empty() {
+            self.storage.insert_job_events(events).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Get the number of pending events.
+    pub fn pending_count(&self) -> usize {
+        self.batch.lock().len()
+    }
+}
+
+impl Drop for JobEventBatcher {
+    fn drop(&mut self) {
+        let batch = std::mem::take(&mut *self.batch.lock());
+        if !batch.is_empty() {
+            warn!(
+                count = batch.len(),
+                "JobEventBatcher dropped with pending events"
             );
         }
     }

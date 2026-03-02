@@ -854,6 +854,199 @@ async fn pipe_ai_usage(
 }
 
 // ============================================================================
+// Pipe: job_timeline
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct JobTimelineParams {
+    job_id: String,
+    #[serde(default)]
+    event_type: Option<String>,
+    #[serde(default = "default_timeline_limit")]
+    limit: u32,
+}
+
+fn default_timeline_limit() -> u32 {
+    1000
+}
+
+#[derive(Debug, Serialize)]
+pub struct JobTimelineRow {
+    pub event_type: String,
+    pub job_id: String,
+    pub account_id: String,
+    pub index_uid: String,
+    pub url: String,
+    pub domain: String,
+    pub status_code: u16,
+    pub duration_ms: u32,
+    pub content_length: u64,
+    pub error: String,
+    pub document_id: String,
+    pub source_url: String,
+    pub count: u32,
+    pub reason: String,
+    pub wait_ms: u64,
+    pub retry_count: u32,
+    pub pages_crawled: u64,
+    pub documents_indexed: u64,
+    pub errors: u64,
+    pub bytes_downloaded: u64,
+    pub duration_secs: u64,
+    pub start_urls: Vec<String>,
+    pub timestamp: String,
+}
+
+async fn pipe_job_timeline(
+    State(state): State<Arc<AnalyticsState>>,
+    Query(params): Query<JobTimelineParams>,
+) -> Result<Json<AnalyticsResponse<JobTimelineRow>>, (StatusCode, Json<AnalyticsError>)> {
+    let start = Instant::now();
+
+    let events = state
+        .storage
+        .get_job_events(&params.job_id, params.event_type.as_deref(), params.limit)
+        .await
+        .map_err(|e| {
+            error!("job_timeline query failed: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(AnalyticsError {
+                    error: e.to_string(),
+                    code: "QUERY_ERROR".to_string(),
+                }),
+            )
+        })?;
+
+    let data: Vec<JobTimelineRow> = events
+        .into_iter()
+        .map(|e| JobTimelineRow {
+            event_type: e.event_type,
+            job_id: e.job_id,
+            account_id: e.account_id,
+            index_uid: e.index_uid,
+            url: e.url,
+            domain: e.domain,
+            status_code: e.status_code,
+            duration_ms: e.duration_ms,
+            content_length: e.content_length,
+            error: e.error,
+            document_id: e.document_id,
+            source_url: e.source_url,
+            count: e.count,
+            reason: e.reason,
+            wait_ms: e.wait_ms,
+            retry_count: e.retry_count,
+            pages_crawled: e.pages_crawled,
+            documents_indexed: e.documents_indexed,
+            errors: e.errors,
+            bytes_downloaded: e.bytes_downloaded,
+            duration_secs: e.duration_secs,
+            start_urls: e.start_urls,
+            timestamp: e.timestamp.to_string(),
+        })
+        .collect();
+
+    let rows = data.len();
+    Ok(Json(AnalyticsResponse {
+        meta: vec![
+            ColumnMeta {
+                name: "event_type".into(),
+                col_type: "String".into(),
+            },
+            ColumnMeta {
+                name: "job_id".into(),
+                col_type: "String".into(),
+            },
+            ColumnMeta {
+                name: "timestamp".into(),
+                col_type: "DateTime".into(),
+            },
+        ],
+        data,
+        rows,
+        statistics: QueryStats {
+            elapsed: start.elapsed().as_secs_f64(),
+            rows_read: rows,
+            bytes_read: 0,
+        },
+    }))
+}
+
+// ============================================================================
+// Pipe: job_event_summary
+// ============================================================================
+
+#[derive(Debug, Serialize)]
+pub struct JobEventSummaryRow {
+    pub event_type: String,
+    pub event_count: u64,
+    pub first_seen: String,
+    pub last_seen: String,
+}
+
+async fn pipe_job_event_summary(
+    State(state): State<Arc<AnalyticsState>>,
+    Query(params): Query<JobStatsParams>,
+) -> Result<Json<AnalyticsResponse<JobEventSummaryRow>>, (StatusCode, Json<AnalyticsError>)> {
+    let start = Instant::now();
+
+    let summary = state
+        .storage
+        .get_job_event_summary(&params.job_id)
+        .await
+        .map_err(|e| {
+            error!("job_event_summary query failed: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(AnalyticsError {
+                    error: e.to_string(),
+                    code: "QUERY_ERROR".to_string(),
+                }),
+            )
+        })?;
+
+    let data: Vec<JobEventSummaryRow> = summary
+        .into_iter()
+        .map(|s| JobEventSummaryRow {
+            event_type: s.event_type,
+            event_count: s.event_count,
+            first_seen: s.first_seen.to_string(),
+            last_seen: s.last_seen.to_string(),
+        })
+        .collect();
+
+    let rows = data.len();
+    Ok(Json(AnalyticsResponse {
+        meta: vec![
+            ColumnMeta {
+                name: "event_type".into(),
+                col_type: "String".into(),
+            },
+            ColumnMeta {
+                name: "event_count".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "first_seen".into(),
+                col_type: "DateTime".into(),
+            },
+            ColumnMeta {
+                name: "last_seen".into(),
+                col_type: "DateTime".into(),
+            },
+        ],
+        data,
+        rows,
+        statistics: QueryStats {
+            elapsed: start.elapsed().as_secs_f64(),
+            rows_read: rows,
+            bytes_read: 0,
+        },
+    }))
+}
+
+// ============================================================================
 // Pipes List
 // ============================================================================
 
@@ -977,6 +1170,42 @@ async fn list_pipes() -> Json<Vec<PipeInfo>> {
             ],
             endpoint: "/analytics/v0/pipes/ai_usage.json".into(),
         },
+        PipeInfo {
+            name: "job_timeline".into(),
+            description: "Full event timeline for a specific job".into(),
+            parameters: vec![
+                ParamInfo {
+                    name: "job_id".into(),
+                    param_type: "string".into(),
+                    required: true,
+                    default: None,
+                },
+                ParamInfo {
+                    name: "event_type".into(),
+                    param_type: "string".into(),
+                    required: false,
+                    default: None,
+                },
+                ParamInfo {
+                    name: "limit".into(),
+                    param_type: "integer".into(),
+                    required: false,
+                    default: Some("1000".into()),
+                },
+            ],
+            endpoint: "/analytics/v0/pipes/job_timeline.json".into(),
+        },
+        PipeInfo {
+            name: "job_event_summary".into(),
+            description: "Event type counts for a specific job".into(),
+            parameters: vec![ParamInfo {
+                name: "job_id".into(),
+                param_type: "string".into(),
+                required: true,
+                default: None,
+            }],
+            endpoint: "/analytics/v0/pipes/job_event_summary.json".into(),
+        },
     ])
 }
 
@@ -1006,6 +1235,11 @@ pub fn create_analytics_router(state: Arc<AnalyticsState>) -> Router {
         .route("/pipes/job_stats.json", get(pipe_job_stats))
         .route("/pipes/kpis.json", get(pipe_kpis))
         .route("/pipes/ai_usage.json", get(pipe_ai_usage))
+        .route("/pipes/job_timeline.json", get(pipe_job_timeline))
+        .route(
+            "/pipes/job_event_summary.json",
+            get(pipe_job_event_summary),
+        )
         .with_state(state)
 }
 

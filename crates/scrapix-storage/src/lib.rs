@@ -44,7 +44,8 @@ pub mod rocks;
 // Re-exports
 pub use clickhouse::{
     AiTokenStats, ClickHouseConfig, ClickHouseError, ClickHouseStorage, ContentEvent, CrawlEvent,
-    CrawlEventBatcher, DomainStats, HourlyStats, JobStats,
+    CrawlEventBatcher, DomainStats, HourlyStats, JobEvent, JobEventBatcher, JobEventSummaryRow,
+    JobStats,
 };
 pub use meilisearch::{MeilisearchConfig, MeilisearchStorage, MeilisearchStorageBuilder};
 pub use object_storage::{
