@@ -46,6 +46,12 @@ data/
 # MCP config
 .mcp.json
 
+# Claude Code
+.claude/
+
+# Entire
+.entire/
+
 # Docker
 .docker/
 
