@@ -1,5 +1,5 @@
-api:      set -a && source .env && set +a && cargo watch -w crates -w bins -x 'run --bin scrapix -- api'
-frontier: set -a && source .env && set +a && cargo watch -w crates -w bins -x 'run --bin scrapix -- frontier'
-crawler:  set -a && source .env && set +a && cargo watch -w crates -w bins -x 'run --bin scrapix -- crawler'
-content:  set -a && source .env && set +a && cargo watch -w crates -w bins -x 'run --bin scrapix -- content'
-console:  cd console && npm run dev
+api:      set -a && source .env && set +a && cargo watch -w crates -w bins -x 'run -p scrapix --bin scrapix -- api'
+frontier: set -a && source .env && set +a && cargo watch -w crates -w bins -x 'run -p scrapix --bin scrapix -- frontier'
+crawler:  set -a && source .env && set +a && cargo watch -w crates -w bins -x 'run -p scrapix --bin scrapix -- crawler'
+content:  set -a && source .env && set +a && cargo watch -w crates -w bins -x 'run -p scrapix --bin scrapix -- content'
+console:  cd console && npm install && npm run dev
