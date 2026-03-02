@@ -229,8 +229,10 @@ export default function JobDetailPage() {
     if (!id) return;
 
     let reconnectTimer: ReturnType<typeof setTimeout>;
+    let aborted = false;
 
     function connect() {
+      if (aborted) return;
       const ws = new WebSocket(wsUrl(`/ws/job/${id}`));
       wsRef.current = ws;
 
@@ -339,7 +341,9 @@ export default function JobDetailPage() {
 
       ws.onclose = () => {
         setWsConnected(false);
-        reconnectTimer = setTimeout(connect, 3000);
+        if (!aborted) {
+          reconnectTimer = setTimeout(connect, 3000);
+        }
       };
 
       ws.onerror = () => {
@@ -350,6 +354,7 @@ export default function JobDetailPage() {
     connect();
 
     return () => {
+      aborted = true;
       clearTimeout(reconnectTimer);
       wsRef.current?.close();
     };
