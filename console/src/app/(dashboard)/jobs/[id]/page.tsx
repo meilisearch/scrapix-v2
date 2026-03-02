@@ -217,7 +217,7 @@ export default function JobDetailPage() {
           ...prev,
           { time: new Date().toLocaleTimeString(), message, variant, category },
         ];
-        return next.length > 500 ? next.slice(-500) : next;
+        return next.length > 5000 ? next.slice(-5000) : next;
       });
     },
     []

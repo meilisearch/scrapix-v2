@@ -176,7 +176,7 @@ impl AppState {
         ai_service: Option<Arc<AiService>>,
         db_pool: Option<sqlx::PgPool>,
     ) -> Self {
-        let (event_tx, _) = broadcast::channel(1000);
+        let (event_tx, _) = broadcast::channel(10_000);
         Self {
             producer,
             jobs: RwLock::new(HashMap::new()),
