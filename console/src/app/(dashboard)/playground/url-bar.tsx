@@ -3,12 +3,10 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { Loader2, Play, Globe, Layers } from "lucide-react";
+import { Loader2, Play } from "lucide-react";
 
 interface UrlBarProps {
   mode: "scrape" | "crawl";
-  onModeChange: (mode: "scrape" | "crawl") => void;
   url: string;
   onUrlChange: (url: string) => void;
   onSubmit: () => void;
@@ -17,7 +15,6 @@ interface UrlBarProps {
 
 export function UrlBar({
   mode,
-  onModeChange,
   url,
   onUrlChange,
   onSubmit,
@@ -26,32 +23,6 @@ export function UrlBar({
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-start gap-2 rounded-lg border bg-card p-2">
-        {/* Segmented mode toggle */}
-        <ToggleGroup
-          type="single"
-          variant="outline"
-          value={mode}
-          onValueChange={(v) => {
-            if (v) onModeChange(v as "scrape" | "crawl");
-          }}
-          className="shrink-0"
-        >
-          <ToggleGroupItem
-            value="scrape"
-            className="gap-1.5 px-3 data-[state=on]:bg-background data-[state=on]:text-foreground"
-          >
-            <Globe className="h-3.5 w-3.5" />
-            Scrape
-          </ToggleGroupItem>
-          <ToggleGroupItem
-            value="crawl"
-            className="gap-1.5 px-3 data-[state=on]:bg-background data-[state=on]:text-foreground"
-          >
-            <Layers className="h-3.5 w-3.5" />
-            Crawl
-          </ToggleGroupItem>
-        </ToggleGroup>
-
         {mode === "scrape" ? (
           <Input
             type="url"

@@ -4,19 +4,16 @@ import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
-import { submitScrape, createCrawl, fetchServiceHealth } from "@/lib/api";
-import type { ScrapeResult, ServiceStatus } from "@/lib/api-types";
-import { UrlBar } from "./url-bar";
-import { ScrapeOptions, type ScrapeState } from "./scrape-options";
-import { CrawlOptions, type CrawlState, defaultCrawlState } from "./crawl-options";
-import { ResultPanel } from "./result-panel";
-import { HistoryPanel, loadRuns, saveRun, type RunEntry } from "./recent-runs";
+import { createCrawl, fetchServiceHealth } from "@/lib/api";
+import type { ServiceStatus } from "@/lib/api-types";
+import { UrlBar } from "../playground/url-bar";
+import { CrawlOptions, type CrawlState, defaultCrawlState } from "../playground/crawl-options";
+import { ResultPanel } from "../playground/result-panel";
+import { HistoryPanel, loadRuns, saveRun, type RunEntry } from "../playground/recent-runs";
 
-export default function PlaygroundPage() {
-  const [mode, setMode] = useState<"scrape" | "crawl">("scrape");
+export default function CrawlPage() {
   const [url, setUrl] = useState("https://example.com");
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<ScrapeResult | null>(null);
   const [crawlResult, setCrawlResult] = useState<{
     job_id: string;
     status: string;
@@ -25,13 +22,6 @@ export default function PlaygroundPage() {
   const [error, setError] = useState<string | null>(null);
   const [runs, setRuns] = useState<RunEntry[]>([]);
 
-  const [scrapeState, setScrapeState] = useState<ScrapeState>({
-    formats: ["markdown", "metadata"],
-    only_main_content: true,
-    include_links: false,
-    timeout_ms: "30000",
-  });
-
   const [crawlState, setCrawlState] = useState<CrawlState>(defaultCrawlState);
   const [services, setServices] = useState<ServiceStatus[]>([]);
 
@@ -39,7 +29,6 @@ export default function PlaygroundPage() {
     setRuns(loadRuns());
   }, []);
 
-  // Poll service health every 10s
   useEffect(() => {
     const poll = () =>
       fetchServiceHealth()
@@ -49,50 +38,6 @@ export default function PlaygroundPage() {
     const interval = setInterval(poll, 10000);
     return () => clearInterval(interval);
   }, []);
-
-  const handleScrape = useCallback(async () => {
-    if (!url.trim()) {
-      toast.error("Please enter a URL");
-      return;
-    }
-    if (scrapeState.formats.length === 0) {
-      toast.error("Select at least one output format");
-      return;
-    }
-
-    setLoading(true);
-    setResult(null);
-    setCrawlResult(null);
-    setError(null);
-
-    try {
-      const data = await submitScrape({
-        url,
-        formats: scrapeState.formats,
-        only_main_content: scrapeState.only_main_content,
-        include_links: scrapeState.include_links,
-        timeout_ms: parseInt(scrapeState.timeout_ms) || 30000,
-      });
-      setResult(data);
-      const newRuns = saveRun({
-        id: Math.random().toString(36).slice(2) + Date.now().toString(36),
-        type: "scrape",
-        url,
-        status_code: data.status_code,
-        duration_ms: data.scrape_duration_ms,
-        timestamp: new Date().toISOString(),
-      });
-      setRuns(newRuns);
-    } catch (err) {
-      const msg =
-        err instanceof Error
-          ? err.message
-          : "Failed to fetch. Is the API running?";
-      setError(msg);
-    }
-
-    setLoading(false);
-  }, [url, scrapeState]);
 
   const handleCrawl = useCallback(async () => {
     if (!url.trim()) {
@@ -109,27 +54,22 @@ export default function PlaygroundPage() {
       crawlState.index_uid.trim() || `playground-${Date.now()}`;
 
     setLoading(true);
-    setResult(null);
     setCrawlResult(null);
     setError(null);
 
-    // Helper to split newline-separated text into a filtered array
     const lines = (s: string) =>
       s.split("\n").map((l) => l.trim()).filter((l) => l);
 
-    // Helper to parse an optional int
     const optInt = (s: string) => {
       const n = parseInt(s);
       return isNaN(n) ? undefined : n;
     };
 
-    // Helper to parse an optional float
     const optFloat = (s: string) => {
       const n = parseFloat(s);
       return isNaN(n) ? undefined : n;
     };
 
-    // Helper to parse optional JSON
     const optJson = (s: string) => {
       if (!s.trim()) return undefined;
       try {
@@ -139,7 +79,6 @@ export default function PlaygroundPage() {
       }
     };
 
-    // ── Build config ──
     const config: Record<string, unknown> = {
       start_urls: urls,
       index_uid: indexUid,
@@ -148,7 +87,6 @@ export default function PlaygroundPage() {
       max_pages: optInt(crawlState.max_pages),
     };
 
-    // Meilisearch
     const ms: Record<string, unknown> = {
       url: crawlState.meilisearch_url,
       api_key: crawlState.meilisearch_api_key,
@@ -160,11 +98,9 @@ export default function PlaygroundPage() {
     if (crawlState.meilisearch_keep_settings) ms.keep_settings = true;
     config.meilisearch = ms;
 
-    // Allowed domains
     const domains = lines(crawlState.allowed_domains);
     if (domains.length > 0) config.allowed_domains = domains;
 
-    // URL patterns
     const incl = lines(crawlState.include_patterns);
     const excl = lines(crawlState.exclude_patterns);
     const indexOnly = lines(crawlState.index_only_patterns);
@@ -176,7 +112,6 @@ export default function PlaygroundPage() {
       config.url_patterns = patterns;
     }
 
-    // Sitemap
     if (crawlState.sitemap_enabled) {
       const sitemapUrls = lines(crawlState.sitemap_urls);
       config.sitemap = {
@@ -185,7 +120,6 @@ export default function PlaygroundPage() {
       };
     }
 
-    // Concurrency
     const maxConcurrent = optInt(crawlState.max_concurrent_requests);
     const browserPool = optInt(crawlState.browser_pool_size);
     const dnsConcurrency = optInt(crawlState.dns_concurrency);
@@ -201,7 +135,6 @@ export default function PlaygroundPage() {
       };
     }
 
-    // Rate limiting
     const rateLimit: Record<string, unknown> = {
       respect_robots_txt: crawlState.respect_robots,
     };
@@ -217,7 +150,6 @@ export default function PlaygroundPage() {
       rateLimit.default_crawl_delay_ms = crawlDelay;
     config.rate_limit = rateLimit;
 
-    // Features
     const features: Record<string, unknown> = {};
     if (!crawlState.feat_metadata) features.metadata = { enabled: false };
     if (!crawlState.feat_markdown) features.markdown = { enabled: false };
@@ -260,15 +192,12 @@ export default function PlaygroundPage() {
     }
     if (Object.keys(features).length > 0) config.features = features;
 
-    // Headers
     const headers = optJson(crawlState.headers);
     if (headers) config.headers = headers;
 
-    // User agents
     const uas = lines(crawlState.user_agents);
     if (uas.length > 0) config.user_agents = uas;
 
-    // Proxy
     const proxyUrls = lines(crawlState.proxy_urls);
     if (proxyUrls.length > 0) {
       config.proxy = {
@@ -302,16 +231,12 @@ export default function PlaygroundPage() {
     setLoading(false);
   }, [url, crawlState]);
 
-  const handleSubmit = mode === "scrape" ? handleScrape : handleCrawl;
-
   const handleReplay = (run: RunEntry) => {
-    setMode(run.type);
     setUrl(run.url);
   };
 
   return (
     <div className="flex flex-col gap-4 h-[calc(100vh-6rem)]">
-      {/* Service health bar */}
       {services.length > 0 && (
         <div className="flex items-center gap-3 px-1">
           {services.map((svc) => (
@@ -335,34 +260,27 @@ export default function PlaygroundPage() {
         </div>
       )}
 
-      {/* URL Bar */}
       <UrlBar
-        mode={mode}
-        onModeChange={setMode}
+        mode="crawl"
         url={url}
         onUrlChange={setUrl}
-        onSubmit={handleSubmit}
+        onSubmit={handleCrawl}
         loading={loading}
       />
 
-      {/* Main panels — 3 columns */}
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(280px,1fr)_2fr_minmax(220px,260px)] gap-4 flex-1 min-h-0">
         <Card className="overflow-auto">
           <CardContent className="p-4">
-            {mode === "scrape" ? (
-              <ScrapeOptions state={scrapeState} onChange={setScrapeState} />
-            ) : (
-              <CrawlOptions state={crawlState} onChange={setCrawlState} />
-            )}
+            <CrawlOptions state={crawlState} onChange={setCrawlState} />
           </CardContent>
         </Card>
 
         <Card className="overflow-hidden">
           <CardContent className="p-4 h-full">
             <ResultPanel
-              result={result}
+              result={null}
               crawlResult={crawlResult}
-              mode={mode}
+              mode="crawl"
               loading={loading}
               error={error}
             />
@@ -371,7 +289,7 @@ export default function PlaygroundPage() {
 
         <Card className="overflow-hidden">
           <CardContent className="p-4 h-full">
-            <HistoryPanel runs={runs} onReplay={handleReplay} />
+            <HistoryPanel runs={runs} onReplay={handleReplay} typeFilter="crawl" />
           </CardContent>
         </Card>
       </div>

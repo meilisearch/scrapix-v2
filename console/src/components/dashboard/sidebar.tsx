@@ -6,7 +6,8 @@ import { cn } from "@/lib/utils";
 import {
   LayoutDashboard,
   Key,
-  Play,
+  Globe,
+  Layers,
   ListTodo,
   CreditCard,
   Settings,
@@ -22,7 +23,8 @@ import { Separator } from "@/components/ui/separator";
 
 const navigation = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
-  { name: "Playground", href: "/playground", icon: Play },
+  { name: "Scrape", href: "/scrape", icon: Globe },
+  { name: "Crawl", href: "/crawl", icon: Layers },
   { name: "Jobs", href: "/jobs", icon: ListTodo },
   { name: "Configs", href: "/configs", icon: FolderCog },
   { name: "Engines", href: "/engines", icon: Database },

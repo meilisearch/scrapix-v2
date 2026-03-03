@@ -36,21 +36,25 @@ export function saveRun(run: RunEntry): RunEntry[] {
 interface HistoryPanelProps {
   runs: RunEntry[];
   onReplay: (run: RunEntry) => void;
+  typeFilter?: "scrape" | "crawl";
 }
 
-export function HistoryPanel({ runs, onReplay }: HistoryPanelProps) {
+export function HistoryPanel({ runs, onReplay, typeFilter }: HistoryPanelProps) {
+  const filteredRuns = typeFilter
+    ? runs.filter((r) => r.type === typeFilter)
+    : runs;
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center gap-2 pb-3">
         <span className="text-sm font-medium">History</span>
-        {runs.length > 0 && (
+        {filteredRuns.length > 0 && (
           <Badge variant="secondary" className="text-xs">
-            {runs.length}
+            {filteredRuns.length}
           </Badge>
         )}
       </div>
 
-      {runs.length === 0 ? (
+      {filteredRuns.length === 0 ? (
         <div className="flex flex-col items-center justify-center flex-1 text-muted-foreground gap-2 py-10">
           <History className="h-8 w-8 opacity-30" />
           <p className="text-xs">No runs yet</p>
@@ -58,7 +62,7 @@ export function HistoryPanel({ runs, onReplay }: HistoryPanelProps) {
       ) : (
         <ScrollArea className="flex-1">
           <div className="space-y-1 pr-2">
-            {runs.map((run) => (
+            {filteredRuns.map((run) => (
               <button
                 key={run.id}
                 type="button"
