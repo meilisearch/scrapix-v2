@@ -560,18 +560,12 @@ export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
 
   return (
     <Tabs defaultValue="general" className="h-full flex flex-col">
-      <TabsList className="w-full justify-start flex-wrap h-auto gap-1 bg-transparent p-0 pb-2">
-        {["General", "Patterns", "Performance", "Features", "Advanced"].map(
-          (tab) => (
-            <TabsTrigger
-              key={tab}
-              value={tab.toLowerCase()}
-              className="text-xs data-[state=active]:bg-primary/10 data-[state=active]:text-primary rounded-md px-2.5 py-1"
-            >
-              {tab}
-            </TabsTrigger>
-          )
-        )}
+      <TabsList className="w-full">
+        {["General", "Features", "Patterns", "Advanced"].map((tab) => (
+          <TabsTrigger key={tab} value={tab.toLowerCase()} className="text-xs">
+            {tab}
+          </TabsTrigger>
+        ))}
       </TabsList>
 
       {/* ── General ── */}
@@ -714,89 +708,6 @@ export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
               value={state.index_only_patterns}
               onChange={(v) => set("index_only_patterns", v)}
             />
-          </div>
-        </ScrollArea>
-      </TabsContent>
-
-      {/* ── Performance ── */}
-      <TabsContent value="performance" className="flex-1 pt-2">
-        <ScrollArea className="h-full">
-          <div className="space-y-5 pr-3">
-            <div className="space-y-1">
-              <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
-                Concurrency
-              </p>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <NumericInput
-                id="max-concurrent"
-                label="Max Concurrent Requests"
-                value={state.max_concurrent_requests}
-                onChange={(v) => set("max_concurrent_requests", v)}
-                min="1"
-                max="1000"
-              />
-              <NumericInput
-                id="browser-pool"
-                label="Browser Pool Size"
-                value={state.browser_pool_size}
-                onChange={(v) => set("browser_pool_size", v)}
-                min="1"
-                max="50"
-              />
-            </div>
-
-            <NumericInput
-              id="dns-concurrency"
-              label="DNS Concurrency"
-              value={state.dns_concurrency}
-              onChange={(v) => set("dns_concurrency", v)}
-              min="1"
-              max="1000"
-            />
-
-            <div className="space-y-1 pt-2">
-              <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
-                Rate Limiting
-              </p>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <NumericInput
-                id="rps"
-                label="Requests / Second"
-                value={state.requests_per_second}
-                onChange={(v) => set("requests_per_second", v)}
-                placeholder="No limit"
-                min="0.1"
-              />
-              <NumericInput
-                id="rpm"
-                label="Requests / Minute"
-                value={state.requests_per_minute}
-                onChange={(v) => set("requests_per_minute", v)}
-                placeholder="No limit"
-                min="1"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <NumericInput
-                id="domain-delay"
-                label="Per-Domain Delay (ms)"
-                value={state.per_domain_delay_ms}
-                onChange={(v) => set("per_domain_delay_ms", v)}
-                min="0"
-              />
-              <NumericInput
-                id="crawl-delay"
-                label="Default Crawl Delay (ms)"
-                value={state.default_crawl_delay_ms}
-                onChange={(v) => set("default_crawl_delay_ms", v)}
-                min="0"
-              />
-            </div>
           </div>
         </ScrollArea>
       </TabsContent>
@@ -979,11 +890,90 @@ export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
         </ScrollArea>
       </TabsContent>
 
-      {/* ── Advanced ── */}
+      {/* ── Advanced (merged Performance + old Advanced) ── */}
       <TabsContent value="advanced" className="flex-1 pt-2">
         <ScrollArea className="h-full">
-          <div className="space-y-4 pr-3">
+          <div className="space-y-5 pr-3">
+            {/* Concurrency */}
             <div className="space-y-1">
+              <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
+                Concurrency
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <NumericInput
+                id="max-concurrent"
+                label="Max Concurrent Requests"
+                value={state.max_concurrent_requests}
+                onChange={(v) => set("max_concurrent_requests", v)}
+                min="1"
+                max="1000"
+              />
+              <NumericInput
+                id="browser-pool"
+                label="Browser Pool Size"
+                value={state.browser_pool_size}
+                onChange={(v) => set("browser_pool_size", v)}
+                min="1"
+                max="50"
+              />
+            </div>
+
+            <NumericInput
+              id="dns-concurrency"
+              label="DNS Concurrency"
+              value={state.dns_concurrency}
+              onChange={(v) => set("dns_concurrency", v)}
+              min="1"
+              max="1000"
+            />
+
+            {/* Rate Limiting */}
+            <div className="space-y-1 pt-2">
+              <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
+                Rate Limiting
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <NumericInput
+                id="rps"
+                label="Requests / Second"
+                value={state.requests_per_second}
+                onChange={(v) => set("requests_per_second", v)}
+                placeholder="No limit"
+                min="0.1"
+              />
+              <NumericInput
+                id="rpm"
+                label="Requests / Minute"
+                value={state.requests_per_minute}
+                onChange={(v) => set("requests_per_minute", v)}
+                placeholder="No limit"
+                min="1"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <NumericInput
+                id="domain-delay"
+                label="Per-Domain Delay (ms)"
+                value={state.per_domain_delay_ms}
+                onChange={(v) => set("per_domain_delay_ms", v)}
+                min="0"
+              />
+              <NumericInput
+                id="crawl-delay"
+                label="Default Crawl Delay (ms)"
+                value={state.default_crawl_delay_ms}
+                onChange={(v) => set("default_crawl_delay_ms", v)}
+                min="0"
+              />
+            </div>
+
+            {/* HTTP */}
+            <div className="space-y-1 pt-2">
               <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
                 HTTP
               </p>
@@ -1006,6 +996,7 @@ export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
               onChange={(v) => set("user_agents", v)}
             />
 
+            {/* Proxy */}
             <div className="space-y-1 pt-2">
               <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
                 Proxy
@@ -1060,6 +1051,7 @@ export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
               </div>
             )}
 
+            {/* Meilisearch */}
             <div className="space-y-1 pt-2">
               <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
                 Meilisearch

@@ -10,7 +10,7 @@ import { UrlBar } from "./url-bar";
 import { ScrapeOptions, type ScrapeState } from "./scrape-options";
 import { CrawlOptions, type CrawlState, defaultCrawlState } from "./crawl-options";
 import { ResultPanel } from "./result-panel";
-import { RecentRuns, loadRuns, saveRun, type RunEntry } from "./recent-runs";
+import { HistoryPanel, loadRuns, saveRun, type RunEntry } from "./recent-runs";
 
 export default function PlaygroundPage() {
   const [mode, setMode] = useState<"scrape" | "crawl">("scrape");
@@ -345,8 +345,8 @@ export default function PlaygroundPage() {
         loading={loading}
       />
 
-      {/* Main panels */}
-      <div className="grid grid-cols-1 lg:grid-cols-[2fr_3fr] gap-4 flex-1 min-h-0">
+      {/* Main panels — 3 columns */}
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(280px,1fr)_2fr_minmax(220px,260px)] gap-4 flex-1 min-h-0">
         <Card className="overflow-auto">
           <CardContent className="p-4">
             {mode === "scrape" ? (
@@ -368,10 +368,13 @@ export default function PlaygroundPage() {
             />
           </CardContent>
         </Card>
-      </div>
 
-      {/* Recent runs */}
-      <RecentRuns runs={runs} onReplay={handleReplay} />
+        <Card className="overflow-hidden">
+          <CardContent className="p-4 h-full">
+            <HistoryPanel runs={runs} onReplay={handleReplay} />
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

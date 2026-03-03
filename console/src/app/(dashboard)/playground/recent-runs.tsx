@@ -1,23 +1,8 @@
 "use client";
 
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { ChevronDown } from "lucide-react";
-import { useState } from "react";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { History } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
 export interface RunEntry {
@@ -48,98 +33,76 @@ export function saveRun(run: RunEntry): RunEntry[] {
   return runs;
 }
 
-interface RecentRunsProps {
+interface HistoryPanelProps {
   runs: RunEntry[];
   onReplay: (run: RunEntry) => void;
 }
 
-export function RecentRuns({ runs, onReplay }: RecentRunsProps) {
-  const [open, setOpen] = useState(false);
-
-  if (runs.length === 0) return null;
-
+export function HistoryPanel({ runs, onReplay }: HistoryPanelProps) {
   return (
-    <Collapsible open={open} onOpenChange={setOpen}>
-      <Card>
-        <CollapsibleTrigger asChild>
-          <CardHeader className="cursor-pointer py-3 px-4">
-            <Button
-              variant="ghost"
-              className="w-full justify-between p-0 h-auto hover:bg-transparent"
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium">Recent Runs</span>
-                <Badge variant="secondary" className="text-xs">
-                  {runs.length}
-                </Badge>
-              </div>
-              <ChevronDown
-                className={`h-4 w-4 text-muted-foreground transition-transform ${
-                  open ? "rotate-180" : ""
-                }`}
-              />
-            </Button>
-          </CardHeader>
-        </CollapsibleTrigger>
-        <CollapsibleContent>
-          <CardContent className="pt-0 px-4 pb-2">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-[70px]">Type</TableHead>
-                  <TableHead>URL</TableHead>
-                  <TableHead className="w-[80px]">Status</TableHead>
-                  <TableHead className="w-[80px]">Duration</TableHead>
-                  <TableHead className="w-[100px] text-right">Time</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {runs.map((run) => (
-                  <TableRow
-                    key={run.id}
-                    className="cursor-pointer"
-                    onClick={() => onReplay(run)}
+    <div className="flex flex-col h-full">
+      <div className="flex items-center gap-2 pb-3">
+        <span className="text-sm font-medium">History</span>
+        {runs.length > 0 && (
+          <Badge variant="secondary" className="text-xs">
+            {runs.length}
+          </Badge>
+        )}
+      </div>
+
+      {runs.length === 0 ? (
+        <div className="flex flex-col items-center justify-center flex-1 text-muted-foreground gap-2 py-10">
+          <History className="h-8 w-8 opacity-30" />
+          <p className="text-xs">No runs yet</p>
+        </div>
+      ) : (
+        <ScrollArea className="flex-1">
+          <div className="space-y-1 pr-2">
+            {runs.map((run) => (
+              <button
+                key={run.id}
+                type="button"
+                onClick={() => onReplay(run)}
+                className="w-full text-left rounded-md px-2.5 py-2 hover:bg-muted/50 transition-colors cursor-pointer"
+              >
+                <div className="flex items-center gap-1.5 mb-1">
+                  <Badge
+                    variant={run.type === "scrape" ? "default" : "secondary"}
+                    className="text-[10px] px-1.5 py-0"
                   >
-                    <TableCell>
-                      <Badge
-                        variant={run.type === "scrape" ? "default" : "secondary"}
-                        className="text-xs"
-                      >
-                        {run.type}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="font-mono text-xs max-w-[300px] truncate">
-                      {run.url}
-                    </TableCell>
-                    <TableCell>
-                      {run.status_code && (
-                        <Badge
-                          variant={
-                            run.status_code >= 200 && run.status_code < 400
-                              ? "outline"
-                              : "destructive"
-                          }
-                          className="text-xs"
-                        >
-                          {run.status_code}
-                        </Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {run.duration_ms != null ? `${run.duration_ms}ms` : "—"}
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground text-right">
-                      {formatDistanceToNow(new Date(run.timestamp), {
-                        addSuffix: true,
-                      })}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </CollapsibleContent>
-      </Card>
-    </Collapsible>
+                    {run.type}
+                  </Badge>
+                  {run.status_code && (
+                    <Badge
+                      variant={
+                        run.status_code >= 200 && run.status_code < 400
+                          ? "outline"
+                          : "destructive"
+                      }
+                      className="text-[10px] px-1.5 py-0"
+                    >
+                      {run.status_code}
+                    </Badge>
+                  )}
+                </div>
+                <p className="text-xs font-mono text-muted-foreground truncate">
+                  {run.url}
+                </p>
+                <div className="flex items-center gap-2 mt-1 text-[10px] text-muted-foreground">
+                  {run.duration_ms != null && (
+                    <span>{run.duration_ms}ms</span>
+                  )}
+                  <span>
+                    {formatDistanceToNow(new Date(run.timestamp), {
+                      addSuffix: true,
+                    })}
+                  </span>
+                </div>
+              </button>
+            ))}
+          </div>
+        </ScrollArea>
+      )}
+    </div>
   );
 }
