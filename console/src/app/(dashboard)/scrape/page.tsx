@@ -9,15 +9,12 @@ import type { ScrapeResult, ServiceStatus } from "@/lib/api-types";
 import { UrlBar } from "../playground/url-bar";
 import { ScrapeOptions, type ScrapeState } from "../playground/scrape-options";
 import { ResultPanel } from "../playground/result-panel";
-import { HistoryPanel, loadRuns, saveRun, type RunEntry } from "../playground/recent-runs";
 
 export default function ScrapePage() {
   const [url, setUrl] = useState("https://example.com");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ScrapeResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [runs, setRuns] = useState<RunEntry[]>([]);
-
   const [scrapeState, setScrapeState] = useState<ScrapeState>({
     formats: ["markdown", "metadata"],
     only_main_content: true,
@@ -26,10 +23,6 @@ export default function ScrapePage() {
   });
 
   const [services, setServices] = useState<ServiceStatus[]>([]);
-
-  useEffect(() => {
-    setRuns(loadRuns());
-  }, []);
 
   useEffect(() => {
     const poll = () =>
@@ -64,15 +57,6 @@ export default function ScrapePage() {
         timeout_ms: parseInt(scrapeState.timeout_ms) || 30000,
       });
       setResult(data);
-      const newRuns = saveRun({
-        id: Math.random().toString(36).slice(2) + Date.now().toString(36),
-        type: "scrape",
-        url,
-        status_code: data.status_code,
-        duration_ms: data.scrape_duration_ms,
-        timestamp: new Date().toISOString(),
-      });
-      setRuns(newRuns);
     } catch (err) {
       const msg =
         err instanceof Error
@@ -83,10 +67,6 @@ export default function ScrapePage() {
 
     setLoading(false);
   }, [url, scrapeState]);
-
-  const handleReplay = (run: RunEntry) => {
-    setUrl(run.url);
-  };
 
   return (
     <div className="flex flex-col gap-4 h-[calc(100vh-6rem)]">
@@ -121,7 +101,7 @@ export default function ScrapePage() {
         loading={loading}
       />
 
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(280px,1fr)_2fr_minmax(220px,260px)] gap-4 flex-1 min-h-0">
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(280px,1fr)_3fr] gap-4 flex-1 min-h-0">
         <Card className="overflow-auto">
           <CardContent className="p-4">
             <ScrapeOptions state={scrapeState} onChange={setScrapeState} />
@@ -137,12 +117,6 @@ export default function ScrapePage() {
               loading={loading}
               error={error}
             />
-          </CardContent>
-        </Card>
-
-        <Card className="overflow-hidden">
-          <CardContent className="p-4 h-full">
-            <HistoryPanel runs={runs} onReplay={handleReplay} typeFilter="scrape" />
           </CardContent>
         </Card>
       </div>
