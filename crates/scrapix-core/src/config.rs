@@ -266,6 +266,118 @@ pub struct FeaturesConfig {
     pub ai_summary: Option<FeatureToggle>,
 }
 
+
+impl FeaturesConfig {
+    /// Build a FeaturesConfig from CLI args (used as fallback when message has no features)
+    pub fn from_cli_args(
+        metadata: bool,
+        markdown: bool,
+        schema: bool,
+        block_split: bool,
+        ai_summary: bool,
+        ai_extraction: bool,
+        extraction_prompt: Option<String>,
+    ) -> Self {
+        Self {
+            metadata: if metadata {
+                Some(FeatureToggle {
+                    enabled: true,
+                    include_pages: vec![],
+                    exclude_pages: vec![],
+                })
+            } else {
+                None
+            },
+            markdown: if markdown {
+                Some(FeatureToggle {
+                    enabled: true,
+                    include_pages: vec![],
+                    exclude_pages: vec![],
+                })
+            } else {
+                None
+            },
+            block_split: if block_split {
+                Some(FeatureToggle {
+                    enabled: true,
+                    include_pages: vec![],
+                    exclude_pages: vec![],
+                })
+            } else {
+                None
+            },
+            schema: if schema {
+                Some(SchemaFeatureConfig {
+                    enabled: true,
+                    only_types: vec![],
+                    convert_dates: false,
+                    include_pages: vec![],
+                    exclude_pages: vec![],
+                })
+            } else {
+                None
+            },
+            custom_selectors: None,
+            ai_extraction: if ai_extraction {
+                Some(AiExtractionConfig {
+                    enabled: true,
+                    prompt: extraction_prompt.unwrap_or_default(),
+                    model: "gpt-4".to_string(),
+                    max_tokens: None,
+                    include_pages: vec![],
+                    exclude_pages: vec![],
+                })
+            } else {
+                None
+            },
+            ai_summary: if ai_summary {
+                Some(FeatureToggle {
+                    enabled: true,
+                    include_pages: vec![],
+                    exclude_pages: vec![],
+                })
+            } else {
+                None
+            },
+        }
+    }
+
+    /// Check if metadata extraction is enabled
+    pub fn metadata_enabled(&self) -> bool {
+        self.metadata.as_ref().is_some_and(|f| f.enabled)
+    }
+
+    /// Check if markdown conversion is enabled
+    pub fn markdown_enabled(&self) -> bool {
+        self.markdown.as_ref().is_some_and(|f| f.enabled)
+    }
+
+    /// Check if block splitting is enabled
+    pub fn block_split_enabled(&self) -> bool {
+        self.block_split.as_ref().is_some_and(|f| f.enabled)
+    }
+
+    /// Check if schema extraction is enabled
+    pub fn schema_enabled(&self) -> bool {
+        self.schema.as_ref().is_some_and(|f| f.enabled)
+    }
+
+    /// Check if custom selectors are enabled
+    pub fn custom_selectors_enabled(&self) -> bool {
+        self.custom_selectors.as_ref().is_some_and(|f| f.enabled)
+    }
+
+    /// Check if AI extraction is enabled
+    pub fn ai_extraction_enabled(&self) -> bool {
+        self.ai_extraction.as_ref().is_some_and(|f| f.enabled)
+    }
+
+    /// Check if AI summary is enabled
+    pub fn ai_summary_enabled(&self) -> bool {
+        self.ai_summary.as_ref().is_some_and(|f| f.enabled)
+    }
+}
+
 /// Simple feature toggle with page filters
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeatureToggle {

@@ -26,7 +26,7 @@ use parking_lot::RwLock;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info};
 
-use scrapix_core::{CrawlUrl, ScrapixError, UrlPatterns};
+use scrapix_core::{CrawlUrl, FeaturesConfig, ScrapixError, UrlPatterns};
 use scrapix_frontier::{
     extract_domain, CrawlRecord, DedupConfig, LinkGraph, LinkGraphConfig, PolitenessConfig,
     PolitenessScheduler, PriorityConfig, PriorityQueue, RecrawlConfig, RecrawlDecision,
@@ -147,6 +147,7 @@ struct JobFrontier {
     url_patterns: Option<UrlPatterns>,
     meilisearch_url: Option<String>,
     meilisearch_api_key: Option<String>,
+    features: Option<FeaturesConfig>,
 }
 
 impl JobFrontier {
@@ -158,6 +159,7 @@ impl JobFrontier {
         url_patterns: Option<UrlPatterns>,
         meilisearch_url: Option<String>,
         meilisearch_api_key: Option<String>,
+        features: Option<FeaturesConfig>,
     ) -> Self {
         Self {
             job_id: job_id.to_string(),
@@ -171,6 +173,7 @@ impl JobFrontier {
             url_patterns,
             meilisearch_url,
             meilisearch_api_key,
+            features,
         }
     }
 
@@ -280,6 +283,7 @@ struct ReadyUrl {
     url_patterns: Option<UrlPatterns>,
     meilisearch_url: Option<String>,
     meilisearch_api_key: Option<String>,
+    features: Option<FeaturesConfig>,
 }
 
 struct FrontierService {
@@ -564,6 +568,7 @@ impl FrontierService {
         url_patterns: Option<UrlPatterns>,
         meilisearch_url: Option<String>,
         meilisearch_api_key: Option<String>,
+        features: Option<FeaturesConfig>,
     ) -> Arc<JobFrontier> {
         {
             let jobs = self.jobs.read();
@@ -585,6 +590,7 @@ impl FrontierService {
                     url_patterns,
                     meilisearch_url,
                     meilisearch_api_key,
+                    features,
                 ))
             })
             .clone()
@@ -739,6 +745,7 @@ impl FrontierService {
                     msg.url_patterns.clone(),
                     msg.meilisearch_url.clone(),
                     msg.meilisearch_api_key.clone(),
+                    msg.features.clone(),
                 );
 
                 if job.try_add(url.clone()) {
@@ -792,6 +799,7 @@ impl FrontierService {
                                 url_patterns: job.url_patterns.clone(),
                                 meilisearch_url: job.meilisearch_url.clone(),
                                 meilisearch_api_key: job.meilisearch_api_key.clone(),
+                                features: job.features.clone(),
                             };
 
                             if dispatch_tx.send(ready).await.is_err() {
@@ -835,7 +843,8 @@ impl FrontierService {
                         } else {
                             UrlMessage::new(ready.url, &ready.job_id, &ready.index_uid)
                         }
-                        .with_meilisearch(ready.meilisearch_url, ready.meilisearch_api_key);
+                        .with_meilisearch(ready.meilisearch_url, ready.meilisearch_api_key)
+                        .with_features(ready.features);
 
                         match producer
                             .send(

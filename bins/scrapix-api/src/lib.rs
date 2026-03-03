@@ -1979,7 +1979,8 @@ pub(crate) async fn do_create_crawl(
         } else {
             UrlMessage::new(crawl_url, &job_id, &pipeline_index_uid)
         }
-        .with_meilisearch(job_meilisearch_url.clone(), job_meilisearch_key.clone());
+        .with_meilisearch(job_meilisearch_url.clone(), job_meilisearch_key.clone())
+        .with_features(Some(config.features.clone()));
 
         // Attach account_id to message for billing attribution
         let msg = if let Some(ctx) = account_ctx {

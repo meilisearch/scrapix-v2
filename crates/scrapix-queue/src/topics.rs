@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use scrapix_core::{CrawlUrl, Document, UrlPatterns};
+use scrapix_core::{CrawlUrl, Document, FeaturesConfig, UrlPatterns};
 
 /// Predefined topic names
 pub mod names {
@@ -51,6 +51,9 @@ pub struct UrlMessage {
     /// Per-job Meilisearch API key (overrides global env var)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub meilisearch_api_key: Option<String>,
+    /// Per-job feature configuration (overrides worker defaults)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub features: Option<FeaturesConfig>,
 }
 
 impl UrlMessage {
@@ -65,6 +68,7 @@ impl UrlMessage {
             url_patterns: None,
             meilisearch_url: None,
             meilisearch_api_key: None,
+            features: None,
         }
     }
 
@@ -85,6 +89,7 @@ impl UrlMessage {
             url_patterns: None,
             meilisearch_url: None,
             meilisearch_api_key: None,
+            features: None,
         }
     }
 
@@ -105,6 +110,7 @@ impl UrlMessage {
             url_patterns: Some(patterns),
             meilisearch_url: None,
             meilisearch_api_key: None,
+            features: None,
         }
     }
 
@@ -118,6 +124,12 @@ impl UrlMessage {
     pub fn with_meilisearch(mut self, url: Option<String>, api_key: Option<String>) -> Self {
         self.meilisearch_url = url;
         self.meilisearch_api_key = api_key;
+        self
+    }
+
+    /// Set per-job feature configuration (builder pattern)
+    pub fn with_features(mut self, features: Option<FeaturesConfig>) -> Self {
+        self.features = features;
         self
     }
 
@@ -174,6 +186,9 @@ pub struct RawPageMessage {
     /// Per-job Meilisearch API key (overrides global env var)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub meilisearch_api_key: Option<String>,
+    /// Per-job feature configuration (overrides worker defaults)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub features: Option<FeaturesConfig>,
 }
 
 /// Message for processed documents

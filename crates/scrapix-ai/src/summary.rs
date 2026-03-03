@@ -13,7 +13,7 @@ use thiserror::Error;
 use tracing::{debug, instrument};
 
 /// Default model for summarization
-pub const DEFAULT_SUMMARY_MODEL: &str = "gpt-5-nano";
+pub const DEFAULT_SUMMARY_MODEL: &str = "claude-haiku-4-5-20251001";
 
 /// Errors that can occur during summarization
 #[derive(Debug, Error)]

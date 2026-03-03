@@ -25,7 +25,7 @@ use clap::Parser;
 use tokio::sync::Semaphore;
 use tracing::{debug, error, info, warn};
 
-use scrapix_core::{CrawlUrl, ScrapixError, UrlPatterns};
+use scrapix_core::{CrawlUrl, FeaturesConfig, ScrapixError, UrlPatterns};
 #[cfg(feature = "browser")]
 use scrapix_crawler::{CdpRenderer, CdpRendererBuilder};
 use scrapix_crawler::{
@@ -769,6 +769,7 @@ impl CrawlerWorker {
         url_patterns: Option<UrlPatterns>,
         meilisearch_url: Option<String>,
         meilisearch_api_key: Option<String>,
+        features: Option<FeaturesConfig>,
     ) -> scrapix_core::Result<usize> {
         // Check if we've already discovered sitemaps for this domain
         {
@@ -892,7 +893,8 @@ impl CrawlerWorker {
                     }
                     None => UrlMessage::new(crawl_url, job_id, index_uid),
                 }
-                .with_meilisearch(meilisearch_url.clone(), meilisearch_api_key.clone());
+                .with_meilisearch(meilisearch_url.clone(), meilisearch_api_key.clone())
+                .with_features(features.clone());
 
                 if let Err(e) = self
                     .producer
@@ -951,6 +953,7 @@ impl CrawlerWorker {
                         msg.url_patterns.clone(),
                         msg.meilisearch_url.clone(),
                         msg.meilisearch_api_key.clone(),
+                        msg.features.clone(),
                     )
                     .await
                 {
@@ -1152,6 +1155,7 @@ impl CrawlerWorker {
             last_modified,
             meilisearch_url: msg.meilisearch_url.clone(),
             meilisearch_api_key: msg.meilisearch_api_key.clone(),
+            features: msg.features.clone(),
         };
 
         self.producer
@@ -1188,6 +1192,8 @@ impl CrawlerWorker {
             // Propagate per-job Meilisearch config
             url_msg.meilisearch_url = msg.meilisearch_url.clone();
             url_msg.meilisearch_api_key = msg.meilisearch_api_key.clone();
+            // Propagate per-job feature config
+            url_msg.features = msg.features.clone();
 
             self.producer
                 .send(

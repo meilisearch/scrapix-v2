@@ -22,8 +22,8 @@ use tokio::sync::Semaphore;
 use tracing::{debug, error, info, warn};
 
 use scrapix_ai::{AiClient, AiService};
-use scrapix_core::{Document, RawPage, ScrapixError};
-use scrapix_extractor::{BlockConfig, BlockSplitter, ContentBlock};
+use scrapix_core::{Document, FeaturesConfig, RawPage, ScrapixError};
+use scrapix_extractor::{BlockConfig, BlockSplitter, ContentBlock, SelectorExtractor};
 use scrapix_frontier::{NearDuplicateConfig, NearDuplicateDetector};
 use scrapix_parser::{HtmlParser, HtmlParserConfig};
 use scrapix_queue::{
@@ -296,6 +296,8 @@ struct ContentWorker {
     skip_meilisearch: bool,
     /// Default batch size for creating new Meilisearch storage clients
     default_batch_size: usize,
+    /// Default feature config built from CLI args, used when message has no features
+    default_features: FeaturesConfig,
 }
 
 impl ContentWorker {
@@ -360,16 +362,28 @@ impl ContentWorker {
             None
         };
 
-        // Create HTML parser
+        // Create HTML parser — always extract everything; per-job features
+        // are applied as a post-parse filter so the parser can be reused.
         let parser_config = HtmlParserConfig {
-            extract_content: args.extract_content,
-            convert_to_markdown: args.convert_markdown,
-            detect_language: args.detect_language,
-            extract_schema: args.extract_schema,
+            extract_content: true,
+            convert_to_markdown: true,
+            detect_language: true,
+            extract_schema: true,
             extract_og_tags: true,
             min_content_length: args.min_content_length,
         };
         let parser = HtmlParser::new(parser_config);
+
+        // Build default features from CLI args (fallback when message has no features)
+        let default_features = FeaturesConfig::from_cli_args(
+            args.extract_content,
+            args.convert_markdown,
+            args.extract_schema,
+            args.enable_block_split,
+            args.enable_summary,
+            args.enable_extraction,
+            args.extraction_prompt.clone(),
+        );
 
         // Create concurrency limiter
         let semaphore = Arc::new(Semaphore::new(args.concurrency));
@@ -494,6 +508,7 @@ impl ContentWorker {
             publish_history: args.publish_history,
             skip_meilisearch: args.skip_meilisearch,
             default_batch_size: args.batch_size,
+            default_features,
         })
     }
 
@@ -545,16 +560,28 @@ impl ContentWorker {
             None
         };
 
-        // Create HTML parser
+        // Create HTML parser — always extract everything; per-job features
+        // are applied as a post-parse filter so the parser can be reused.
         let parser_config = HtmlParserConfig {
-            extract_content: args.extract_content,
-            convert_to_markdown: args.convert_markdown,
-            detect_language: args.detect_language,
-            extract_schema: args.extract_schema,
+            extract_content: true,
+            convert_to_markdown: true,
+            detect_language: true,
+            extract_schema: true,
             extract_og_tags: true,
             min_content_length: args.min_content_length,
         };
         let parser = HtmlParser::new(parser_config);
+
+        // Build default features from CLI args (fallback when message has no features)
+        let default_features = FeaturesConfig::from_cli_args(
+            args.extract_content,
+            args.convert_markdown,
+            args.extract_schema,
+            args.enable_block_split,
+            args.enable_summary,
+            args.enable_extraction,
+            args.extraction_prompt.clone(),
+        );
 
         // Create concurrency limiter
         let semaphore = Arc::new(Semaphore::new(args.concurrency));
@@ -676,6 +703,7 @@ impl ContentWorker {
             publish_history: args.publish_history,
             skip_meilisearch: args.skip_meilisearch,
             default_batch_size: args.batch_size,
+            default_features,
         })
     }
 
@@ -917,6 +945,16 @@ impl ContentWorker {
             }
         };
 
+        // Resolve per-job features and filter disabled fields
+        let features = self.resolve_features(msg);
+        let mut document = document;
+        Self::filter_document(&mut document, &features);
+
+        // Apply custom CSS selector extraction if enabled
+        if features.custom_selectors_enabled() {
+            document.custom = Self::extract_custom_selectors(&msg.html, &features);
+        }
+
         // Check if document has enough content
         let content_len = document.content.as_ref().map(|c| c.len()).unwrap_or(0);
         if content_len == 0 {
@@ -969,17 +1007,30 @@ impl ContentWorker {
             "Page parsed successfully"
         );
 
-        // Apply AI enrichment if enabled (only for non-block-split mode)
-        let document = if self.block_splitter.is_none() {
-            self.enrich_with_ai(document).await
+        // Apply AI enrichment if enabled by per-job features (only for non-block-split mode)
+        let document = if !features.block_split_enabled() {
+            self.enrich_with_ai(document, &features).await
         } else {
             document
         };
 
         let _process_duration = start.elapsed();
 
-        // Check if block splitting is enabled
-        if let Some(ref splitter) = self.block_splitter {
+        // Check if block splitting is enabled by per-job features
+        if features.block_split_enabled() {
+            // Use existing block splitter or create a default one
+            let default_splitter;
+            let splitter = match self.block_splitter.as_ref() {
+                Some(s) => s,
+                None => {
+                    default_splitter = BlockSplitter::new(BlockConfig {
+                        include_hierarchy: true,
+                        extract_anchors: true,
+                        ..Default::default()
+                    });
+                    &default_splitter
+                }
+            };
             // Split HTML into content blocks
             match splitter.split(&msg.html) {
                 Ok(extracted_blocks) => {
@@ -1165,6 +1216,11 @@ impl ContentWorker {
             }
         }
 
+        // Resolve per-job features and filter disabled fields
+        let features = self.resolve_features(msg);
+        let mut document = document;
+        Self::filter_document(&mut document, &features);
+
         let parse_duration = start.elapsed();
         info!(
             url = %msg.url,
@@ -1175,8 +1231,8 @@ impl ContentWorker {
             "Markdown page parsed successfully (server-provided)"
         );
 
-        // Apply AI enrichment
-        let document = self.enrich_with_ai(document).await;
+        // Apply AI enrichment using per-job features
+        let document = self.enrich_with_ai(document, &features).await;
 
         // Index single document (no block splitting for server-provided markdown)
         self.metrics.record_success(page_size, 1);
@@ -1317,7 +1373,7 @@ impl ContentWorker {
     }
 
     /// Enrich document with AI-generated content (summary, extraction)
-    async fn enrich_with_ai(&self, mut document: Document) -> Document {
+    async fn enrich_with_ai(&self, mut document: Document, features: &FeaturesConfig) -> Document {
         let ai_service = match &self.ai_service {
             Some(s) => s,
             None => return document,
@@ -1352,7 +1408,7 @@ impl ContentWorker {
         // Individual failures are logged but don't affect the other calls.
 
         let summary_fut = async {
-            if !self.ai_config.enable_summary {
+            if !features.ai_summary_enabled() {
                 return None;
             }
             match ai_service.tldr(&content_for_ai).await {
@@ -1376,10 +1432,16 @@ impl ContentWorker {
         };
 
         let extraction_fut = async {
-            if !self.ai_config.enable_extraction {
+            if !features.ai_extraction_enabled() {
                 return None;
             }
-            if let Some(ref prompt) = self.ai_config.extraction_prompt {
+            // Use per-job extraction prompt if available, otherwise fall back to CLI config
+            let prompt = features
+                .ai_extraction
+                .as_ref()
+                .map(|c| &c.prompt)
+                .or(self.ai_config.extraction_prompt.as_ref());
+            if let Some(ref prompt) = prompt {
                 match ai_service.extract(&content_for_ai, prompt).await {
                     Ok(result) => {
                         debug!(
@@ -1416,6 +1478,56 @@ impl ContentWorker {
         }
 
         document
+    }
+
+    /// Resolve per-job features: use message features if present, otherwise fall back to CLI defaults
+    fn resolve_features(&self, msg: &RawPageMessage) -> FeaturesConfig {
+        msg.features
+            .clone()
+            .unwrap_or_else(|| self.default_features.clone())
+    }
+
+    /// Null out document fields that the per-job config says should be disabled
+    fn filter_document(document: &mut Document, features: &FeaturesConfig) {
+        if !features.metadata_enabled() {
+            document.metadata = None;
+        }
+        if !features.markdown_enabled() {
+            document.markdown = None;
+        }
+        if !features.schema_enabled() {
+            document.schema = None;
+        }
+    }
+
+    /// Extract custom CSS selectors from HTML if the per-job config enables them
+    fn extract_custom_selectors(
+        html: &str,
+        features: &FeaturesConfig,
+    ) -> Option<HashMap<String, serde_json::Value>> {
+        let config = features.custom_selectors.as_ref()?;
+        if !config.enabled || config.selectors.is_empty() {
+            return None;
+        }
+
+        // Convert SelectorDef map to simple HashMap<String, String> for from_simple()
+        let simple: HashMap<String, String> = config
+            .selectors
+            .iter()
+            .map(|(field, def)| {
+                let selector = match def {
+                    scrapix_core::SelectorDef::Single(s) => s.clone(),
+                    scrapix_core::SelectorDef::Multiple(v) => v.join(", "),
+                };
+                (field.clone(), selector)
+            })
+            .collect();
+
+        let extractor = SelectorExtractor::from_simple(simple);
+        match extractor.extract(html) {
+            Ok(extracted) if !extracted.values.is_empty() => Some(extracted.values),
+            _ => None,
+        }
     }
 
     /// Graceful shutdown
