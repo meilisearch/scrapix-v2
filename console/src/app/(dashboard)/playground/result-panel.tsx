@@ -129,61 +129,36 @@ function CrawlResultState({
   const isFailed = jobStatus?.status === "failed";
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Compact banner */}
-      <div className="flex items-center gap-3 rounded-md border px-4 py-3">
-        {/* Status icon */}
+    <div className="flex flex-col items-center justify-center h-full gap-6">
+      {/* Status icon */}
+      <div>
         {isRunning && (
-          <Loader2 className="h-4 w-4 text-primary animate-spin shrink-0" />
+          <Loader2 className="h-10 w-10 text-primary animate-spin" />
         )}
         {isCompleted && (
-          <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
+          <CheckCircle2 className="h-10 w-10 text-green-500" />
         )}
         {isFailed && (
-          <XCircle className="h-4 w-4 text-destructive shrink-0" />
+          <XCircle className="h-10 w-10 text-destructive" />
         )}
         {!jobStatus && (
-          <CheckCircle2 className="h-4 w-4 text-primary opacity-70 shrink-0" />
+          <Globe className="h-10 w-10 text-primary opacity-70" />
         )}
+      </div>
 
-        {/* Job info */}
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium truncate">
-            {isRunning
-              ? "Crawl in progress..."
-              : isCompleted
-                ? "Crawl completed"
-                : isFailed
-                  ? "Crawl failed"
-                  : "Crawl job created"}
-          </p>
-          <p className="text-[11px] text-muted-foreground font-mono truncate">
-            {result.job_id}
-          </p>
-        </div>
-
-        {/* Inline counters */}
-        {jobStatus && (
-          <div className="flex items-center gap-3 shrink-0 text-xs text-muted-foreground">
-            <span className="flex items-center gap-1">
-              <FileText className="h-3 w-3" />
-              {jobStatus.pages_crawled}
-            </span>
-            <span className="flex items-center gap-1">
-              <CheckCircle2 className="h-3 w-3" />
-              {jobStatus.pages_indexed}
-            </span>
-            <span className={cn("flex items-center gap-1", jobStatus.errors > 0 && "text-destructive")}>
-              <AlertCircle className="h-3 w-3" />
-              {jobStatus.errors}
-            </span>
-          </div>
-        )}
-
-        {/* Status badge */}
+      {/* Title + badge */}
+      <div className="flex flex-col items-center gap-2">
+        <p className="text-lg font-semibold">
+          {isRunning
+            ? "Crawl in progress..."
+            : isCompleted
+              ? "Crawl completed"
+              : isFailed
+                ? "Crawl failed"
+                : "Crawl job created"}
+        </p>
         <Badge
           variant={isRunning ? "secondary" : isCompleted ? "default" : isFailed ? "destructive" : "outline"}
-          className="shrink-0"
         >
           {isRunning && (
             <span className="relative mr-1.5 flex h-2 w-2">
@@ -193,29 +168,49 @@ function CrawlResultState({
           )}
           {jobStatus?.status ?? result.status}
         </Badge>
-
-        {/* Details link */}
-        <Button variant="outline" size="sm" className="shrink-0" asChild>
-          <Link href={`/jobs/${result.job_id}`}>
-            Details
-            <ArrowRight className="ml-1.5 h-3 w-3" />
-          </Link>
-        </Button>
       </div>
 
-      {/* Below banner */}
-      <div className="flex flex-col items-center justify-center flex-1 text-muted-foreground gap-3 py-20">
-        <Globe className="h-10 w-10 opacity-40" />
-        <p className="text-sm">
-          {isRunning
-            ? "Pages will appear once the crawl finishes indexing."
-            : isCompleted
-              ? "Crawl complete. View full details to explore results."
-              : isFailed
-                ? "Check the job details for error information."
-                : "Crawl job has been submitted."}
-        </p>
-      </div>
+      {/* Counters */}
+      {jobStatus && (
+        <div className="flex items-center gap-6 text-sm text-muted-foreground">
+          <span className="flex items-center gap-1.5">
+            <FileText className="h-4 w-4" />
+            <span className="font-medium text-foreground">{jobStatus.pages_crawled}</span> crawled
+          </span>
+          <span className="flex items-center gap-1.5">
+            <CheckCircle2 className="h-4 w-4" />
+            <span className="font-medium text-foreground">{jobStatus.pages_indexed}</span> indexed
+          </span>
+          <span className={cn("flex items-center gap-1.5", jobStatus.errors > 0 && "text-destructive")}>
+            <AlertCircle className="h-4 w-4" />
+            <span className="font-medium">{jobStatus.errors}</span> errors
+          </span>
+        </div>
+      )}
+
+      {/* Job ID */}
+      <p className="text-xs text-muted-foreground font-mono">
+        {result.job_id}
+      </p>
+
+      {/* Subtitle */}
+      <p className="text-sm text-muted-foreground text-center max-w-xs">
+        {isRunning
+          ? "Pages will appear once the crawl finishes indexing."
+          : isCompleted
+            ? "Crawl complete. View full details to explore results."
+            : isFailed
+              ? "Check the job details for error information."
+              : "Crawl job has been submitted."}
+      </p>
+
+      {/* Details link */}
+      <Button variant="outline" asChild>
+        <Link href={`/jobs/${result.job_id}`}>
+          View details
+          <ArrowRight className="ml-1.5 h-4 w-4" />
+        </Link>
+      </Button>
     </div>
   );
 }
