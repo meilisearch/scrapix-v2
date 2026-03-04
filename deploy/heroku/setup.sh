@@ -24,6 +24,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 API_APP_NAME="scrapix-api"
 CONSOLE_APP_NAME="scrapix-console"
+HEROKU_TEAM="meili"
 
 # Meilisearch Cloud
 MEILISEARCH_URL=""        # e.g. https://ms-xxxx.meilisearch.io
@@ -47,7 +48,7 @@ CORS_ORIGINS=""
 # Create API app
 # ---------------------------------------------------------------------------
 echo "==> Creating API app: ${API_APP_NAME}"
-heroku create "${API_APP_NAME}" --stack container
+heroku create "${API_APP_NAME}" --team "${HEROKU_TEAM}" --stack container
 
 echo "==> Adding Postgres addon"
 heroku addons:create heroku-postgresql:essential-0 -a "${API_APP_NAME}"
@@ -85,7 +86,7 @@ heroku config:set -a "${API_APP_NAME}" "${CONFIG_VARS[@]}"
 # ---------------------------------------------------------------------------
 echo ""
 echo "==> Creating Console app: ${CONSOLE_APP_NAME}"
-heroku create "${CONSOLE_APP_NAME}" --stack container
+heroku create "${CONSOLE_APP_NAME}" --team "${HEROKU_TEAM}" --stack container
 
 API_URL="https://${API_APP_NAME}.herokuapp.com"
 
