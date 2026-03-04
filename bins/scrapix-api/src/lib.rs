@@ -2917,6 +2917,12 @@ pub async fn run_with_bus(
     let auth_state = if let Some(ref db_url) = args.database_url {
         match auth::AuthState::new(db_url, args.jwt_secret.clone()).await {
             Ok(state) => {
+                // Auto-apply schema (idempotent — safe to run on every startup)
+                let schema_sql = include_str!("../../../deploy/postgres/init.sql");
+                match sqlx::raw_sql(schema_sql).execute(&state.pool).await {
+                    Ok(_) => info!("PostgreSQL schema applied successfully"),
+                    Err(e) => warn!(error = %e, "Failed to apply PostgreSQL schema (non-fatal)"),
+                }
                 info!("Authentication enabled via PostgreSQL");
                 Some(Arc::new(state))
             }
@@ -3364,12 +3370,34 @@ pub async fn run_with_bus(
         info!("Analytics API disabled (CLICKHOUSE_URL not set)");
     }
 
-    // CORS: credential-aware for console at localhost:3001
+    // CORS: credential-aware
+    // When CORS_ORIGINS is set (comma-separated URLs), use those + *.meilisearch.com wildcard.
+    // When unset, fall back to localhost defaults.
+    let extra_origins: Vec<axum::http::HeaderValue> =
+        if let Ok(origins) = std::env::var("CORS_ORIGINS") {
+            origins
+                .split(',')
+                .filter_map(|s| s.trim().parse().ok())
+                .collect()
+        } else {
+            Vec::new()
+        };
     let cors = CorsLayer::new()
-        .allow_origin(AllowOrigin::list([
-            "http://localhost:3001".parse().unwrap(),
-            "http://127.0.0.1:3001".parse().unwrap(),
-        ]))
+        .allow_origin(AllowOrigin::predicate(move |origin, _| {
+            let origin_str = origin.to_str().unwrap_or("");
+            // Always allow localhost dev
+            if origin_str == "http://localhost:3001" || origin_str == "http://127.0.0.1:3001" {
+                return true;
+            }
+            // Allow any *.meilisearch.com subdomain (https only)
+            if let Some(host) = origin_str.strip_prefix("https://") {
+                if host == "meilisearch.com" || host.ends_with(".meilisearch.com") {
+                    return true;
+                }
+            }
+            // Allow explicitly configured origins
+            extra_origins.iter().any(|allowed| allowed == origin)
+        }))
         .allow_methods([
             axum::http::Method::GET,
             axum::http::Method::POST,

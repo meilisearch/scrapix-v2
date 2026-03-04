@@ -1,5 +1,5 @@
 -- Scrapix PostgreSQL Schema
--- Runs automatically on first boot via docker-entrypoint-initdb.d
+-- Idempotent: safe to run on every startup (all statements use IF NOT EXISTS)
 
 -- Enable UUID generation
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
@@ -8,7 +8,7 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 -- Users (replaces Supabase auth.users + profiles)
 -- ============================================================================
 
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
@@ -17,13 +17,13 @@ CREATE TABLE users (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_users_email ON users (email);
+CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
 
 -- ============================================================================
 -- Accounts (billing entities)
 -- ============================================================================
 
-CREATE TABLE accounts (
+CREATE TABLE IF NOT EXISTS accounts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT NOT NULL,
     tier TEXT NOT NULL DEFAULT 'free' CHECK (tier IN ('free', 'starter', 'pro', 'enterprise')),
@@ -37,7 +37,7 @@ CREATE TABLE accounts (
 -- Account Members (user <-> account join table)
 -- ============================================================================
 
-CREATE TABLE account_members (
+CREATE TABLE IF NOT EXISTS account_members (
     user_id UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
     account_id UUID NOT NULL REFERENCES accounts (id) ON DELETE CASCADE,
     role TEXT NOT NULL DEFAULT 'owner' CHECK (role IN ('owner', 'admin', 'member')),
@@ -45,14 +45,14 @@ CREATE TABLE account_members (
     PRIMARY KEY (user_id, account_id)
 );
 
-CREATE INDEX idx_account_members_user_id ON account_members (user_id);
-CREATE INDEX idx_account_members_account_id ON account_members (account_id);
+CREATE INDEX IF NOT EXISTS idx_account_members_user_id ON account_members (user_id);
+CREATE INDEX IF NOT EXISTS idx_account_members_account_id ON account_members (account_id);
 
 -- ============================================================================
 -- API Keys
 -- ============================================================================
 
-CREATE TABLE api_keys (
+CREATE TABLE IF NOT EXISTS api_keys (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     account_id UUID NOT NULL REFERENCES accounts (id) ON DELETE CASCADE,
     name TEXT NOT NULL,
@@ -63,8 +63,8 @@ CREATE TABLE api_keys (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_api_keys_account_id ON api_keys (account_id);
-CREATE INDEX idx_api_keys_key_hash ON api_keys (key_hash);
+CREATE INDEX IF NOT EXISTS idx_api_keys_account_id ON api_keys (account_id);
+CREATE INDEX IF NOT EXISTS idx_api_keys_key_hash ON api_keys (key_hash);
 
 -- ============================================================================
 -- validate_api_key function (used by the Rust API auth middleware)
@@ -98,19 +98,28 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER trg_users_updated_at
-    BEFORE UPDATE ON users
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+-- Triggers use DO blocks for idempotent creation
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_users_updated_at') THEN
+        CREATE TRIGGER trg_users_updated_at
+            BEFORE UPDATE ON users
+            FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+    END IF;
+END $$;
 
-CREATE TRIGGER trg_accounts_updated_at
-    BEFORE UPDATE ON accounts
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_accounts_updated_at') THEN
+        CREATE TRIGGER trg_accounts_updated_at
+            BEFORE UPDATE ON accounts
+            FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+    END IF;
+END $$;
 
 -- ============================================================================
 -- Saved Crawl Configs (with optional cron scheduling)
 -- ============================================================================
 
-CREATE TABLE crawl_configs (
+CREATE TABLE IF NOT EXISTS crawl_configs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     account_id UUID NOT NULL REFERENCES accounts (id) ON DELETE CASCADE,
     name TEXT NOT NULL,
@@ -126,19 +135,23 @@ CREATE TABLE crawl_configs (
     UNIQUE (account_id, name)
 );
 
-CREATE INDEX idx_crawl_configs_account_id ON crawl_configs (account_id);
-CREATE INDEX idx_crawl_configs_next_run ON crawl_configs (next_run_at)
+CREATE INDEX IF NOT EXISTS idx_crawl_configs_account_id ON crawl_configs (account_id);
+CREATE INDEX IF NOT EXISTS idx_crawl_configs_next_run ON crawl_configs (next_run_at)
     WHERE cron_enabled = true AND cron_expression IS NOT NULL;
 
-CREATE TRIGGER trg_crawl_configs_updated_at
-    BEFORE UPDATE ON crawl_configs
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_crawl_configs_updated_at') THEN
+        CREATE TRIGGER trg_crawl_configs_updated_at
+            BEFORE UPDATE ON crawl_configs
+            FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+    END IF;
+END $$;
 
 -- ============================================================================
 -- Jobs (persistent crawl job state)
 -- ============================================================================
 
-CREATE TABLE jobs (
+CREATE TABLE IF NOT EXISTS jobs (
     job_id TEXT PRIMARY KEY,
     status TEXT NOT NULL DEFAULT 'pending'
         CHECK (status IN ('pending', 'running', 'completed', 'failed', 'cancelled', 'paused')),
@@ -164,19 +177,23 @@ CREATE TABLE jobs (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_jobs_account_id ON jobs (account_id);
-CREATE INDEX idx_jobs_status ON jobs (status);
-CREATE INDEX idx_jobs_created_at ON jobs (created_at DESC);
-CREATE INDEX idx_jobs_active ON jobs (job_id) WHERE status IN ('pending', 'running', 'paused');
+CREATE INDEX IF NOT EXISTS idx_jobs_account_id ON jobs (account_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs (status);
+CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_jobs_active ON jobs (job_id) WHERE status IN ('pending', 'running', 'paused');
 
-CREATE TRIGGER trg_jobs_updated_at
-    BEFORE UPDATE ON jobs FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_jobs_updated_at') THEN
+        CREATE TRIGGER trg_jobs_updated_at
+            BEFORE UPDATE ON jobs FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+    END IF;
+END $$;
 
 -- ============================================================================
 -- Meilisearch Engines (saved Meilisearch instances)
 -- ============================================================================
 
-CREATE TABLE meilisearch_engines (
+CREATE TABLE IF NOT EXISTS meilisearch_engines (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     account_id UUID NOT NULL REFERENCES accounts (id) ON DELETE CASCADE,
     name TEXT NOT NULL,
@@ -188,8 +205,12 @@ CREATE TABLE meilisearch_engines (
     UNIQUE (account_id, name)
 );
 
-CREATE INDEX idx_meilisearch_engines_account_id ON meilisearch_engines (account_id);
+CREATE INDEX IF NOT EXISTS idx_meilisearch_engines_account_id ON meilisearch_engines (account_id);
 
-CREATE TRIGGER trg_meilisearch_engines_updated_at
-    BEFORE UPDATE ON meilisearch_engines
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_meilisearch_engines_updated_at') THEN
+        CREATE TRIGGER trg_meilisearch_engines_updated_at
+            BEFORE UPDATE ON meilisearch_engines
+            FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+    END IF;
+END $$;
