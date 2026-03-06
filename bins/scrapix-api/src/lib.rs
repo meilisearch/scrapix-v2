@@ -5,6 +5,7 @@
 //! ## REST Endpoints
 //!
 //! - `POST /scrape` - Scrape a single URL (instant, no queue)
+//! - `POST /map` - Discover all URLs on a website with titles and descriptions
 //! - `POST /crawl` - Create a new async crawl job
 //! - `POST /crawl/sync` - Create a sync crawl job (waits for completion)
 //! - `GET /job/:id/status` - Get job status
@@ -74,7 +75,7 @@ use tracing::{debug, error, info, warn};
 use scrapix_ai::{AiClient, AiService, FieldDefinition as AiFieldDefinition, SchemaBuilder};
 use scrapix_core::billing::BillingTier;
 use scrapix_core::{CrawlConfig, CrawlerType, CrawlUrl, JobState, JobStatus};
-use scrapix_crawler::{HttpFetcher, HttpFetcherBuilder, RobotsCache, RobotsConfig};
+use scrapix_crawler::{HttpFetcher, HttpFetcherBuilder, RobotsCache, RobotsConfig, SitemapParser};
 use scrapix_extractor::{
     ContentBlock, ExtractedMetadata, ExtractedSchema, Extractor, SelectorDefinition,
     SelectorExtractor,
@@ -2084,6 +2085,370 @@ pub(crate) async fn do_create_crawl(
     })
 }
 
+// ============================================================================
+// Map endpoint - discover URLs on a website
+// ============================================================================
+
+/// Request body for POST /map
+#[derive(Debug, Deserialize)]
+struct MapRequest {
+    /// Website URL to map
+    url: String,
+
+    /// Maximum number of links to return (default: 5000)
+    #[serde(default = "default_map_limit")]
+    limit: usize,
+
+    /// How many levels deep to follow links (default: 2)
+    #[serde(default = "default_map_depth")]
+    depth: u32,
+
+    /// Filter results to URLs matching this search term
+    #[serde(default)]
+    search: Option<String>,
+
+    /// Whether to use sitemaps for discovery (default: true)
+    #[serde(default = "default_true_bool")]
+    sitemap: bool,
+}
+
+fn default_map_limit() -> usize {
+    5000
+}
+
+fn default_map_depth() -> u32 {
+    2
+}
+
+/// A discovered link with optional metadata
+#[derive(Debug, Clone, Serialize)]
+struct MapLink {
+    url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+}
+
+/// Response for POST /map
+#[derive(Debug, Serialize)]
+struct MapResponse {
+    success: bool,
+    links: Vec<MapLink>,
+    /// Total number of links discovered
+    total: usize,
+    /// Time taken in milliseconds
+    duration_ms: u64,
+}
+
+/// Result from fetching a single page during mapping
+struct MapFetchResult {
+    url: String,
+    title: Option<String>,
+    description: Option<String>,
+    /// Newly discovered child links (url, anchor_text)
+    child_links: Vec<(String, Option<String>)>,
+}
+
+/// Extract links from an HTML document, resolving relative URLs against a base.
+/// Only returns same-domain http(s) links.
+fn extract_page_links(
+    html: &str,
+    base_url: &url::Url,
+) -> Vec<(String, Option<String>)> {
+    let document = scraper::Html::parse_document(html);
+    let link_selector = scraper::Selector::parse("a[href]").unwrap();
+    let base_domain = base_url.host_str().unwrap_or("");
+
+    let mut links = Vec::new();
+    for element in document.select(&link_selector) {
+        if let Some(href) = element.value().attr("href") {
+            let resolved = base_url.join(href).ok();
+            if let Some(resolved_url) = resolved {
+                // Only same-domain http(s) links
+                if matches!(resolved_url.scheme(), "http" | "https")
+                    && resolved_url.host_str().unwrap_or("") == base_domain
+                {
+                    // Strip fragment
+                    let mut clean = resolved_url;
+                    clean.set_fragment(None);
+                    let url_str = clean.to_string();
+
+                    let anchor_text = element.text().collect::<String>();
+                    let anchor = if anchor_text.trim().is_empty() {
+                        None
+                    } else {
+                        Some(anchor_text.trim().to_string())
+                    };
+                    links.push((url_str, anchor));
+                }
+            }
+        }
+    }
+    links
+}
+
+/// Fetch a single URL and extract title, description, and child links.
+async fn map_fetch_page(
+    fetcher: Arc<HttpFetcher>,
+    url: String,
+    base_url: url::Url,
+) -> Option<MapFetchResult> {
+    let crawl_url = CrawlUrl::seed(&url);
+    let page = match tokio::time::timeout(Duration::from_secs(10), fetcher.fetch(&crawl_url)).await
+    {
+        Ok(Ok(page)) if (200..300).contains(&page.status) => page,
+        _ => return None,
+    };
+
+    let document = scraper::Html::parse_document(&page.html);
+
+    // Extract title
+    let title = scraper::Selector::parse("title")
+        .ok()
+        .and_then(|sel| document.select(&sel).next())
+        .map(|el| el.text().collect::<String>().trim().to_string())
+        .filter(|t| !t.is_empty());
+
+    // Extract meta description
+    let description = scraper::Selector::parse(r#"meta[name="description"]"#)
+        .ok()
+        .and_then(|sel| document.select(&sel).next())
+        .and_then(|el| el.value().attr("content"))
+        .map(|s| s.trim().to_string())
+        .filter(|d| !d.is_empty());
+
+    let child_links = extract_page_links(&page.html, &base_url);
+
+    Some(MapFetchResult {
+        url,
+        title,
+        description,
+        child_links,
+    })
+}
+
+/// Map a website: BFS-crawl to discover URLs with title + description
+///
+/// Discovers URLs via:
+/// 1. Sitemap parsing (robots.txt → sitemap.xml)
+/// 2. Concurrent BFS link crawling up to `depth` levels
+///
+/// Each fetched page yields its `<title>`, `<meta description>`, and outgoing links.
+async fn map_url(
+    State(state): State<Arc<AppState>>,
+    account_ext: Option<Extension<AuthenticatedAccount>>,
+    user_ext: Option<Extension<AuthenticatedUser>>,
+    Json(request): Json<MapRequest>,
+) -> Result<Json<MapResponse>, ApiError> {
+    let _account_ctx = extract_account_context(
+        state.db_pool.as_ref(),
+        &account_ext,
+        &user_ext,
+    )
+    .await;
+
+    let start_time = std::time::Instant::now();
+
+    // Validate URL
+    let parsed_url = url::Url::parse(&request.url)
+        .map_err(|e| ApiError::new(format!("Invalid URL: {}", e), "validation_error"))?;
+
+    if !matches!(parsed_url.scheme(), "http" | "https") {
+        return Err(ApiError::new(
+            "Only http and https URLs are supported",
+            "validation_error",
+        ));
+    }
+
+    let limit = request.limit.min(10_000);
+    let max_depth = request.depth.min(5);
+
+    info!(url = %request.url, limit, depth = max_depth, "Mapping website URLs");
+
+    // Track visited URLs and collected results
+    let visited: Arc<parking_lot::Mutex<HashSet<String>>> =
+        Arc::new(parking_lot::Mutex::new(HashSet::new()));
+    let results: Arc<parking_lot::Mutex<Vec<MapLink>>> =
+        Arc::new(parking_lot::Mutex::new(Vec::new()));
+
+    // Seed the initial URL
+    visited.lock().insert(request.url.clone());
+
+    // The base URL is used to restrict crawling to the same domain
+    let base_url = parsed_url.clone();
+
+    // 1. Seed sitemap URLs into visited + results (no title/description yet)
+    //    They'll be picked up in the BFS if within depth, otherwise added as-is.
+    let mut sitemap_urls_to_crawl: Vec<String> = Vec::new();
+    if request.sitemap {
+        let sitemap_parser = SitemapParser::with_defaults();
+        match sitemap_parser.discover_all_urls(&request.url).await {
+            Ok(sitemap_urls) => {
+                debug!(count = sitemap_urls.len(), "Discovered URLs from sitemaps");
+                let base_domain = base_url.host_str().unwrap_or("");
+                let mut vis = visited.lock();
+                for su in sitemap_urls {
+                    // Only include same-domain sitemap URLs
+                    if let Ok(su_parsed) = url::Url::parse(&su.loc) {
+                        if su_parsed.host_str().unwrap_or("") == base_domain && vis.insert(su.loc.clone()) {
+                            sitemap_urls_to_crawl.push(su.loc);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                warn!(error = %e, "Sitemap discovery failed, continuing with page crawling");
+            }
+        }
+    }
+
+    // 2. BFS crawl with concurrent fetching
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(20));
+    let fetcher = state.fetcher.clone();
+
+    // Current frontier: URLs to fetch at this depth level
+    let mut frontier: Vec<String> = vec![request.url.clone()];
+
+    for current_depth in 0..=max_depth {
+        if frontier.is_empty() || results.lock().len() >= limit {
+            break;
+        }
+
+        // On the first depth, also include sitemap URLs in the frontier
+        if current_depth == 0 {
+            let remaining = limit.saturating_sub(frontier.len());
+            let extra: Vec<String> = sitemap_urls_to_crawl
+                .drain(..sitemap_urls_to_crawl.len().min(remaining))
+                .collect();
+            frontier.extend(extra);
+        }
+
+        // Cap frontier size to avoid runaway crawls
+        let budget = limit.saturating_sub(results.lock().len());
+        frontier.truncate(budget);
+
+        debug!(
+            depth = current_depth,
+            frontier_size = frontier.len(),
+            "BFS depth level"
+        );
+
+        // Spawn concurrent fetch tasks for the entire frontier
+        let tasks: Vec<_> = frontier
+            .drain(..)
+            .map(|url| {
+                let semaphore = semaphore.clone();
+                let fetcher = fetcher.clone();
+                let base_url = base_url.clone();
+                tokio::spawn(async move {
+                    let _permit = semaphore.acquire().await.ok()?;
+                    map_fetch_page(fetcher, url, base_url).await
+                })
+            })
+            .collect();
+
+        // Collect results and build next frontier
+        let mut next_frontier: Vec<String> = Vec::new();
+
+        for task in tasks {
+            if let Ok(Some(result)) = task.await {
+                // Store the fetched page's metadata
+                results.lock().push(MapLink {
+                    url: result.url,
+                    title: result.title,
+                    description: result.description,
+                });
+
+                // Queue child links for next depth (if not at max depth)
+                if current_depth < max_depth {
+                    let mut vis = visited.lock();
+                    for (child_url, _anchor) in result.child_links {
+                        if vis.len() < limit && vis.insert(child_url.clone()) {
+                            next_frontier.push(child_url);
+                        }
+                    }
+                }
+            }
+
+            // Early exit if we've hit the limit
+            if results.lock().len() >= limit {
+                break;
+            }
+        }
+
+        frontier = next_frontier;
+    }
+
+    // 3. Any remaining sitemap URLs that weren't crawled get added without metadata
+    {
+        let mut res = results.lock();
+        let vis = visited.lock();
+        for sitemap_url in &sitemap_urls_to_crawl {
+            if res.len() >= limit {
+                break;
+            }
+            if vis.contains(sitemap_url) {
+                // Already visited or in results
+                continue;
+            }
+            res.push(MapLink {
+                url: sitemap_url.clone(),
+                title: None,
+                description: None,
+            });
+        }
+    }
+
+    let mut links = match Arc::try_unwrap(results) {
+        Ok(mutex) => mutex.into_inner(),
+        Err(arc) => arc.lock().clone(),
+    };
+
+    // 4. Apply search filter if provided
+    if let Some(ref search) = request.search {
+        let search_lower = search.to_lowercase();
+        links.retain(|link| {
+            link.url.to_lowercase().contains(&search_lower)
+                || link
+                    .title
+                    .as_ref()
+                    .map(|t| t.to_lowercase().contains(&search_lower))
+                    .unwrap_or(false)
+                || link
+                    .description
+                    .as_ref()
+                    .map(|d| d.to_lowercase().contains(&search_lower))
+                    .unwrap_or(false)
+        });
+
+        // Sort: prioritize URLs where the search term appears in the URL path
+        links.sort_by(|a, b| {
+            let a_match = a.url.to_lowercase().contains(&search_lower);
+            let b_match = b.url.to_lowercase().contains(&search_lower);
+            b_match.cmp(&a_match)
+        });
+    }
+
+    links.truncate(limit);
+    let total = links.len();
+
+    let duration_ms = start_time.elapsed().as_millis() as u64;
+    info!(
+        url = %request.url,
+        total,
+        duration_ms,
+        "Map completed"
+    );
+
+    Ok(Json(MapResponse {
+        success: true,
+        links,
+        total,
+        duration_ms,
+    }))
+}
+
 /// Create a new async crawl job
 async fn create_crawl(
     State(state): State<Arc<AppState>>,
@@ -3300,6 +3665,7 @@ pub async fn run_with_bus(
     // Protected routes (API key auth required when enabled)
     let mut protected_routes = Router::new()
         .route("/scrape", post(scrape_url))
+        .route("/map", post(map_url))
         .route("/crawl", post(create_crawl))
         .route("/crawl/sync", post(create_crawl_sync))
         .route("/jobs", get(list_jobs))

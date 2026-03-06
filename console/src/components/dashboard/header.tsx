@@ -27,6 +27,7 @@ import { SidebarContent } from "./sidebar";
 const pageTitles: Record<string, string> = {
   "/": "Dashboard",
   "/playground": "Playground",
+  "/map": "Map",
   "/jobs": "Jobs",
   "/configs": "Configs",
   "/api-keys": "API Keys",

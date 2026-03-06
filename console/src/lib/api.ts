@@ -14,6 +14,7 @@ import type {
   CreateEngineRequest,
   UpdateEngineRequest,
   MeilisearchIndex,
+  MapResult,
   AnalyticsResponse,
   HourlyStatsRow,
   KpisRow,
@@ -111,6 +112,26 @@ export interface ScrapeOptions {
 
 export async function submitScrape(opts: ScrapeOptions): Promise<ScrapeResult> {
   return request("/scrape", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(opts),
+  });
+}
+
+// ============================================================================
+// Map
+// ============================================================================
+
+export interface MapOptions {
+  url: string;
+  limit?: number;
+  depth?: number;
+  search?: string;
+  sitemap?: boolean;
+}
+
+export async function submitMap(opts: MapOptions): Promise<MapResult> {
+  return request("/map", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(opts),

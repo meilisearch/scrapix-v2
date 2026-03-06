@@ -15,6 +15,7 @@ import {
   FolderCog,
   Database,
   BarChart3,
+  Network,
 } from "lucide-react";
 import { logout } from "@/lib/auth";
 import { useRouter } from "next/navigation";
@@ -24,6 +25,7 @@ import { Separator } from "@/components/ui/separator";
 const navigation = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
   { name: "Scrape", href: "/scrape", icon: Globe },
+  { name: "Map", href: "/map", icon: Network },
   { name: "Crawl", href: "/crawl", icon: Layers },
   { name: "Jobs", href: "/jobs", icon: ListTodo },
   { name: "Configs", href: "/configs", icon: FolderCog },

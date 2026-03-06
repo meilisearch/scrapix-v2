@@ -203,6 +203,20 @@ export interface ScrapeMetadata {
   twitter: Record<string, string>;
 }
 
+// From POST /map
+export interface MapLink {
+  url: string;
+  title?: string;
+  description?: string;
+}
+
+export interface MapResult {
+  success: boolean;
+  links: MapLink[];
+  total: number;
+  duration_ms: number;
+}
+
 // ============================================================================
 // Analytics (Tinybird-style responses)
 // ============================================================================
