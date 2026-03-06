@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
-import { Moon, Sun } from "lucide-react";
+import { Moon, Sun, Zap } from "lucide-react";
 
 export function ThemeToggle() {
   const { theme, setTheme } = useTheme();
@@ -20,9 +20,15 @@ export function ThemeToggle() {
       variant="ghost"
       size="icon"
       className="absolute right-4 top-4"
-      onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+      onClick={() => {
+        if (theme === "light") setTheme("dark");
+        else if (theme === "dark") setTheme("neon");
+        else setTheme("light");
+      }}
     >
-      {theme === "dark" ? (
+      {theme === "neon" ? (
+        <Zap className="h-4 w-4" />
+      ) : theme === "dark" ? (
         <Sun className="h-4 w-4" />
       ) : (
         <Moon className="h-4 w-4" />

@@ -3,6 +3,7 @@
 @plugin "@tailwindcss/typography";
 
 @custom-variant dark (&:is(.dark *));
+@custom-variant neon (&:is(.neon *));
 
 @theme inline {
   --color-background: var(--background);
@@ -45,6 +46,10 @@
   --radius-2xl: calc(var(--radius) + 8px);
   --radius-3xl: calc(var(--radius) + 12px);
   --radius-4xl: calc(var(--radius) + 16px);
+  --color-neon-magenta: var(--neon-magenta);
+  --color-neon-cyan: var(--neon-cyan);
+  --color-neon-violet: var(--neon-violet);
+  --color-neon-blue: var(--neon-blue);
 }
 
 :root {
@@ -80,6 +85,10 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+  --neon-magenta: oklch(0.7 0.25 330);
+  --neon-cyan: oklch(0.8 0.15 195);
+  --neon-violet: oklch(0.6 0.25 300);
+  --neon-blue: oklch(0.65 0.2 255);
 }
 
 .dark {
@@ -116,6 +125,44 @@
   --sidebar-ring: oklch(0.556 0 0);
 }
 
+.neon {
+  --background: oklch(0.1 0.005 280);
+  --foreground: oklch(0.92 0.01 280);
+  --card: oklch(0.14 0.008 280);
+  --card-foreground: oklch(0.92 0.01 280);
+  --popover: oklch(0.14 0.008 280);
+  --popover-foreground: oklch(0.92 0.01 280);
+  --primary: oklch(0.7 0.25 330);
+  --primary-foreground: oklch(0.98 0 0);
+  --secondary: oklch(0.18 0.01 280);
+  --secondary-foreground: oklch(0.88 0.02 280);
+  --muted: oklch(0.18 0.01 280);
+  --muted-foreground: oklch(0.6 0.03 280);
+  --accent: oklch(0.2 0.02 300);
+  --accent-foreground: oklch(0.9 0.05 300);
+  --destructive: oklch(0.65 0.25 15);
+  --border: oklch(0.3 0.04 300 / 40%);
+  --input: oklch(0.3 0.04 300 / 50%);
+  --ring: oklch(0.7 0.25 330);
+  --chart-1: oklch(0.7 0.25 330);
+  --chart-2: oklch(0.8 0.15 195);
+  --chart-3: oklch(0.6 0.25 300);
+  --chart-4: oklch(0.65 0.2 255);
+  --chart-5: oklch(0.75 0.2 150);
+  --sidebar: oklch(0.12 0.008 280);
+  --sidebar-foreground: oklch(0.88 0.02 280);
+  --sidebar-primary: oklch(0.7 0.25 330);
+  --sidebar-primary-foreground: oklch(0.98 0 0);
+  --sidebar-accent: oklch(0.18 0.015 300);
+  --sidebar-accent-foreground: oklch(0.9 0.05 300);
+  --sidebar-border: oklch(0.3 0.04 300 / 30%);
+  --sidebar-ring: oklch(0.7 0.25 330);
+  --neon-magenta: oklch(0.7 0.25 330);
+  --neon-cyan: oklch(0.8 0.15 195);
+  --neon-violet: oklch(0.6 0.25 300);
+  --neon-blue: oklch(0.65 0.2 255);
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -134,4 +181,186 @@
 .dark .shiki,
 .dark .shiki span {
   color: var(--shiki-dark) !important;
+}
+.neon .shiki,
+.neon .shiki span {
+  color: var(--shiki-dark) !important;
+}
+
+/* ─── Neon theme effects ─── */
+
+/* Halftone / comic dot texture on body */
+.neon body {
+  background-image:
+    radial-gradient(circle, oklch(0.3 0.04 300 / 6%) 1px, transparent 1px);
+  background-size: 4px 4px;
+}
+
+/* Faint scanline overlay */
+.neon body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    oklch(0 0 0 / 3%) 2px,
+    oklch(0 0 0 / 3%) 4px
+  );
+}
+
+/* Neon card glow borders */
+.neon [data-slot="card"],
+.neon .neon-card {
+  border: 1px solid oklch(0.5 0.15 300 / 25%);
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 3%),
+    0 0 20px oklch(0.5 0.15 300 / 8%);
+}
+
+/* Active sidebar item neon glow */
+.neon .neon-nav-active {
+  background: oklch(0.7 0.25 330 / 12%);
+  color: oklch(0.7 0.25 330);
+  box-shadow:
+    -2px 0 8px oklch(0.7 0.25 330 / 20%),
+    inset -2px 0 0 oklch(0.7 0.25 330 / 60%);
+}
+
+/* Primary button electric glow */
+.neon .neon-btn-primary {
+  background: linear-gradient(
+    135deg,
+    oklch(0.7 0.25 330),
+    oklch(0.6 0.25 300)
+  );
+  box-shadow:
+    0 0 15px oklch(0.7 0.25 330 / 35%),
+    0 0 30px oklch(0.6 0.25 300 / 15%);
+  transition: box-shadow 0.2s ease;
+}
+.neon .neon-btn-primary:hover {
+  box-shadow:
+    0 0 20px oklch(0.7 0.25 330 / 50%),
+    0 0 40px oklch(0.6 0.25 300 / 25%);
+}
+
+/* Subtle radial glow behind panels */
+.neon .neon-glow-panel {
+  position: relative;
+}
+.neon .neon-glow-panel::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  background: radial-gradient(
+    ellipse at 50% 0%,
+    oklch(0.6 0.2 300 / 8%) 0%,
+    transparent 70%
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Glitch shimmer on the sidebar brand */
+.neon .neon-brand {
+  text-shadow:
+    1px 0 oklch(0.8 0.15 195 / 40%),
+    -1px 0 oklch(0.7 0.25 330 / 40%);
+}
+
+/* Chromatic aberration on section headers */
+.neon .neon-section-label {
+  text-shadow:
+    0.5px 0 oklch(0.8 0.15 195 / 30%),
+    -0.5px 0 oklch(0.7 0.25 330 / 30%);
+  letter-spacing: 0.15em;
+}
+
+/* Luminous separator line */
+.neon .neon-separator {
+  border-color: transparent;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    oklch(0.5 0.15 300 / 30%),
+    oklch(0.7 0.25 330 / 20%),
+    transparent
+  );
+  height: 1px;
+}
+
+/* Animated subtle glitch particles (sparse) */
+@keyframes neon-drift {
+  0%, 100% { opacity: 0; transform: translateY(0) translateX(0); }
+  10% { opacity: 0.6; }
+  90% { opacity: 0.6; }
+  50% { transform: translateY(-30px) translateX(5px); }
+}
+
+.neon .neon-particles::after {
+  content: "";
+  position: absolute;
+  top: 20%;
+  right: 5%;
+  width: 2px;
+  height: 2px;
+  background: oklch(0.8 0.15 195);
+  border-radius: 50%;
+  box-shadow:
+    30px 40px 0 oklch(0.7 0.25 330 / 50%),
+    80px -20px 0 oklch(0.8 0.15 195 / 40%),
+    -40px 60px 0 oklch(0.6 0.25 300 / 30%),
+    120px 80px 0 oklch(0.65 0.2 255 / 35%);
+  animation: neon-drift 8s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Header border glow */
+.neon .neon-header {
+  border-bottom-color: oklch(0.5 0.15 300 / 20%);
+  box-shadow: 0 1px 12px oklch(0.5 0.15 300 / 8%);
+}
+
+/* Sidebar border glow */
+.neon .neon-sidebar {
+  border-right-color: oklch(0.5 0.15 300 / 20%);
+  box-shadow: 1px 0 15px oklch(0.5 0.15 300 / 6%);
+}
+
+/* Metric value neon tint */
+.neon .neon-metric {
+  background: linear-gradient(
+    135deg,
+    oklch(0.92 0.01 280),
+    oklch(0.8 0.08 300)
+  );
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Angular energy on hover (cards) */
+.neon [data-slot="card"]:hover,
+.neon .neon-card:hover {
+  border-color: oklch(0.5 0.15 300 / 40%);
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 5%),
+    0 0 25px oklch(0.5 0.15 300 / 12%),
+    0 0 2px oklch(0.7 0.25 330 / 15%);
+}
+
+/* Status dot pulse for neon */
+@keyframes neon-pulse {
+  0%, 100% { box-shadow: 0 0 4px oklch(0.75 0.2 150 / 50%); }
+  50% { box-shadow: 0 0 10px oklch(0.75 0.2 150 / 80%); }
+}
+
+.neon .neon-status-dot {
+  animation: neon-pulse 2s ease-in-out infinite;
 }

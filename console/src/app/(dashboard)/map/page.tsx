@@ -31,7 +31,7 @@ import { submitMap } from "@/lib/api";
 import type { MapResult, MapLink } from "@/lib/api-types";
 
 export default function MapPage() {
-  const [url, setUrl] = useState("https://example.com");
+  const [url, setUrl] = useState("https://scrapix.meilisearch.dev");
   const [depth, setDepth] = useState("2");
   const [limit, setLimit] = useState("5000");
   const [search, setSearch] = useState("");
@@ -114,7 +114,7 @@ export default function MapPage() {
             <div className="flex gap-2">
               <div className="flex-1">
                 <Input
-                  placeholder="https://example.com"
+                  placeholder="https://scrapix.meilisearch.dev"
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
                   onKeyDown={handleKeyDown}

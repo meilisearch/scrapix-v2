@@ -71,7 +71,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
             <span className="text-primary-foreground font-bold text-sm">S</span>
           </div>
-          <span className="text-xl font-bold">Scrapix</span>
+          <span className="text-xl font-bold neon-brand">Scrapix</span>
         </Link>
       </div>
       <nav className="flex-1 space-y-4 px-3 py-4">
@@ -86,7 +86,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                 className={cn(
                   "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
                   isActive
-                    ? "bg-primary/10 text-primary"
+                    ? "bg-primary/10 text-primary neon-nav-active"
                     : "text-muted-foreground hover:bg-muted hover:text-foreground"
                 )}
               >
@@ -98,7 +98,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         </div>
         {navGroups.map((group) => (
           <div key={group.label} className="space-y-1">
-            <p className="px-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground/60">
+            <p className="px-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground/60 neon-section-label">
               {group.label}
             </p>
             {group.items.map((item) => {
@@ -113,7 +113,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                   className={cn(
                     "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
                     isActive
-                      ? "bg-primary/10 text-primary"
+                      ? "bg-primary/10 text-primary neon-nav-active"
                       : "text-muted-foreground hover:bg-muted hover:text-foreground"
                   )}
                 >
@@ -125,7 +125,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           </div>
         ))}
       </nav>
-      <Separator />
+      <Separator className="neon-separator" />
       <div className="p-3">
         <Button
           variant="ghost"
@@ -142,7 +142,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
 
 export function Sidebar() {
   return (
-    <aside className="hidden md:flex h-full w-56 flex-col border-r bg-card">
+    <aside className="hidden md:flex h-full w-56 flex-col border-r bg-card neon-sidebar">
       <SidebarContent />
     </aside>
   );

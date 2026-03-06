@@ -10,6 +10,7 @@ import {
   AlignLeft,
   Link2,
   Tags,
+  Sparkles,
   type LucideIcon,
 } from "lucide-react";
 
@@ -18,6 +19,7 @@ export interface ScrapeState {
   only_main_content: boolean;
   include_links: boolean;
   timeout_ms: string;
+  ai_summary: boolean;
 }
 
 interface ScrapeOptionsProps {
@@ -73,6 +75,33 @@ export function ScrapeOptions({ state, onChange }: ScrapeOptionsProps) {
               />
             </button>
           ))}
+        </div>
+      </div>
+
+      <div className="space-y-3 border-t pt-4">
+        <Label className="text-xs text-muted-foreground uppercase tracking-wide">
+          AI
+        </Label>
+
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-4 w-4 text-muted-foreground" />
+            <div>
+              <Label htmlFor="ai-summary" className="text-sm font-medium">
+                AI Summary
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Generate a TL;DR using Claude Haiku
+              </p>
+            </div>
+          </div>
+          <Switch
+            id="ai-summary"
+            checked={state.ai_summary}
+            onCheckedChange={(v) =>
+              onChange({ ...state, ai_summary: v })
+            }
+          />
         </div>
       </div>
 

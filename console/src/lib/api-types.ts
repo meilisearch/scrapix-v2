@@ -158,6 +158,13 @@ export interface ScrapeResult {
   links?: string[];
   language?: string;
   metadata?: ScrapeMetadata;
+  ai?: AiResult;
+  warning?: string;
+}
+
+export interface AiResult {
+  summary?: string;
+  extract?: Record<string, unknown>;
 }
 
 // From GET /engines, POST /engines, etc.

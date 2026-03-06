@@ -26,7 +26,7 @@ export function UrlBar({
         {mode === "scrape" ? (
           <Input
             type="url"
-            placeholder="https://example.com"
+            placeholder="https://scrapix.meilisearch.dev"
             value={url}
             onChange={(e) => onUrlChange(e.target.value)}
             onKeyDown={(e) => {
@@ -36,7 +36,7 @@ export function UrlBar({
           />
         ) : (
           <Textarea
-            placeholder={"https://example.com\nhttps://example.com/docs"}
+            placeholder={"https://scrapix.meilisearch.dev\nhttps://scrapix.meilisearch.dev/docs"}
             value={url}
             onChange={(e) => onUrlChange(e.target.value)}
             onKeyDown={(e) => {
