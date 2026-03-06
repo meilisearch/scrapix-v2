@@ -78,6 +78,7 @@ COPY crates/ crates/
 COPY bins/ bins/
 COPY benches/ benches/
 COPY tests/ tests/
+COPY deploy/ deploy/
 
 # Build workspace (only recompiles workspace crates, deps are cached)
 RUN cargo build --release --workspace
