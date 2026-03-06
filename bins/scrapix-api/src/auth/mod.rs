@@ -38,9 +38,17 @@ pub struct AuthState {
 
 impl AuthState {
     pub async fn new(database_url: &str, jwt_secret: String) -> Result<Self, sqlx::Error> {
+        // Heroku Postgres requires SSL but doesn't include sslmode in DATABASE_URL.
+        // Append sslmode=require if no sslmode is already specified.
+        let url = if !database_url.contains("sslmode=") {
+            let sep = if database_url.contains('?') { "&" } else { "?" };
+            format!("{database_url}{sep}sslmode=require")
+        } else {
+            database_url.to_string()
+        };
         let pool = PgPoolOptions::new()
             .max_connections(10)
-            .connect(database_url)
+            .connect(&url)
             .await?;
         Ok(Self { pool, jwt_secret })
     }
