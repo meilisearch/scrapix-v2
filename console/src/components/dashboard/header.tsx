@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { useTheme } from "next-themes";
-import { getMe, logout, type AuthUser } from "@/lib/auth";
+import { logout } from "@/lib/auth";
+import { useMe } from "@/lib/hooks";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,7 +22,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { useRouter } from "next/navigation";
-import { Menu, Moon, Sun } from "lucide-react";
+import { Menu, Moon, Sun, Zap } from "lucide-react";
 import { SidebarContent } from "./sidebar";
 
 const pageTitles: Record<string, string> = {
@@ -43,7 +44,7 @@ function getPageTitle(pathname: string): string {
 }
 
 export function Header() {
-  const [user, setUser] = useState<AuthUser | null>(null);
+  const { data: user } = useMe();
   const [mobileOpen, setMobileOpen] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
@@ -52,7 +53,6 @@ export function Header() {
 
   useEffect(() => {
     setMounted(true);
-    getMe().then(setUser).catch(() => {});
   }, []);
 
   const handleLogout = async () => {
@@ -69,7 +69,7 @@ export function Header() {
       .toUpperCase() || user?.email?.[0].toUpperCase() || "U";
 
   return (
-    <header className="flex h-14 items-center justify-between border-b px-4 md:px-6">
+    <header className="flex h-14 items-center justify-between border-b px-4 md:px-6 neon-header">
       <div className="flex items-center gap-3">
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
           <SheetTrigger asChild>
@@ -89,9 +89,15 @@ export function Header() {
           <Button
             variant="ghost"
             size="icon"
-            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+            onClick={() => {
+              if (theme === "light") setTheme("dark");
+              else if (theme === "dark") setTheme("neon");
+              else setTheme("light");
+            }}
           >
-            {theme === "dark" ? (
+            {theme === "neon" ? (
+              <Zap className="h-4 w-4" />
+            ) : theme === "dark" ? (
               <Sun className="h-4 w-4" />
             ) : (
               <Moon className="h-4 w-4" />

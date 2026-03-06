@@ -108,6 +108,7 @@ export interface ScrapeOptions {
   include_links?: boolean;
   timeout_ms?: number;
   headers?: Record<string, string>;
+  ai?: { summary: boolean };
 }
 
 export async function submitScrape(opts: ScrapeOptions): Promise<ScrapeResult> {
@@ -251,4 +252,35 @@ export async function fetchDailyUsage(accountId: string, days: number = 30): Pro
 
 export async function fetchTopDomains(hours: number = 24, limit: number = 10): Promise<AnalyticsResponse<TopDomainRow>> {
   return request(`/analytics/v0/pipes/top_domains.json?hours=${hours}&limit=${limit}`);
+}
+
+// ============================================================================
+// API Keys
+// ============================================================================
+
+export interface ApiKey {
+  id: string;
+  name: string;
+  prefix: string;
+  active: boolean;
+  last_used_at: string | null;
+  created_at: string;
+}
+
+export async function fetchApiKeys(): Promise<ApiKey[]> {
+  return request("/account/api-keys");
+}
+
+export async function createApiKey(name: string): Promise<{ key: string }> {
+  return request("/account/api-keys", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function revokeApiKey(id: string): Promise<void> {
+  await request(`/account/api-keys/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+  });
 }

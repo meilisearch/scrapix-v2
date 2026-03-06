@@ -1,6 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useApiKeys } from "@/lib/hooks";
+import { createApiKey, revokeApiKey } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -32,87 +35,44 @@ import { Badge } from "@/components/ui/badge";
 import { Plus, Copy, Eye, EyeOff, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
-
-const BASE = "/api/scrapix";
-
-interface ApiKey {
-  id: string;
-  name: string;
-  prefix: string;
-  active: boolean;
-  last_used_at: string | null;
-  created_at: string;
-}
+import { TableSkeleton } from "@/components/table-skeleton";
 
 export default function ApiKeysPage() {
-  const [keys, setKeys] = useState<ApiKey[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+  const { data: keys = [], isLoading } = useApiKeys();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
   const [createdKey, setCreatedKey] = useState<string | null>(null);
   const [showKey, setShowKey] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [revokeTarget, setRevokeTarget] = useState<ApiKey | null>(null);
+  const [revokeTarget, setRevokeTarget] = useState<{ id: string; name: string } | null>(null);
 
-  useEffect(() => {
-    fetchKeys();
-  }, []);
-
-  const fetchKeys = async () => {
-    try {
-      const res = await fetch(`${BASE}/account/api-keys`, {
-        credentials: "include",
-      });
-      if (res.ok) {
-        setKeys(await res.json());
-      }
-    } catch {
-      // ignore
-    }
-    setLoading(false);
-  };
-
-  const createKey = async () => {
+  const handleCreateKey = async () => {
     if (!newKeyName.trim()) return;
 
     setCreating(true);
     try {
-      const res = await fetch(`${BASE}/account/api-keys`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newKeyName.trim() }),
-        credentials: "include",
-      });
-      if (!res.ok) {
-        toast.error("Failed to create API key");
-        setCreating(false);
-        return;
-      }
-      const data = await res.json();
+      const data = await createApiKey(newKeyName.trim());
       setCreatedKey(data.key);
       setNewKeyName("");
-      setCreating(false);
-      fetchKeys();
+      queryClient.invalidateQueries({ queryKey: ["api-keys"] });
     } catch {
       toast.error("Failed to create API key");
+    } finally {
       setCreating(false);
     }
   };
 
-  const revokeKey = async (keyId: string) => {
+  const handleRevokeKey = async () => {
+    if (!revokeTarget) return;
     try {
-      const res = await fetch(`${BASE}/account/api-keys/${keyId}`, {
-        method: "PATCH",
-        credentials: "include",
-      });
-      if (!res.ok) {
-        toast.error("Failed to revoke API key");
-        return;
-      }
+      await revokeApiKey(revokeTarget.id);
       toast.success("API key revoked");
-      fetchKeys();
+      queryClient.invalidateQueries({ queryKey: ["api-keys"] });
     } catch {
       toast.error("Failed to revoke API key");
+    } finally {
+      setRevokeTarget(null);
     }
   };
 
@@ -213,7 +173,7 @@ export default function ApiKeysPage() {
                     Cancel
                   </Button>
                   <Button
-                    onClick={createKey}
+                    onClick={handleCreateKey}
                     disabled={!newKeyName.trim() || creating}
                   >
                     {creating && (
@@ -236,10 +196,8 @@ export default function ApiKeysPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {loading ? (
-            <div className="flex justify-center py-8">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
+          {isLoading ? (
+            <TableSkeleton />
           ) : keys.length === 0 ? (
             <div className="text-center py-8">
               <p className="text-muted-foreground">
@@ -290,7 +248,7 @@ export default function ApiKeysPage() {
                           variant="ghost"
                           size="icon"
                           className="text-destructive hover:text-destructive"
-                          onClick={() => setRevokeTarget(key)}
+                          onClick={() => setRevokeTarget({ id: key.id, name: key.name })}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -314,10 +272,10 @@ export default function ApiKeysPage() {
         <CardContent>
           <div className="bg-muted rounded-lg p-4">
             <code className="text-sm">
-              curl -X POST https://api.scrapix.io/scrape \<br />
+              curl -X POST https://api.scrapix.meilisearch.dev/scrape \<br />
               &nbsp;&nbsp;-H &quot;X-API-Key: sk_live_...&quot; \<br />
               &nbsp;&nbsp;-H &quot;Content-Type: application/json&quot; \<br />
-              &nbsp;&nbsp;-d &apos;{`{"url": "https://example.com"}`}&apos;
+              &nbsp;&nbsp;-d &apos;{`{"url": "https://scrapix.meilisearch.dev"}`}&apos;
             </code>
           </div>
         </CardContent>
@@ -341,15 +299,7 @@ export default function ApiKeysPage() {
             <Button variant="outline" onClick={() => setRevokeTarget(null)}>
               Cancel
             </Button>
-            <Button
-              variant="destructive"
-              onClick={async () => {
-                if (revokeTarget) {
-                  await revokeKey(revokeTarget.id);
-                  setRevokeTarget(null);
-                }
-              }}
-            >
+            <Button variant="destructive" onClick={handleRevokeKey}>
               Revoke Key
             </Button>
           </DialogFooter>

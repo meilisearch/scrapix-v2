@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { getMe, type AuthUser } from "@/lib/auth";
+import { useMe } from "@/lib/hooks";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -12,7 +11,8 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Check, Loader2 } from "lucide-react";
+import { Check } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const plans = [
   {
@@ -77,25 +77,16 @@ const plans = [
 ];
 
 export default function BillingPage() {
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    getMe()
-      .then((u) => {
-        setUser(u);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
-  }, []);
+  const { data: user, isLoading } = useMe();
 
   const accountTier = user?.account?.tier || "free";
   const currentPlan = plans.find((p) => p.tier === accountTier) || plans[0];
 
-  if (loading) {
+  if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      <div className="space-y-6">
+        <Skeleton className="h-8 w-48" />
+        <Skeleton className="h-64 w-full" />
       </div>
     );
   }
@@ -184,7 +175,7 @@ export default function BillingPage() {
                     className="w-full"
                     variant="outline"
                     onClick={() =>
-                      window.open("mailto:billing@scrapix.io", "_blank")
+                      window.open("mailto:billing@meilisearch.com", "_blank")
                     }
                   >
                     Contact Sales

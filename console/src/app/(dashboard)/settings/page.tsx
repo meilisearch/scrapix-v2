@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { getMe, type AuthUser } from "@/lib/auth";
+import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useMe } from "@/lib/hooks";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -16,27 +17,24 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const BASE = "/api/scrapix";
 
 export default function SettingsPage() {
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+  const { data: user, isLoading: loading } = useMe();
   const [savingProfile, setSavingProfile] = useState(false);
   const [savingAccount, setSavingAccount] = useState(false);
   const [fullName, setFullName] = useState("");
   const [accountName, setAccountName] = useState("");
+  const [initialized, setInitialized] = useState(false);
 
-  useEffect(() => {
-    getMe()
-      .then((u) => {
-        setUser(u);
-        setFullName(u.full_name || "");
-        setAccountName(u.account?.name || "");
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
-  }, []);
+  if (user && !initialized) {
+    setFullName(user.full_name || "");
+    setAccountName(user.account?.name || "");
+    setInitialized(true);
+  }
 
   const saveProfile = async () => {
     setSavingProfile(true);
@@ -49,7 +47,7 @@ export default function SettingsPage() {
       });
       if (!res.ok) throw new Error();
       toast.success("Profile updated");
-      setUser((prev) => prev ? { ...prev, full_name: fullName } : prev);
+      queryClient.invalidateQueries({ queryKey: ["me"] });
     } catch {
       toast.error("Failed to update profile");
     }
@@ -67,11 +65,7 @@ export default function SettingsPage() {
       });
       if (!res.ok) throw new Error();
       toast.success("Account updated");
-      setUser((prev) =>
-        prev && prev.account
-          ? { ...prev, account: { ...prev.account, name: accountName } }
-          : prev
-      );
+      queryClient.invalidateQueries({ queryKey: ["me"] });
     } catch {
       toast.error("Failed to update account");
     }
@@ -80,8 +74,9 @@ export default function SettingsPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      <div className="space-y-6">
+        <Skeleton className="h-8 w-48" />
+        <Skeleton className="h-64 w-full" />
       </div>
     );
   }

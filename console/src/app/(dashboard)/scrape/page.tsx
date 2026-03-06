@@ -1,17 +1,18 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
-import { submitScrape, fetchServiceHealth } from "@/lib/api";
-import type { ScrapeResult, ServiceStatus } from "@/lib/api-types";
+import { submitScrape } from "@/lib/api";
+import type { ScrapeResult } from "@/lib/api-types";
+import { useServiceHealth } from "@/lib/hooks";
 import { UrlBar } from "../playground/url-bar";
 import { ScrapeOptions, type ScrapeState } from "../playground/scrape-options";
 import { ResultPanel } from "../playground/result-panel";
 
 export default function ScrapePage() {
-  const [url, setUrl] = useState("https://example.com");
+  const [url, setUrl] = useState("https://scrapix.meilisearch.dev");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ScrapeResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -20,19 +21,11 @@ export default function ScrapePage() {
     only_main_content: true,
     include_links: false,
     timeout_ms: "30000",
+    ai_summary: false,
   });
 
-  const [services, setServices] = useState<ServiceStatus[]>([]);
-
-  useEffect(() => {
-    const poll = () =>
-      fetchServiceHealth()
-        .then((data) => setServices(data.services))
-        .catch(() => {});
-    poll();
-    const interval = setInterval(poll, 10000);
-    return () => clearInterval(interval);
-  }, []);
+  const { data: healthData } = useServiceHealth();
+  const services = healthData?.services ?? [];
 
   const handleScrape = useCallback(async () => {
     if (!url.trim()) {
@@ -55,6 +48,7 @@ export default function ScrapePage() {
         only_main_content: scrapeState.only_main_content,
         include_links: scrapeState.include_links,
         timeout_ms: parseInt(scrapeState.timeout_ms) || 30000,
+        ai: scrapeState.ai_summary ? { summary: true } : undefined,
       });
       setResult(data);
     } catch (err) {

@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { getMe, type AuthUser } from "@/lib/auth";
+import { useMe } from "@/lib/hooks";
 import {
   Card,
   CardContent,
@@ -15,6 +14,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
 import {
   Globe,
   Zap,
@@ -25,7 +25,6 @@ import {
   Play,
 } from "lucide-react";
 import { fetchStats, fetchErrors } from "@/lib/api";
-import type { SystemStats } from "@/lib/api-types";
 
 function StatCard({
   name,
@@ -39,13 +38,13 @@ function StatCard({
   href?: string;
 }) {
   const content = (
-    <Card className={href ? "transition-colors hover:border-primary/50 cursor-pointer" : ""}>
+    <Card className={cn("neon-card neon-glow-panel", href && "transition-colors hover:border-primary/50 cursor-pointer")}>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
         <CardTitle className="text-sm font-medium">{name}</CardTitle>
         <Icon className="h-4 w-4 text-muted-foreground" />
       </CardHeader>
       <CardContent>
-        <div className="text-2xl font-bold">{value}</div>
+        <div className="text-2xl font-bold neon-metric">{value}</div>
       </CardContent>
     </Card>
   );
@@ -54,11 +53,7 @@ function StatCard({
 }
 
 export default function DashboardPage() {
-  const [user, setUser] = useState<AuthUser | null>(null);
-
-  useEffect(() => {
-    getMe().then(setUser).catch(() => {});
-  }, []);
+  const { data: user } = useMe();
 
   const {
     data: stats,
@@ -116,20 +111,20 @@ export default function DashboardPage() {
       ]
     : [];
 
-  const account = user?.account;
+  const account = user?.account ?? null;
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">Dashboard</h2>
+          <h2 className="text-2xl font-bold tracking-tight neon-brand">Dashboard</h2>
           <p className="text-muted-foreground">
             {account
               ? `Welcome back, ${account.name}`
               : "Your crawling overview"}
           </p>
         </div>
-        <Button asChild>
+        <Button asChild className="neon-btn-primary">
           <Link href="/playground">
             <Play className="h-4 w-4 mr-2" />
             New Crawl
@@ -169,7 +164,7 @@ export default function DashboardPage() {
 
       <div className="grid gap-4 lg:grid-cols-3">
         {/* Recent Errors */}
-        <Card className="lg:col-span-2">
+        <Card className="lg:col-span-2 neon-card neon-glow-panel neon-particles">
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
               <div>
@@ -219,7 +214,7 @@ export default function DashboardPage() {
         </Card>
 
         {/* Quick Actions */}
-        <Card>
+        <Card className="neon-card neon-glow-panel">
           <CardHeader>
             <CardTitle>Quick Actions</CardTitle>
           </CardHeader>

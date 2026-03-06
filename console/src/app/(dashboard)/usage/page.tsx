@@ -27,7 +27,7 @@ import {
   fetchAccountUsage,
   fetchDailyUsage,
 } from "@/lib/api";
-import { getMe } from "@/lib/auth";
+import { useMe } from "@/lib/hooks";
 import {
   Area,
   AreaChart,
@@ -71,11 +71,7 @@ export default function UsagePage() {
   const [rangeIdx, setRangeIdx] = useState(0);
   const range = TIME_RANGES[rangeIdx];
 
-  const { data: user } = useQuery({
-    queryKey: ["me"],
-    queryFn: getMe,
-    staleTime: 60_000,
-  });
+  const { data: user } = useMe();
 
   const accountId = user?.account?.id;
 

@@ -4,15 +4,15 @@ import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
-import { createCrawl, fetchServiceHealth } from "@/lib/api";
-import type { ServiceStatus } from "@/lib/api-types";
+import { createCrawl } from "@/lib/api";
+import { useServiceHealth } from "@/lib/hooks";
 import { UrlBar } from "../playground/url-bar";
 import { CrawlOptions, type CrawlState, defaultCrawlState } from "../playground/crawl-options";
 import { ResultPanel } from "../playground/result-panel";
 import { HistoryPanel, loadRuns, saveRun, type RunEntry } from "../playground/recent-runs";
 
 export default function CrawlPage() {
-  const [url, setUrl] = useState("https://example.com");
+  const [url, setUrl] = useState("https://scrapix.meilisearch.dev");
   const [loading, setLoading] = useState(false);
   const [crawlResult, setCrawlResult] = useState<{
     job_id: string;
@@ -23,20 +23,11 @@ export default function CrawlPage() {
   const [runs, setRuns] = useState<RunEntry[]>([]);
 
   const [crawlState, setCrawlState] = useState<CrawlState>(defaultCrawlState);
-  const [services, setServices] = useState<ServiceStatus[]>([]);
+  const { data: healthData } = useServiceHealth();
+  const services = healthData?.services ?? [];
 
   useEffect(() => {
     setRuns(loadRuns());
-  }, []);
-
-  useEffect(() => {
-    const poll = () =>
-      fetchServiceHealth()
-        .then((data) => setServices(data.services))
-        .catch(() => {});
-    poll();
-    const interval = setInterval(poll, 10000);
-    return () => clearInterval(interval);
   }, []);
 
   const handleCrawl = useCallback(async () => {
