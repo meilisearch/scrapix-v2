@@ -44,7 +44,6 @@ enum Command {
     All(all::AllArgs),
 
     // --- CLI commands (forwarded to scrapix-cli) ---
-
     /// Start a new crawl job
     Crawl {
         /// Configuration file path (JSON)
@@ -64,7 +63,12 @@ enum Command {
         follow: bool,
 
         /// API server URL
-        #[arg(short, long, env = "SCRAPIX_API_URL", default_value = "http://localhost:8080")]
+        #[arg(
+            short,
+            long,
+            env = "SCRAPIX_API_URL",
+            default_value = "http://localhost:8080"
+        )]
         api_url: String,
 
         /// Output format (text, json)
@@ -86,7 +90,12 @@ enum Command {
         interval: u64,
 
         /// API server URL
-        #[arg(short, long, env = "SCRAPIX_API_URL", default_value = "http://localhost:8080")]
+        #[arg(
+            short,
+            long,
+            env = "SCRAPIX_API_URL",
+            default_value = "http://localhost:8080"
+        )]
         api_url: String,
 
         /// Output format (text, json)
@@ -100,7 +109,12 @@ enum Command {
         job_id: String,
 
         /// API server URL
-        #[arg(short, long, env = "SCRAPIX_API_URL", default_value = "http://localhost:8080")]
+        #[arg(
+            short,
+            long,
+            env = "SCRAPIX_API_URL",
+            default_value = "http://localhost:8080"
+        )]
         api_url: String,
 
         /// Output format (text, json)
@@ -119,7 +133,12 @@ enum Command {
         offset: usize,
 
         /// API server URL
-        #[arg(short, long, env = "SCRAPIX_API_URL", default_value = "http://localhost:8080")]
+        #[arg(
+            short,
+            long,
+            env = "SCRAPIX_API_URL",
+            default_value = "http://localhost:8080"
+        )]
         api_url: String,
 
         /// Output format (text, json)
@@ -133,7 +152,12 @@ enum Command {
         job_id: String,
 
         /// API server URL
-        #[arg(short, long, env = "SCRAPIX_API_URL", default_value = "http://localhost:8080")]
+        #[arg(
+            short,
+            long,
+            env = "SCRAPIX_API_URL",
+            default_value = "http://localhost:8080"
+        )]
         api_url: String,
 
         /// Output format (text, json)
@@ -144,7 +168,12 @@ enum Command {
     /// Check API server health
     Health {
         /// API server URL
-        #[arg(short, long, env = "SCRAPIX_API_URL", default_value = "http://localhost:8080")]
+        #[arg(
+            short,
+            long,
+            env = "SCRAPIX_API_URL",
+            default_value = "http://localhost:8080"
+        )]
         api_url: String,
 
         /// Output format (text, json)
@@ -162,7 +191,12 @@ enum Command {
         verbose: bool,
 
         /// API server URL
-        #[arg(short, long, env = "SCRAPIX_API_URL", default_value = "http://localhost:8080")]
+        #[arg(
+            short,
+            long,
+            env = "SCRAPIX_API_URL",
+            default_value = "http://localhost:8080"
+        )]
         api_url: String,
 
         /// Output format (text, json)
@@ -193,7 +227,12 @@ enum Command {
         verbose: bool,
 
         /// API server URL
-        #[arg(short, long, env = "SCRAPIX_API_URL", default_value = "http://localhost:8080")]
+        #[arg(
+            short,
+            long,
+            env = "SCRAPIX_API_URL",
+            default_value = "http://localhost:8080"
+        )]
         api_url: String,
     },
 
@@ -204,7 +243,12 @@ enum Command {
         verbose: bool,
 
         /// API server URL
-        #[arg(short, long, env = "SCRAPIX_API_URL", default_value = "http://localhost:8080")]
+        #[arg(
+            short,
+            long,
+            env = "SCRAPIX_API_URL",
+            default_value = "http://localhost:8080"
+        )]
         api_url: String,
 
         /// Output format (text, json)
@@ -223,7 +267,12 @@ enum Command {
         job: Option<String>,
 
         /// API server URL
-        #[arg(short, long, env = "SCRAPIX_API_URL", default_value = "http://localhost:8080")]
+        #[arg(
+            short,
+            long,
+            env = "SCRAPIX_API_URL",
+            default_value = "http://localhost:8080"
+        )]
         api_url: String,
 
         /// Output format (text, json)
@@ -242,7 +291,12 @@ enum Command {
         filter: Option<String>,
 
         /// API server URL
-        #[arg(short, long, env = "SCRAPIX_API_URL", default_value = "http://localhost:8080")]
+        #[arg(
+            short,
+            long,
+            env = "SCRAPIX_API_URL",
+            default_value = "http://localhost:8080"
+        )]
         api_url: String,
 
         /// Output format (text, json)
@@ -306,99 +360,199 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // --- CLI commands: convert to scrapix_cli::Cli and delegate ---
-        Command::Crawl { config_path, config, sync, follow, api_url, output } => {
+        Command::Crawl {
+            config_path,
+            config,
+            sync,
+            follow,
+            api_url,
+            output,
+        } => {
             scrapix_cli::run(scrapix_cli::Cli {
-                api_url, output,
-                command: scrapix_cli::Commands::Crawl { config_path, config, sync, follow },
-            }).await
+                api_url,
+                output,
+                command: scrapix_cli::Commands::Crawl {
+                    config_path,
+                    config,
+                    sync,
+                    follow,
+                },
+            })
+            .await
         }
-        Command::Status { job_id, watch, interval, api_url, output } => {
+        Command::Status {
+            job_id,
+            watch,
+            interval,
+            api_url,
+            output,
+        } => {
             scrapix_cli::run(scrapix_cli::Cli {
-                api_url, output,
-                command: scrapix_cli::Commands::Status { job_id, watch, interval },
-            }).await
+                api_url,
+                output,
+                command: scrapix_cli::Commands::Status {
+                    job_id,
+                    watch,
+                    interval,
+                },
+            })
+            .await
         }
-        Command::Events { job_id, api_url, output } => {
+        Command::Events {
+            job_id,
+            api_url,
+            output,
+        } => {
             scrapix_cli::run(scrapix_cli::Cli {
-                api_url, output,
+                api_url,
+                output,
                 command: scrapix_cli::Commands::Events { job_id },
-            }).await
+            })
+            .await
         }
-        Command::Jobs { limit, offset, api_url, output } => {
+        Command::Jobs {
+            limit,
+            offset,
+            api_url,
+            output,
+        } => {
             scrapix_cli::run(scrapix_cli::Cli {
-                api_url, output,
+                api_url,
+                output,
                 command: scrapix_cli::Commands::Jobs { limit, offset },
-            }).await
+            })
+            .await
         }
-        Command::Cancel { job_id, api_url, output } => {
+        Command::Cancel {
+            job_id,
+            api_url,
+            output,
+        } => {
             scrapix_cli::run(scrapix_cli::Cli {
-                api_url, output,
+                api_url,
+                output,
                 command: scrapix_cli::Commands::Cancel { job_id },
-            }).await
+            })
+            .await
         }
         Command::Health { api_url, output } => {
             scrapix_cli::run(scrapix_cli::Cli {
-                api_url, output,
+                api_url,
+                output,
                 command: scrapix_cli::Commands::Health,
-            }).await
+            })
+            .await
         }
-        Command::Validate { config_path, verbose, api_url, output } => {
+        Command::Validate {
+            config_path,
+            verbose,
+            api_url,
+            output,
+        } => {
             scrapix_cli::run(scrapix_cli::Cli {
-                api_url, output,
-                command: scrapix_cli::Commands::Validate { config_path, verbose },
-            }).await
+                api_url,
+                output,
+                command: scrapix_cli::Commands::Validate {
+                    config_path,
+                    verbose,
+                },
+            })
+            .await
         }
-        Command::Local { config_path, config, output, concurrency, verbose, api_url } => {
+        Command::Local {
+            config_path,
+            config,
+            output,
+            concurrency,
+            verbose,
+            api_url,
+        } => {
             scrapix_cli::run(scrapix_cli::Cli {
-                api_url, output: scrapix_cli::OutputFormat::Text,
-                command: scrapix_cli::Commands::Local { config_path, config, output, concurrency, verbose },
-            }).await
+                api_url,
+                output: scrapix_cli::OutputFormat::Text,
+                command: scrapix_cli::Commands::Local {
+                    config_path,
+                    config,
+                    output,
+                    concurrency,
+                    verbose,
+                },
+            })
+            .await
         }
-        Command::Stats { verbose, api_url, output } => {
+        Command::Stats {
+            verbose,
+            api_url,
+            output,
+        } => {
             scrapix_cli::run(scrapix_cli::Cli {
-                api_url, output,
+                api_url,
+                output,
                 command: scrapix_cli::Commands::Stats { verbose },
-            }).await
+            })
+            .await
         }
-        Command::Errors { last, job, api_url, output } => {
+        Command::Errors {
+            last,
+            job,
+            api_url,
+            output,
+        } => {
             scrapix_cli::run(scrapix_cli::Cli {
-                api_url, output,
+                api_url,
+                output,
                 command: scrapix_cli::Commands::Errors { last, job },
-            }).await
+            })
+            .await
         }
-        Command::Domains { top, filter, api_url, output } => {
+        Command::Domains {
+            top,
+            filter,
+            api_url,
+            output,
+        } => {
             scrapix_cli::run(scrapix_cli::Cli {
-                api_url, output,
+                api_url,
+                output,
                 command: scrapix_cli::Commands::Domains { top, filter },
-            }).await
+            })
+            .await
         }
         Command::Analytics(cmd) => {
             scrapix_cli::run(scrapix_cli::Cli {
-                api_url: std::env::var("SCRAPIX_API_URL").unwrap_or_else(|_| "http://localhost:8080".to_string()),
+                api_url: std::env::var("SCRAPIX_API_URL")
+                    .unwrap_or_else(|_| "http://localhost:8080".to_string()),
                 output: scrapix_cli::OutputFormat::Text,
                 command: scrapix_cli::Commands::Analytics(cmd),
-            }).await
+            })
+            .await
         }
         Command::Bench(cmd) => {
             scrapix_cli::run(scrapix_cli::Cli {
-                api_url: std::env::var("SCRAPIX_API_URL").unwrap_or_else(|_| "http://localhost:8080".to_string()),
+                api_url: std::env::var("SCRAPIX_API_URL")
+                    .unwrap_or_else(|_| "http://localhost:8080".to_string()),
                 output: scrapix_cli::OutputFormat::Text,
                 command: scrapix_cli::Commands::Bench(cmd),
-            }).await
+            })
+            .await
         }
         Command::K8s(cmd) => {
             scrapix_cli::run(scrapix_cli::Cli {
-                api_url: std::env::var("SCRAPIX_API_URL").unwrap_or_else(|_| "http://localhost:8080".to_string()),
+                api_url: std::env::var("SCRAPIX_API_URL")
+                    .unwrap_or_else(|_| "http://localhost:8080".to_string()),
                 output: scrapix_cli::OutputFormat::Text,
                 command: scrapix_cli::Commands::K8s(cmd),
-            }).await
+            })
+            .await
         }
         Command::Infra(cmd) => {
             scrapix_cli::run(scrapix_cli::Cli {
-                api_url: std::env::var("SCRAPIX_API_URL").unwrap_or_else(|_| "http://localhost:8080".to_string()),
+                api_url: std::env::var("SCRAPIX_API_URL")
+                    .unwrap_or_else(|_| "http://localhost:8080".to_string()),
                 output: scrapix_cli::OutputFormat::Text,
                 command: scrapix_cli::Commands::Infra(cmd),
-            }).await
+            })
+            .await
         }
     }
 }

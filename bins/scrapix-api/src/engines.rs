@@ -131,7 +131,7 @@ fn get_pool(state: &AppState) -> Result<&sqlx::PgPool, ApiError> {
 // CRUD Handlers
 // ============================================================================
 
-pub async fn create_engine(
+pub(crate) async fn create_engine(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
     user_ext: Option<Extension<AuthenticatedUser>>,
@@ -180,10 +180,7 @@ pub async fn create_engine(
     .map_err(|e| {
         if let sqlx::Error::Database(ref db_err) = e {
             if db_err.constraint() == Some("meilisearch_engines_account_id_name_key") {
-                return ApiError::new(
-                    "An engine with this name already exists",
-                    "conflict",
-                );
+                return ApiError::new("An engine with this name already exists", "conflict");
             }
         }
         ApiError::new(format!("Failed to create engine: {e}"), "internal_error")
@@ -195,7 +192,7 @@ pub async fn create_engine(
     Ok((StatusCode::CREATED, Json(record)))
 }
 
-pub async fn list_engines(
+pub(crate) async fn list_engines(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
     user_ext: Option<Extension<AuthenticatedUser>>,
@@ -220,7 +217,7 @@ pub async fn list_engines(
     Ok(Json(records))
 }
 
-pub async fn get_engine(
+pub(crate) async fn get_engine(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
     user_ext: Option<Extension<AuthenticatedUser>>,
@@ -249,7 +246,7 @@ pub async fn get_engine(
     Ok(Json(row_to_record(&row)))
 }
 
-pub async fn update_engine(
+pub(crate) async fn update_engine(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
     user_ext: Option<Extension<AuthenticatedUser>>,
@@ -317,7 +314,7 @@ pub async fn update_engine(
     Ok(Json(record))
 }
 
-pub async fn delete_engine(
+pub(crate) async fn delete_engine(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
     user_ext: Option<Extension<AuthenticatedUser>>,
@@ -350,7 +347,7 @@ pub async fn delete_engine(
     Ok(StatusCode::NO_CONTENT)
 }
 
-pub async fn set_default_engine(
+pub(crate) async fn set_default_engine(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
     user_ext: Option<Extension<AuthenticatedUser>>,
@@ -402,7 +399,7 @@ pub async fn set_default_engine(
     Ok(Json(record))
 }
 
-pub async fn list_engine_indexes(
+pub(crate) async fn list_engine_indexes(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
     user_ext: Option<Extension<AuthenticatedUser>>,
@@ -432,7 +429,10 @@ pub async fn list_engine_indexes(
     let engine_api_key: String = row.get("api_key");
 
     let client = reqwest::Client::new();
-    let mut req = client.get(format!("{}/indexes?limit=100", engine_url.trim_end_matches('/')));
+    let mut req = client.get(format!(
+        "{}/indexes?limit=100",
+        engine_url.trim_end_matches('/')
+    ));
     if !engine_api_key.is_empty() {
         req = req.header("Authorization", format!("Bearer {engine_api_key}"));
     }

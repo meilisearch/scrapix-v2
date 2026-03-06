@@ -74,10 +74,7 @@ fn row_to_job_state(row: &sqlx::postgres::PgRow) -> JobState {
 
 /// Insert a new job row. Uses ON CONFLICT DO NOTHING for idempotency.
 pub async fn insert_job(pool: &PgPool, job: &JobState) {
-    let account_id: Option<uuid::Uuid> = job
-        .account_id
-        .as_deref()
-        .and_then(|s| s.parse().ok());
+    let account_id: Option<uuid::Uuid> = job.account_id.as_deref().and_then(|s| s.parse().ok());
 
     let start_urls = serde_json::to_value(&job.start_urls).unwrap_or_default();
 
@@ -168,7 +165,10 @@ pub async fn flush_job_counters(pool: &PgPool, snapshots: &[JobState]) {
     let pages_indexed: Vec<i64> = snapshots.iter().map(|j| j.pages_indexed as i64).collect();
     let documents_sent: Vec<i64> = snapshots.iter().map(|j| j.documents_sent as i64).collect();
     let errors: Vec<i64> = snapshots.iter().map(|j| j.errors as i64).collect();
-    let bytes_downloaded: Vec<i64> = snapshots.iter().map(|j| j.bytes_downloaded as i64).collect();
+    let bytes_downloaded: Vec<i64> = snapshots
+        .iter()
+        .map(|j| j.bytes_downloaded as i64)
+        .collect();
     let crawl_rates: Vec<f64> = snapshots.iter().map(|j| j.crawl_rate).collect();
     let eta_secs: Vec<Option<i64>> = snapshots
         .iter()
@@ -269,13 +269,11 @@ pub async fn get_job_for_account(
 
 /// Paginated list of all jobs, newest first.
 pub async fn list_all_jobs_db(pool: &PgPool, limit: i64, offset: i64) -> Vec<JobState> {
-    let rows = sqlx::query(
-        "SELECT * FROM jobs ORDER BY created_at DESC LIMIT $1 OFFSET $2",
-    )
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(pool)
-    .await;
+    let rows = sqlx::query("SELECT * FROM jobs ORDER BY created_at DESC LIMIT $1 OFFSET $2")
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await;
 
     match rows {
         Ok(rows) => rows.iter().map(row_to_job_state).collect(),

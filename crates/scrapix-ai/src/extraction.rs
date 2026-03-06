@@ -18,8 +18,8 @@ use tracing::{debug, instrument};
 /// Default model for extraction
 pub const DEFAULT_EXTRACTION_MODEL: &str = "claude-haiku-4-5-20251001";
 
-/// Maximum tokens to reserve for the response
-pub const DEFAULT_MAX_RESPONSE_TOKENS: u32 = 2048;
+/// Maximum tokens to reserve for the response (Haiku 4.5 supports up to 8192)
+pub const DEFAULT_MAX_RESPONSE_TOKENS: u32 = 8192;
 
 /// Errors that can occur during extraction
 #[derive(Debug, Error)]
@@ -96,13 +96,8 @@ impl Default for ExtractionConfig {
 }
 
 impl From<&AiExtractionConfig> for ExtractionConfig {
-    fn from(config: &AiExtractionConfig) -> Self {
-        Self {
-            model: config.model.clone(),
-            max_tokens: config.max_tokens.unwrap_or(default_max_tokens()),
-            temperature: Some(0.0),
-            ..Default::default()
-        }
+    fn from(_config: &AiExtractionConfig) -> Self {
+        Self::default()
     }
 }
 
@@ -698,15 +693,13 @@ mod tests {
         let core_config = AiExtractionConfig {
             enabled: true,
             prompt: "Extract data".to_string(),
-            model: "gpt-4".to_string(),
-            max_tokens: Some(1000),
             include_pages: vec![],
             exclude_pages: vec![],
         };
 
         let config = ExtractionConfig::from(&core_config);
-        assert_eq!(config.model, "gpt-4");
-        assert_eq!(config.max_tokens, 1000);
+        assert_eq!(config.model, DEFAULT_EXTRACTION_MODEL);
+        assert_eq!(config.max_tokens, DEFAULT_MAX_RESPONSE_TOKENS);
     }
 
     #[test]

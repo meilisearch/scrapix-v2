@@ -266,7 +266,6 @@ pub struct FeaturesConfig {
     pub ai_summary: Option<FeatureToggle>,
 }
 
-
 impl FeaturesConfig {
     /// Build a FeaturesConfig from CLI args (used as fallback when message has no features)
     pub fn from_cli_args(
@@ -322,8 +321,6 @@ impl FeaturesConfig {
                 Some(AiExtractionConfig {
                     enabled: true,
                     prompt: extraction_prompt.unwrap_or_default(),
-                    model: "gpt-4".to_string(),
-                    max_tokens: None,
                     include_pages: vec![],
                     exclude_pages: vec![],
                 })
@@ -446,23 +443,11 @@ pub struct AiExtractionConfig {
     /// Extraction prompt
     pub prompt: String,
 
-    /// Model to use (gpt-4, claude-3, etc.)
-    #[serde(default = "default_model")]
-    pub model: String,
-
-    /// Maximum tokens in response
-    #[serde(default)]
-    pub max_tokens: Option<u32>,
-
     #[serde(default)]
     pub include_pages: Vec<String>,
 
     #[serde(default)]
     pub exclude_pages: Vec<String>,
-}
-
-fn default_model() -> String {
-    "gpt-4o-mini".to_string()
 }
 
 /// Meilisearch configuration

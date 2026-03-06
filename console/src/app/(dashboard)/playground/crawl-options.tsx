@@ -36,23 +36,6 @@ import { cn } from "@/lib/utils";
 import { fetchEngines } from "@/lib/api";
 import type { MeilisearchEngine } from "@/lib/api-types";
 
-const OPENAI_CHAT_MODELS = [
-  { value: "gpt-4o", label: "GPT-4o" },
-  { value: "gpt-4o-mini", label: "GPT-4o Mini" },
-  { value: "gpt-4-turbo", label: "GPT-4 Turbo" },
-  { value: "gpt-4", label: "GPT-4" },
-  { value: "gpt-3.5-turbo", label: "GPT-3.5 Turbo" },
-  { value: "o1", label: "o1" },
-  { value: "o1-mini", label: "o1 Mini" },
-  { value: "o3-mini", label: "o3 Mini" },
-] as const;
-
-const OPENAI_EMBEDDING_MODELS = [
-  { value: "text-embedding-3-small", label: "text-embedding-3-small" },
-  { value: "text-embedding-3-large", label: "text-embedding-3-large" },
-  { value: "text-embedding-ada-002", label: "text-embedding-ada-002" },
-] as const;
-
 const SCHEMA_ORG_TYPES = [
   // Creative Works
   "Article", "NewsArticle", "BlogPosting", "TechArticle", "ScholarlyArticle",
@@ -115,12 +98,7 @@ export interface CrawlState {
   custom_selectors: string;
   feat_ai_extraction: boolean;
   ai_extraction_prompt: string;
-  ai_extraction_model: string;
-  ai_extraction_max_tokens: string;
   feat_ai_summary: boolean;
-  feat_embeddings: boolean;
-  embeddings_model: string;
-  embeddings_dimensions: string;
   // Advanced
   headers: string;
   user_agents: string;
@@ -163,12 +141,7 @@ export const defaultCrawlState: CrawlState = {
   custom_selectors: "",
   feat_ai_extraction: false,
   ai_extraction_prompt: "",
-  ai_extraction_model: "gpt-4o-mini",
-  ai_extraction_max_tokens: "",
   feat_ai_summary: false,
-  feat_embeddings: false,
-  embeddings_model: "text-embedding-3-small",
-  embeddings_dimensions: "",
   headers: "",
   user_agents: "",
   proxy_urls: "",
@@ -808,34 +781,6 @@ export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
                     rows={3}
                   />
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label className="text-sm font-medium">Model</Label>
-                    <Select
-                      value={state.ai_extraction_model}
-                      onValueChange={(v) => set("ai_extraction_model", v)}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {OPENAI_CHAT_MODELS.map((m) => (
-                          <SelectItem key={m.value} value={m.value}>
-                            {m.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <NumericInput
-                    id="ai-tokens"
-                    label="Max Tokens"
-                    value={state.ai_extraction_max_tokens}
-                    onChange={(v) => set("ai_extraction_max_tokens", v)}
-                    placeholder="Auto"
-                    min="1"
-                  />
-                </div>
               </div>
             )}
 
@@ -848,44 +793,6 @@ export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
               onCheckedChange={(v) => set("feat_ai_summary", v)}
             />
 
-            {/* Embeddings */}
-            <SwitchRow
-              id="feat-embeddings"
-              label="Embeddings"
-              description="Generate vector embeddings for semantic search"
-              checked={state.feat_embeddings}
-              onCheckedChange={(v) => set("feat_embeddings", v)}
-            />
-            {state.feat_embeddings && (
-              <div className="space-y-3 pl-1 border-l-2 border-primary/20 ml-1">
-                <div className="space-y-1.5">
-                  <Label className="text-sm font-medium">Model</Label>
-                  <Select
-                    value={state.embeddings_model}
-                    onValueChange={(v) => set("embeddings_model", v)}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {OPENAI_EMBEDDING_MODELS.map((m) => (
-                        <SelectItem key={m.value} value={m.value}>
-                          {m.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <NumericInput
-                  id="emb-dims"
-                  label="Dimensions"
-                  value={state.embeddings_dimensions}
-                  onChange={(v) => set("embeddings_dimensions", v)}
-                  placeholder="Model default"
-                  min="1"
-                />
-              </div>
-            )}
           </div>
         </ScrollArea>
       </TabsContent>

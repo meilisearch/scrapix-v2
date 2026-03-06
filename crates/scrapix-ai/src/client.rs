@@ -84,7 +84,7 @@ pub struct AiClientConfig {
 }
 
 fn default_provider() -> String {
-    "openai".to_string()
+    "anthropic".to_string()
 }
 fn default_max_concurrent() -> usize {
     10
@@ -218,13 +218,13 @@ impl AiClient {
 
     /// Create a client from environment variables.
     ///
-    /// Reads `AI_PROVIDER` (default: "openai") and the corresponding API key:
-    /// - openai: `OPENAI_API_KEY`
+    /// Reads `AI_PROVIDER` (default: "anthropic") and the corresponding API key:
     /// - anthropic: `ANTHROPIC_API_KEY`
+    /// - openai: `OPENAI_API_KEY`
     /// - gemini: `GOOGLE_GEMINI_API_KEY`
     /// - mistral: `MISTRAL_API_KEY`
     pub fn from_env() -> Result<Self, AiClientError> {
-        let provider = std::env::var("AI_PROVIDER").unwrap_or_else(|_| "openai".to_string());
+        let provider = std::env::var("AI_PROVIDER").unwrap_or_else(|_| "anthropic".to_string());
 
         let api_key = match provider.as_str() {
             "openai" => std::env::var("OPENAI_API_KEY")
@@ -426,7 +426,7 @@ mod tests {
     #[test]
     fn test_config_defaults() {
         let config = AiClientConfig::default();
-        assert_eq!(config.provider, "openai");
+        assert_eq!(config.provider, "anthropic");
         assert_eq!(config.max_concurrent_requests, 10);
         assert_eq!(config.max_retries, 3);
         assert_eq!(config.retry_delay_ms, 1000);

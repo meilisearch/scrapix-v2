@@ -794,10 +794,7 @@ impl ClickHouseStorage {
 
     /// Insert multiple job events in batch.
     #[instrument(skip(self, events), fields(count = events.len()))]
-    pub async fn insert_job_events(
-        &self,
-        events: Vec<JobEvent>,
-    ) -> Result<(), ClickHouseError> {
+    pub async fn insert_job_events(&self, events: Vec<JobEvent>) -> Result<(), ClickHouseError> {
         if events.is_empty() {
             return Ok(());
         }

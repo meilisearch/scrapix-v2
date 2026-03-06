@@ -40,12 +40,7 @@ pub trait MessageProducer: Send + Sync + 'static {
     ) -> Result<(i32, i64)>;
 
     /// Send raw bytes to a topic.
-    async fn send_raw(
-        &self,
-        topic: &str,
-        key: Option<&str>,
-        payload: &[u8],
-    ) -> Result<(i32, i64)>;
+    async fn send_raw(&self, topic: &str, key: Option<&str>, payload: &[u8]) -> Result<(i32, i64)>;
 
     /// Flush all pending messages.
     fn flush(&self, timeout: Duration);

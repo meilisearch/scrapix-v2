@@ -152,7 +152,7 @@ fn default_model() -> String {
 }
 
 fn default_max_tokens() -> u32 {
-    1024
+    8192 // Haiku 4.5 max output tokens
 }
 
 fn default_max_content_tokens() -> usize {

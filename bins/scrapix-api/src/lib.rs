@@ -3302,7 +3302,7 @@ pub async fn run_with_bus(
         match AiClient::from_env_with_tracking() {
             Ok((client, rx)) => {
                 let provider =
-                    std::env::var("AI_PROVIDER").unwrap_or_else(|_| "openai".to_string());
+                    std::env::var("AI_PROVIDER").unwrap_or_else(|_| "anthropic".to_string());
                 info!(provider = %provider, "AI service initialized with usage tracking");
                 (Some(Arc::new(AiService::new(Arc::new(client)))), Some(rx))
             }
@@ -3315,7 +3315,7 @@ pub async fn run_with_bus(
         match AiClient::from_env() {
             Ok(client) => {
                 let provider =
-                    std::env::var("AI_PROVIDER").unwrap_or_else(|_| "openai".to_string());
+                    std::env::var("AI_PROVIDER").unwrap_or_else(|_| "anthropic".to_string());
                 info!(provider = %provider, "AI service initialized");
                 (Some(Arc::new(AiService::new(Arc::new(client)))), None)
             }

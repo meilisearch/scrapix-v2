@@ -1470,10 +1470,7 @@ pub fn create_analytics_router(state: Arc<AnalyticsState>) -> Router {
         .route("/pipes/kpis.json", get(pipe_kpis))
         .route("/pipes/ai_usage.json", get(pipe_ai_usage))
         .route("/pipes/job_timeline.json", get(pipe_job_timeline))
-        .route(
-            "/pipes/job_event_summary.json",
-            get(pipe_job_event_summary),
-        )
+        .route("/pipes/job_event_summary.json", get(pipe_job_event_summary))
         .route("/pipes/account_usage.json", get(pipe_account_usage))
         .route(
             "/pipes/account_daily_usage.json",

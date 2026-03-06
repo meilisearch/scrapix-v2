@@ -295,12 +295,7 @@ impl crate::traits::MessageProducer for KafkaProducer {
         KafkaProducer::send(self, topic, key, payload).await
     }
 
-    async fn send_raw(
-        &self,
-        topic: &str,
-        key: Option<&str>,
-        payload: &[u8],
-    ) -> Result<(i32, i64)> {
+    async fn send_raw(&self, topic: &str, key: Option<&str>, payload: &[u8]) -> Result<(i32, i64)> {
         KafkaProducer::send_raw(self, topic, key, payload, None).await
     }
 

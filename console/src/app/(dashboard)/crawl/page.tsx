@@ -162,14 +162,10 @@ export default function CrawlPage() {
       }
     }
     if (crawlState.feat_ai_extraction) {
-      const ai: Record<string, unknown> = {
+      features.ai_extraction = {
         enabled: true,
         prompt: crawlState.ai_extraction_prompt,
-        model: crawlState.ai_extraction_model,
       };
-      const maxTokens = optInt(crawlState.ai_extraction_max_tokens);
-      if (maxTokens) ai.max_tokens = maxTokens;
-      features.ai_extraction = ai;
     }
     if (crawlState.feat_ai_summary) features.ai_summary = { enabled: true };
     if (Object.keys(features).length > 0) config.features = features;

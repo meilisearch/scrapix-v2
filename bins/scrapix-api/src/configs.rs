@@ -110,7 +110,7 @@ async fn resolve_account_id(
 }
 
 /// Compute the next run time from a cron expression.
-pub fn compute_next_run(cron_expr: &str) -> Result<chrono::DateTime<chrono::Utc>, String> {
+pub(crate) fn compute_next_run(cron_expr: &str) -> Result<chrono::DateTime<chrono::Utc>, String> {
     use croner::Cron;
     use std::str::FromStr;
 
@@ -149,7 +149,7 @@ fn row_to_record(row: &sqlx::postgres::PgRow) -> CrawlConfigRecord {
 // CRUD Handlers
 // ============================================================================
 
-pub async fn create_config(
+pub(crate) async fn create_config(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
     user_ext: Option<Extension<AuthenticatedUser>>,
@@ -220,7 +220,7 @@ pub async fn create_config(
     Ok((StatusCode::CREATED, Json(record)))
 }
 
-pub async fn list_configs(
+pub(crate) async fn list_configs(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
     user_ext: Option<Extension<AuthenticatedUser>>,
@@ -252,7 +252,7 @@ pub async fn list_configs(
     Ok(Json(records))
 }
 
-pub async fn get_config(
+pub(crate) async fn get_config(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
     user_ext: Option<Extension<AuthenticatedUser>>,
@@ -285,7 +285,7 @@ pub async fn get_config(
     Ok(Json(row_to_record(&row)))
 }
 
-pub async fn update_config(
+pub(crate) async fn update_config(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
     user_ext: Option<Extension<AuthenticatedUser>>,
@@ -384,7 +384,7 @@ pub async fn update_config(
     Ok(Json(record))
 }
 
-pub async fn delete_config(
+pub(crate) async fn delete_config(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
     user_ext: Option<Extension<AuthenticatedUser>>,
@@ -425,7 +425,7 @@ pub async fn delete_config(
 // Trigger Handler
 // ============================================================================
 
-pub async fn trigger_config(
+pub(crate) async fn trigger_config(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
     user_ext: Option<Extension<AuthenticatedUser>>,
@@ -501,7 +501,7 @@ pub async fn trigger_config(
 
 /// Spawn the cron scheduler background task.
 /// Checks every 30 seconds for configs whose next_run_at has passed.
-pub fn spawn_cron_scheduler(
+pub(crate) fn spawn_cron_scheduler(
     state: Arc<AppState>,
     pool: PgPool,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
