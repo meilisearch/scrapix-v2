@@ -1441,7 +1441,7 @@ impl ContentWorker {
                 .as_ref()
                 .map(|c| &c.prompt)
                 .or(self.ai_config.extraction_prompt.as_ref());
-            if let Some(ref prompt) = prompt {
+            if let Some(prompt) = prompt {
                 match ai_service.extract(&content_for_ai, prompt).await {
                     Ok(result) => {
                         debug!(

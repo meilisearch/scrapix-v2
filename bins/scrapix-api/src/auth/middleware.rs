@@ -105,7 +105,7 @@ pub async fn validate_api_key(
 }
 
 /// Middleware: validate JWT session from scrapix_session cookie
-pub async fn validate_session(
+pub(crate) async fn validate_session(
     State(auth_state): State<Arc<AuthState>>,
     jar: CookieJar,
     mut request: Request,
@@ -139,7 +139,7 @@ pub async fn validate_session(
 
 /// Middleware: accept either API key (X-API-Key header) or session cookie.
 /// This allows both external API clients and the console to access protected routes.
-pub async fn validate_api_key_or_session(
+pub(crate) async fn validate_api_key_or_session(
     State(auth_state): State<Arc<AuthState>>,
     jar: CookieJar,
     mut request: Request,

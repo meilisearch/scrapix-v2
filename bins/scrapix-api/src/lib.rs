@@ -74,7 +74,7 @@ use tracing::{debug, error, info, warn};
 
 use scrapix_ai::{AiClient, AiService, FieldDefinition as AiFieldDefinition, SchemaBuilder};
 use scrapix_core::billing::BillingTier;
-use scrapix_core::{CrawlConfig, CrawlerType, CrawlUrl, JobState, JobStatus};
+use scrapix_core::{CrawlConfig, CrawlUrl, CrawlerType, JobState, JobStatus};
 use scrapix_crawler::{HttpFetcher, HttpFetcherBuilder, RobotsCache, RobotsConfig, SitemapParser};
 use scrapix_extractor::{
     ContentBlock, ExtractedMetadata, ExtractedSchema, Extractor, SelectorDefinition,
@@ -171,6 +171,7 @@ struct AppConfig {
 }
 
 impl AppState {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         producer: AnyProducer,
         config: AppConfig,
@@ -556,7 +557,8 @@ fn kafka_event_to_clickhouse(job_id: &str, event: &CrawlEvent) -> Option<ClickHo
 
 /// Convert a millisecond epoch timestamp to OffsetDateTime.
 fn offset_datetime_from_millis(millis: i64) -> time::OffsetDateTime {
-    time::OffsetDateTime::from_unix_timestamp(millis / 1000).unwrap_or_else(|_| time::OffsetDateTime::now_utc())
+    time::OffsetDateTime::from_unix_timestamp(millis / 1000)
+        .unwrap_or_else(|_| time::OffsetDateTime::now_utc())
 }
 
 /// Convert any Kafka CrawlEvent to a ClickHouse JobEvent for the job_events table.
@@ -811,7 +813,10 @@ async fn extract_account_context(
 /// Check that the authenticated account owns the given job.
 /// Returns Ok(()) when: auth is disabled, job has no account_id (legacy), or account matches.
 /// Returns Err(not_found) when account_id doesn't match (don't leak job existence).
-fn check_job_ownership(job: &JobState, account_ctx: &Option<AccountContext>) -> Result<(), ApiError> {
+fn check_job_ownership(
+    job: &JobState,
+    account_ctx: &Option<AccountContext>,
+) -> Result<(), ApiError> {
     if let Some(ctx) = account_ctx {
         if let Some(ref job_account) = job.account_id {
             if job_account != &ctx.account_id {
@@ -1369,12 +1374,8 @@ async fn scrape_url(
     user_ext: Option<Extension<AuthenticatedUser>>,
     Json(request): Json<ScrapeRequest>,
 ) -> Result<Json<ScrapeResponse>, ApiError> {
-    let account_ctx = extract_account_context(
-        state.db_pool.as_ref(),
-        &account_ext,
-        &user_ext,
-    )
-    .await;
+    let account_ctx =
+        extract_account_context(state.db_pool.as_ref(), &account_ext, &user_ext).await;
 
     if let Some(ref ctx) = account_ctx {
         debug!(account_id = %ctx.account_id, "Scrape request from account");
@@ -1464,7 +1465,10 @@ async fn scrape_url(
         // Track failed scrape in ClickHouse analytics
         if let Some(ref batcher) = state.clickhouse_batcher {
             let domain = extract_domain(&final_url).unwrap_or_default();
-            let account_id = account_ctx.as_ref().map(|c| c.account_id.clone()).unwrap_or_default();
+            let account_id = account_ctx
+                .as_ref()
+                .map(|c| c.account_id.clone())
+                .unwrap_or_default();
             let ch_event = ClickHouseCrawlEvent {
                 url: final_url.clone(),
                 domain,
@@ -1701,7 +1705,10 @@ async fn scrape_url(
     // Track successful scrape in ClickHouse analytics
     if let Some(ref batcher) = state.clickhouse_batcher {
         let domain = extract_domain(&final_url).unwrap_or_default();
-        let account_id = account_ctx.as_ref().map(|c| c.account_id.clone()).unwrap_or_default();
+        let account_id = account_ctx
+            .as_ref()
+            .map(|c| c.account_id.clone())
+            .unwrap_or_default();
         let content_length = original_html_len;
         let ch_event = ClickHouseCrawlEvent {
             url: final_url.clone(),
@@ -2152,10 +2159,7 @@ struct MapFetchResult {
 
 /// Extract links from an HTML document, resolving relative URLs against a base.
 /// Only returns same-domain http(s) links.
-fn extract_page_links(
-    html: &str,
-    base_url: &url::Url,
-) -> Vec<(String, Option<String>)> {
+fn extract_page_links(html: &str, base_url: &url::Url) -> Vec<(String, Option<String>)> {
     let document = scraper::Html::parse_document(html);
     let link_selector = scraper::Selector::parse("a[href]").unwrap();
     let base_domain = base_url.host_str().unwrap_or("");
@@ -2241,12 +2245,8 @@ async fn map_url(
     user_ext: Option<Extension<AuthenticatedUser>>,
     Json(request): Json<MapRequest>,
 ) -> Result<Json<MapResponse>, ApiError> {
-    let _account_ctx = extract_account_context(
-        state.db_pool.as_ref(),
-        &account_ext,
-        &user_ext,
-    )
-    .await;
+    let _account_ctx =
+        extract_account_context(state.db_pool.as_ref(), &account_ext, &user_ext).await;
 
     let start_time = std::time::Instant::now();
 
@@ -2291,7 +2291,9 @@ async fn map_url(
                 for su in sitemap_urls {
                     // Only include same-domain sitemap URLs
                     if let Ok(su_parsed) = url::Url::parse(&su.loc) {
-                        if su_parsed.host_str().unwrap_or("") == base_domain && vis.insert(su.loc.clone()) {
+                        if su_parsed.host_str().unwrap_or("") == base_domain
+                            && vis.insert(su.loc.clone())
+                        {
                             sitemap_urls_to_crawl.push(su.loc);
                         }
                     }
@@ -2456,13 +2458,11 @@ async fn create_crawl(
     user_ext: Option<Extension<AuthenticatedUser>>,
     Json(config): Json<CrawlConfig>,
 ) -> Result<Json<CreateCrawlResponse>, ApiError> {
-    let account_ctx = extract_account_context(
-        state.db_pool.as_ref(),
-        &account_ext,
-        &user_ext,
-    )
-    .await;
-    Ok(Json(do_create_crawl(&state, config, account_ctx.as_ref()).await?))
+    let account_ctx =
+        extract_account_context(state.db_pool.as_ref(), &account_ext, &user_ext).await;
+    Ok(Json(
+        do_create_crawl(&state, config, account_ctx.as_ref()).await?,
+    ))
 }
 
 /// Create a sync crawl job (waits for completion)
@@ -2472,12 +2472,8 @@ async fn create_crawl_sync(
     user_ext: Option<Extension<AuthenticatedUser>>,
     Json(config): Json<CrawlConfig>,
 ) -> Result<Json<JobStatusResponse>, ApiError> {
-    let account_ctx = extract_account_context(
-        state.db_pool.as_ref(),
-        &account_ext,
-        &user_ext,
-    )
-    .await;
+    let account_ctx =
+        extract_account_context(state.db_pool.as_ref(), &account_ext, &user_ext).await;
     // First create the async job
     let response = do_create_crawl(&state, config, account_ctx.as_ref()).await?;
     let job_id = response.job_id.clone();
@@ -2540,12 +2536,8 @@ async fn job_status(
     user_ext: Option<Extension<AuthenticatedUser>>,
     Path(job_id): Path<String>,
 ) -> Result<Json<JobStatusResponse>, ApiError> {
-    let account_ctx = extract_account_context(
-        state.db_pool.as_ref(),
-        &account_ext,
-        &user_ext,
-    )
-    .await;
+    let account_ctx =
+        extract_account_context(state.db_pool.as_ref(), &account_ext, &user_ext).await;
 
     // Try in-memory first, fall back to Postgres for historical jobs
     let job = if let Some(job) = state.get_job(&job_id) {
@@ -2573,12 +2565,8 @@ async fn job_events(
     user_ext: Option<Extension<AuthenticatedUser>>,
     Path(job_id): Path<String>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>>, ApiError> {
-    let account_ctx = extract_account_context(
-        state.db_pool.as_ref(),
-        &account_ext,
-        &user_ext,
-    )
-    .await;
+    let account_ctx =
+        extract_account_context(state.db_pool.as_ref(), &account_ext, &user_ext).await;
 
     // Check if job exists and ownership
     let job = state
@@ -3044,12 +3032,8 @@ async fn cancel_job(
     user_ext: Option<Extension<AuthenticatedUser>>,
     Path(job_id): Path<String>,
 ) -> Result<Json<JobStatusResponse>, ApiError> {
-    let account_ctx = extract_account_context(
-        state.db_pool.as_ref(),
-        &account_ext,
-        &user_ext,
-    )
-    .await;
+    let account_ctx =
+        extract_account_context(state.db_pool.as_ref(), &account_ext, &user_ext).await;
 
     // Check ownership before cancelling
     let existing = state
@@ -3084,12 +3068,8 @@ async fn list_jobs(
     user_ext: Option<Extension<AuthenticatedUser>>,
     Query(params): Query<ListJobsQuery>,
 ) -> Json<Vec<JobStatusResponse>> {
-    let account_ctx = extract_account_context(
-        state.db_pool.as_ref(),
-        &account_ext,
-        &user_ext,
-    )
-    .await;
+    let account_ctx =
+        extract_account_context(state.db_pool.as_ref(), &account_ext, &user_ext).await;
 
     // When Postgres is available, query DB for full history (survives restarts)
     // and overlay in-memory data for running jobs (fresher counters).
@@ -3376,7 +3356,10 @@ pub async fn run_with_bus(
                     activity.insert(job.job_id.clone(), now);
                 }
             }
-            info!(count = recovered.len(), "Recovered active jobs from Postgres");
+            info!(
+                count = recovered.len(),
+                "Recovered active jobs from Postgres"
+            );
         }
     }
 

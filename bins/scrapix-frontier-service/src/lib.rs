@@ -151,6 +151,7 @@ struct JobFrontier {
 }
 
 impl JobFrontier {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         job_id: &str,
         index_uid: &str,
@@ -382,7 +383,8 @@ impl FrontierService {
             kafka_links_consumer.subscribe(&[topic_names::LINKS])?;
             info!(topic = topic_names::LINKS, "Subscribed to links topic");
 
-            let links_consumer: Arc<AnyConsumer> = Arc::new(AnyConsumer::from(kafka_links_consumer));
+            let links_consumer: Arc<AnyConsumer> =
+                Arc::new(AnyConsumer::from(kafka_links_consumer));
 
             (Some(graph), Some(links_consumer))
         } else {
@@ -1070,8 +1072,14 @@ pub async fn run_with_bus(
     );
 
     let service = Arc::new(
-        FrontierService::with_bus(&args, producer, main_consumer, links_consumer, history_consumer)
-            .await?,
+        FrontierService::with_bus(
+            &args,
+            producer,
+            main_consumer,
+            links_consumer,
+            history_consumer,
+        )
+        .await?,
     );
 
     let result = service.run().await;

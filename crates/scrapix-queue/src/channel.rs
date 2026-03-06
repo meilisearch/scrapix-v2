@@ -216,42 +216,34 @@ impl MessageConsumer for ChannelConsumer {
         let receiver = self.get_receiver(&topics[0]);
         let mut offset = 0i64;
 
-        loop {
-            match receiver.recv().await {
-                Ok(bytes) => {
-                    let metadata = MessageMetadata {
-                        topic: topics[0].clone(),
-                        partition: 0,
-                        offset,
-                        key: None,
-                        timestamp: Some(chrono::Utc::now().timestamp_millis()),
-                    };
-                    offset += 1;
+        while let Ok(bytes) = receiver.recv().await {
+            let metadata = MessageMetadata {
+                topic: topics[0].clone(),
+                partition: 0,
+                offset,
+                key: None,
+                timestamp: Some(chrono::Utc::now().timestamp_millis()),
+            };
+            offset += 1;
 
-                    match serde_json::from_slice::<T>(&bytes) {
-                        Ok(payload) => {
-                            if let Err(e) = handler(payload, metadata.clone()).await {
-                                error!(
-                                    topic = %metadata.topic,
-                                    offset = metadata.offset,
-                                    error = %e,
-                                    "Handler error"
-                                );
-                            }
-                        }
-                        Err(e) => {
-                            error!(
-                                topic = %metadata.topic,
-                                offset = metadata.offset,
-                                error = %e,
-                                "Deserialization error"
-                            );
-                        }
+            match serde_json::from_slice::<T>(&bytes) {
+                Ok(payload) => {
+                    if let Err(e) = handler(payload, metadata.clone()).await {
+                        error!(
+                            topic = %metadata.topic,
+                            offset = metadata.offset,
+                            error = %e,
+                            "Handler error"
+                        );
                     }
                 }
-                Err(_) => {
-                    // Channel closed
-                    break;
+                Err(e) => {
+                    error!(
+                        topic = %metadata.topic,
+                        offset = metadata.offset,
+                        error = %e,
+                        "Deserialization error"
+                    );
                 }
             }
         }

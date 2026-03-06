@@ -761,6 +761,7 @@ impl CrawlerWorker {
     }
 
     /// Discover and publish sitemap URLs for a domain (if not already done)
+    #[allow(clippy::too_many_arguments)]
     async fn maybe_discover_sitemaps(
         &self,
         domain: &str,
