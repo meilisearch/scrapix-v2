@@ -172,15 +172,6 @@ export default function CrawlPage() {
       features.ai_extraction = ai;
     }
     if (crawlState.feat_ai_summary) features.ai_summary = { enabled: true };
-    if (crawlState.feat_embeddings) {
-      const emb: Record<string, unknown> = {
-        enabled: true,
-        model: crawlState.embeddings_model,
-      };
-      const dims = optInt(crawlState.embeddings_dimensions);
-      if (dims) emb.dimensions = dims;
-      features.embeddings = emb;
-    }
     if (Object.keys(features).length > 0) config.features = features;
 
     const headers = optJson(crawlState.headers);
@@ -257,9 +248,14 @@ export default function CrawlPage() {
         onUrlChange={setUrl}
         onSubmit={handleCrawl}
         loading={loading}
+        historySlot={
+          <div className="p-3 h-full">
+            <HistoryPanel runs={runs} onReplay={handleReplay} typeFilter="crawl" />
+          </div>
+        }
       />
 
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(280px,1fr)_1fr_minmax(220px,260px)] gap-4 flex-1 min-h-0">
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(280px,1fr)_1fr] gap-4 flex-1 min-h-0">
         <Card className="overflow-auto">
           <CardContent className="p-4">
             <CrawlOptions state={crawlState} onChange={setCrawlState} />
@@ -275,12 +271,6 @@ export default function CrawlPage() {
               loading={loading}
               error={error}
             />
-          </CardContent>
-        </Card>
-
-        <Card className="overflow-hidden">
-          <CardContent className="p-4 h-full">
-            <HistoryPanel runs={runs} onReplay={handleReplay} typeFilter="crawl" />
           </CardContent>
         </Card>
       </div>

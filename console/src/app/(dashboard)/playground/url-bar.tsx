@@ -3,7 +3,12 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Loader2, Play } from "lucide-react";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Loader2, Play, History } from "lucide-react";
 
 interface UrlBarProps {
   mode: "scrape" | "crawl";
@@ -11,6 +16,7 @@ interface UrlBarProps {
   onUrlChange: (url: string) => void;
   onSubmit: () => void;
   loading: boolean;
+  historySlot?: React.ReactNode;
 }
 
 export function UrlBar({
@@ -19,10 +25,23 @@ export function UrlBar({
   onUrlChange,
   onSubmit,
   loading,
+  historySlot,
 }: UrlBarProps) {
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-start gap-2 rounded-lg border bg-card p-2">
+        {historySlot && (
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="ghost" size="icon" className="shrink-0">
+                <History className="h-4 w-4" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-72 p-0">
+              <div className="h-80">{historySlot}</div>
+            </PopoverContent>
+          </Popover>
+        )}
         {mode === "scrape" ? (
           <Input
             type="url"
