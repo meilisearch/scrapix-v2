@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ThemeToggle } from "./theme-toggle";
 
 export default function AuthLayout({
   children,
@@ -35,7 +36,8 @@ export default function AuthLayout({
           </blockquote>
         </div>
       </div>
-      <div className="flex items-center justify-center p-8">
+      <div className="relative flex items-center justify-center p-8">
+        <ThemeToggle />
         <div className="mx-auto flex w-full flex-col justify-center space-y-6 sm:w-[350px]">
           {children}
           <p className="px-8 text-center text-sm text-muted-foreground">
