@@ -3716,7 +3716,7 @@ pub async fn run_with_bus(
         );
         info!("Analytics API enabled at /analytics/v0/pipes");
     } else {
-        info!("Analytics API disabled (CLICKHOUSE_URL not set)");
+        info!("Analytics API disabled (ClickHouse not available)");
     }
 
     // CORS: credential-aware

@@ -29,7 +29,7 @@ redis = { workspace = true }
 rust-s3 = "0.34"
 
 # ClickHouse for analytics
-clickhouse = { version = "0.13", features = ["time", "uuid"] }
+clickhouse = { version = "0.13", features = ["time", "uuid", "native-tls"] }
 time = { workspace = true }
 
 # Utilities

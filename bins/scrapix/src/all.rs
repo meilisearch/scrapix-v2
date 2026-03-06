@@ -62,12 +62,6 @@ pub struct AllArgs {
 }
 
 pub async fn run_all(args: AllArgs) -> anyhow::Result<()> {
-    // Log ClickHouse env vars for debugging
-    match std::env::var("CLICKHOUSE_URL") {
-        Ok(url) => info!(url = %url, "CLICKHOUSE_URL is set"),
-        Err(_) => info!("CLICKHOUSE_URL is NOT set in environment"),
-    }
-
     if let Some(ref brokers) = args.kafka_brokers {
         info!(brokers = %brokers, "Running all services with Kafka message bus");
         run_all_kafka(&args, brokers).await
