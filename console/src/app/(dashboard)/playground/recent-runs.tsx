@@ -7,10 +7,11 @@ import { formatDistanceToNow } from "date-fns";
 
 export interface RunEntry {
   id: string;
-  type: "scrape" | "crawl";
+  type: "scrape" | "crawl" | "map";
   url: string;
   status_code?: number;
   duration_ms?: number;
+  total_links?: number;
   timestamp: string;
 }
 
@@ -36,7 +37,7 @@ export function saveRun(run: RunEntry): RunEntry[] {
 interface HistoryPanelProps {
   runs: RunEntry[];
   onReplay: (run: RunEntry) => void;
-  typeFilter?: "scrape" | "crawl";
+  typeFilter?: "scrape" | "crawl" | "map";
 }
 
 export function HistoryPanel({ runs, onReplay, typeFilter }: HistoryPanelProps) {
@@ -86,6 +87,11 @@ export function HistoryPanel({ runs, onReplay, typeFilter }: HistoryPanelProps) 
                       className="text-[10px] px-1.5 py-0"
                     >
                       {run.status_code}
+                    </Badge>
+                  )}
+                  {run.total_links != null && (
+                    <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                      {run.total_links} links
                     </Badge>
                   )}
                 </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,9 +26,16 @@ import {
   Loader2,
   Copy,
   Download,
+  History,
 } from "lucide-react";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { submitMap } from "@/lib/api";
 import { CodeBlock } from "@/app/(dashboard)/playground/result-panel";
+import { HistoryPanel, loadRuns, saveRun, type RunEntry } from "@/app/(dashboard)/playground/recent-runs";
 import type { MapResult, MapLink } from "@/lib/api-types";
 
 const MAP_EXAMPLE = `curl -X POST https://scrapix.meilisearch.dev/map \\
@@ -50,6 +57,11 @@ export default function MapPage() {
   const [result, setResult] = useState<MapResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filterText, setFilterText] = useState("");
+  const [runs, setRuns] = useState<RunEntry[]>([]);
+
+  useEffect(() => {
+    setRuns(loadRuns());
+  }, []);
 
   const handleMap = useCallback(async () => {
     if (!url.trim()) {
@@ -69,6 +81,15 @@ export default function MapPage() {
         search: search.trim() || undefined,
       });
       setResult(data);
+      const newRuns = saveRun({
+        id: Math.random().toString(36).slice(2) + Date.now().toString(36),
+        type: "map",
+        url,
+        duration_ms: data.duration_ms,
+        total_links: data.total,
+        timestamp: new Date().toISOString(),
+      });
+      setRuns(newRuns);
     } catch (err) {
       const msg =
         err instanceof Error
@@ -82,6 +103,10 @@ export default function MapPage() {
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") handleMap();
+  };
+
+  const handleReplay = (run: RunEntry) => {
+    setUrl(run.url);
   };
 
   const filteredLinks =
@@ -123,6 +148,18 @@ export default function MapPage() {
         <CardContent className="p-4">
           <div className="flex flex-col gap-4">
             <div className="flex gap-2">
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="ghost" size="icon" className="shrink-0">
+                    <History className="h-4 w-4" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-72 p-0">
+                  <div className="h-80 p-3">
+                    <HistoryPanel runs={runs} onReplay={handleReplay} typeFilter="map" />
+                  </div>
+                </PopoverContent>
+              </Popover>
               <div className="flex-1">
                 <Input
                   placeholder="https://scrapix.meilisearch.dev"

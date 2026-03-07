@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -10,12 +10,14 @@ import { useServiceHealth } from "@/lib/hooks";
 import { UrlBar } from "../playground/url-bar";
 import { ScrapeOptions, type ScrapeState } from "../playground/scrape-options";
 import { ResultPanel } from "../playground/result-panel";
+import { HistoryPanel, loadRuns, saveRun, type RunEntry } from "../playground/recent-runs";
 
 export default function ScrapePage() {
   const [url, setUrl] = useState("https://scrapix.meilisearch.dev");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ScrapeResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [runs, setRuns] = useState<RunEntry[]>([]);
   const [scrapeState, setScrapeState] = useState<ScrapeState>({
     formats: ["markdown", "metadata"],
     only_main_content: true,
@@ -26,6 +28,10 @@ export default function ScrapePage() {
 
   const { data: healthData } = useServiceHealth();
   const services = healthData?.services ?? [];
+
+  useEffect(() => {
+    setRuns(loadRuns());
+  }, []);
 
   const handleScrape = useCallback(async () => {
     if (!url.trim()) {
@@ -51,6 +57,15 @@ export default function ScrapePage() {
         ai: scrapeState.ai_summary ? { summary: true } : undefined,
       });
       setResult(data);
+      const newRuns = saveRun({
+        id: Math.random().toString(36).slice(2) + Date.now().toString(36),
+        type: "scrape",
+        url,
+        status_code: data.status_code,
+        duration_ms: data.scrape_duration_ms,
+        timestamp: new Date().toISOString(),
+      });
+      setRuns(newRuns);
     } catch (err) {
       const msg =
         err instanceof Error
@@ -61,6 +76,10 @@ export default function ScrapePage() {
 
     setLoading(false);
   }, [url, scrapeState]);
+
+  const handleReplay = (run: RunEntry) => {
+    setUrl(run.url);
+  };
 
   return (
     <div className="flex flex-col gap-4 h-[calc(100vh-6rem)]">
@@ -93,6 +112,11 @@ export default function ScrapePage() {
         onUrlChange={setUrl}
         onSubmit={handleScrape}
         loading={loading}
+        historySlot={
+          <div className="p-3 h-full">
+            <HistoryPanel runs={runs} onReplay={handleReplay} typeFilter="scrape" />
+          </div>
+        }
       />
 
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(280px,1fr)_3fr] gap-4 flex-1 min-h-0">
