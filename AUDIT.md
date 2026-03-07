@@ -19,10 +19,9 @@ Results of a comprehensive static analysis of the Rust codebase covering error h
 - `jobs_db.rs` — Never persist `swap_meilisearch_api_key` (bind NULL)
 - `lib.rs` — Redact `meilisearch.api_key` from config JSON before DB storage (both code paths)
 
-### 1.3 — Upgrade API key hashing from SHA-256 to Argon2/bcrypt
-**`bins/scrapix-api/src/auth/middleware.rs:59`**
-- Current: SHA-256 hash lookup
-- Target: bcrypt or Argon2 with salt
+### 1.3 — API key hashing ✅ NO ACTION NEEDED
+- SHA-256 is appropriate for high-entropy API keys (not user passwords)
+- Argon2/bcrypt would add latency per request with no security benefit
 
 ### 1.4 — Semaphore `.unwrap()` in AI client hot path ✅ DONE
 - Replaced `.unwrap()` with `.map_err()` returning `AiClientError::Config`
@@ -122,8 +121,8 @@ The concurrency patterns are solid:
 
 | Phase | Total | Done | Deferred |
 |-------|-------|------|----------|
-| 1. Security | 5 | 4 | 1 (key hashing — SHA-256 acceptable for API keys) |
+| 1. Security | 5 | 5 | 0 |
 | 2. Architecture | 5 | 5 | 0 |
 | 3. Error handling | 3 | 3 | 0 |
 | 4. Performance | 5 | 5 | 0 |
-| **Total** | **18** | **17** | **1** |
+| **Total** | **18** | **18** | **0** |
