@@ -241,9 +241,9 @@ export default function DashboardPage() {
             {stats && (
               <div className="pt-3 border-t space-y-2">
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">Plan</span>
-                  <span className="font-medium capitalize">
-                    {account?.tier || "Free"}
+                  <span className="text-muted-foreground">Credits</span>
+                  <span className="font-medium">
+                    {account?.credits_balance?.toLocaleString() ?? "0"}
                   </span>
                 </div>
                 <div className="flex items-center justify-between text-sm">

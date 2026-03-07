@@ -6,81 +6,14 @@ import {
   Card,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Check } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
-
-const plans = [
-  {
-    name: "Free",
-    tier: "free",
-    price: "$0",
-    period: "forever",
-    description: "For hobbyists and testing",
-    features: [
-      "1,000 pages / month",
-      "500 MB bandwidth",
-      "1 API key",
-      "Community support",
-    ],
-  },
-  {
-    name: "Starter",
-    tier: "starter",
-    price: "$29",
-    period: "per month",
-    description: "For small projects",
-    features: [
-      "10,000 pages / month",
-      "5 GB bandwidth",
-      "5 API keys",
-      "Email support",
-      "JavaScript rendering",
-    ],
-    popular: true,
-  },
-  {
-    name: "Pro",
-    tier: "pro",
-    price: "$99",
-    period: "per month",
-    description: "For growing businesses",
-    features: [
-      "100,000 pages / month",
-      "50 GB bandwidth",
-      "Unlimited API keys",
-      "Priority support",
-      "JavaScript rendering",
-      "Custom crawl schedules",
-    ],
-  },
-  {
-    name: "Enterprise",
-    tier: "enterprise",
-    price: "Custom",
-    period: "",
-    description: "For large-scale operations",
-    features: [
-      "Unlimited pages",
-      "Unlimited bandwidth",
-      "Unlimited API keys",
-      "Dedicated support",
-      "SLA guarantee",
-      "Custom integrations",
-      "On-premise deployment",
-    ],
-  },
-];
+import { CreditCard, Zap, ArrowRight } from "lucide-react";
 
 export default function BillingPage() {
   const { data: user, isLoading } = useMe();
-
-  const accountTier = user?.account?.tier || "free";
-  const currentPlan = plans.find((p) => p.tier === accountTier) || plans[0];
 
   if (isLoading) {
     return (
@@ -96,100 +29,103 @@ export default function BillingPage() {
       <div>
         <h2 className="text-2xl font-bold tracking-tight">Billing</h2>
         <p className="text-muted-foreground">
-          Manage your subscription and view usage
+          Manage your credits and payment methods
         </p>
       </div>
 
-      {/* Current Plan */}
+      {/* Credits Balance */}
       <Card>
         <CardHeader>
-          <CardTitle>Current Plan</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            <Zap className="h-5 w-5" />
+            Credits Balance
+          </CardTitle>
           <CardDescription>
-            You are on the <span className="font-medium">{currentPlan.name}</span> plan
+            Credits are consumed per crawl request. All features are available with credits.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="flex items-baseline gap-2">
-            <span className="text-4xl font-bold">{currentPlan.price}</span>
-            {currentPlan.period && (
-              <span className="text-muted-foreground">
-                {currentPlan.period}
-              </span>
-            )}
+            <span className="text-4xl font-bold">
+              {user?.account?.credits_balance?.toLocaleString() ?? "0"}
+            </span>
+            <span className="text-muted-foreground">credits remaining</span>
           </div>
-          <ul className="mt-4 space-y-2">
-            {currentPlan.features.map((feature) => (
-              <li key={feature} className="flex items-center gap-2 text-sm">
-                <Check className="h-4 w-4 text-green-500" />
-                {feature}
-              </li>
-            ))}
-          </ul>
         </CardContent>
       </Card>
 
-      {/* Plans */}
-      <div>
-        <h3 className="text-lg font-semibold mb-4">Available Plans</h3>
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          {plans.map((plan) => (
-            <Card
-              key={plan.tier}
-              className={plan.popular ? "border-primary shadow-md" : ""}
-            >
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle>{plan.name}</CardTitle>
-                  {plan.popular && <Badge>Popular</Badge>}
+      {/* Pricing */}
+      <Card>
+        <CardHeader>
+          <CardTitle>How credits work</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="rounded-lg border p-4 space-y-1">
+              <p className="text-sm font-medium">Page crawl</p>
+              <p className="text-2xl font-bold">1 credit</p>
+              <p className="text-xs text-muted-foreground">Per page fetched</p>
+            </div>
+            <div className="rounded-lg border p-4 space-y-1">
+              <p className="text-sm font-medium">JS rendering</p>
+              <p className="text-2xl font-bold">5 credits</p>
+              <p className="text-xs text-muted-foreground">Per page with browser</p>
+            </div>
+            <div className="rounded-lg border p-4 space-y-1">
+              <p className="text-sm font-medium">AI extraction</p>
+              <p className="text-2xl font-bold">10 credits</p>
+              <p className="text-xs text-muted-foreground">Per AI-processed page</p>
+            </div>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            No feature restrictions. Everything is available — you only pay for what you use.
+          </p>
+        </CardContent>
+      </Card>
+
+      {/* Add Credits */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <CreditCard className="h-5 w-5" />
+            Add Credits
+          </CardTitle>
+          <CardDescription>
+            Prepay credits to use across all features
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-3 sm:grid-cols-3">
+            {[
+              { amount: 1_000, price: "$10" },
+              { amount: 10_000, price: "$80", badge: "Save 20%" },
+              { amount: 100_000, price: "$500", badge: "Save 50%" },
+            ].map((pack) => (
+              <Button
+                key={pack.amount}
+                variant="outline"
+                className="h-auto flex-col items-start gap-1 p-4"
+                disabled
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-lg font-bold">
+                    {pack.amount.toLocaleString()} credits
+                  </span>
                 </div>
-                <CardDescription>{plan.description}</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-baseline gap-1 mb-4">
-                  <span className="text-3xl font-bold">{plan.price}</span>
-                  {plan.period && (
-                    <span className="text-sm text-muted-foreground">
-                      {plan.period}
-                    </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium">{pack.price}</span>
+                  {pack.badge && (
+                    <span className="text-xs text-primary">{pack.badge}</span>
                   )}
                 </div>
-                <ul className="space-y-2">
-                  {plan.features.map((feature) => (
-                    <li
-                      key={feature}
-                      className="flex items-center gap-2 text-sm"
-                    >
-                      <Check className="h-4 w-4 text-green-500 flex-shrink-0" />
-                      <span>{feature}</span>
-                    </li>
-                  ))}
-                </ul>
-              </CardContent>
-              <CardFooter>
-                {accountTier === plan.tier ? (
-                  <Button className="w-full" disabled variant="outline">
-                    Current Plan
-                  </Button>
-                ) : plan.tier === "enterprise" ? (
-                  <Button
-                    className="w-full"
-                    variant="outline"
-                    onClick={() =>
-                      window.open("mailto:billing@meilisearch.com", "_blank")
-                    }
-                  >
-                    Contact Sales
-                  </Button>
-                ) : (
-                  <Button className="w-full" disabled variant="outline">
-                    Coming Soon
-                  </Button>
-                )}
-              </CardFooter>
-            </Card>
-          ))}
-        </div>
-      </div>
+                <span className="text-xs text-muted-foreground flex items-center gap-1">
+                  Coming soon <ArrowRight className="h-3 w-3" />
+                </span>
+              </Button>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

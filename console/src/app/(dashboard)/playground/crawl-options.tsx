@@ -564,7 +564,6 @@ export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
                 value={state.max_depth}
                 onChange={(v) => set("max_depth", v)}
                 min="1"
-                max="20"
               />
               <NumericInput
                 id="max-pages"
@@ -572,7 +571,6 @@ export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
                 value={state.max_pages}
                 onChange={(v) => set("max_pages", v)}
                 min="1"
-                max="100000"
               />
             </div>
 
@@ -815,7 +813,6 @@ export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
                 value={state.max_concurrent_requests}
                 onChange={(v) => set("max_concurrent_requests", v)}
                 min="1"
-                max="1000"
               />
               <NumericInput
                 id="browser-pool"
@@ -823,7 +820,6 @@ export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
                 value={state.browser_pool_size}
                 onChange={(v) => set("browser_pool_size", v)}
                 min="1"
-                max="50"
               />
             </div>
 
@@ -833,7 +829,6 @@ export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
               value={state.dns_concurrency}
               onChange={(v) => set("dns_concurrency", v)}
               min="1"
-              max="1000"
             />
 
             {/* Rate Limiting */}
@@ -988,7 +983,6 @@ export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
                 value={state.meilisearch_batch_size}
                 onChange={(v) => set("meilisearch_batch_size", v)}
                 min="1"
-                max="10000"
               />
             </div>
 

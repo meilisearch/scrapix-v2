@@ -73,8 +73,7 @@ use tower_http::{
 use tracing::{debug, error, info, warn};
 
 use scrapix_ai::{AiClient, AiService, FieldDefinition as AiFieldDefinition, SchemaBuilder};
-use scrapix_core::billing::BillingTier;
-use scrapix_core::{CrawlConfig, CrawlUrl, CrawlerType, JobState, JobStatus};
+use scrapix_core::{CrawlConfig, CrawlUrl, JobState, JobStatus};
 use scrapix_crawler::{HttpFetcher, HttpFetcherBuilder, RobotsCache, RobotsConfig, SitemapParser};
 use scrapix_extractor::{
     ContentBlock, ExtractedMetadata, ExtractedSchema, Extractor, SelectorDefinition,
@@ -772,7 +771,7 @@ impl IntoResponse for ApiError {
             "bad_request" | "validation_error" => StatusCode::BAD_REQUEST,
             "unauthorized" => StatusCode::UNAUTHORIZED,
             "conflict" => StatusCode::CONFLICT,
-            "tier_limit_exceeded" => StatusCode::TOO_MANY_REQUESTS,
+            "insufficient_credits" => StatusCode::PAYMENT_REQUIRED,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
         (status, Json(self)).into_response()
@@ -788,7 +787,6 @@ use crate::auth::{AuthenticatedAccount, AuthenticatedUser};
 /// Resolved account context from either API key or session auth
 pub(crate) struct AccountContext {
     pub account_id: String,
-    pub tier: BillingTier,
 }
 
 /// Extract account context from request extensions.
@@ -798,19 +796,17 @@ async fn extract_account_context(
     account_ext: &Option<Extension<AuthenticatedAccount>>,
     user_ext: &Option<Extension<AuthenticatedUser>>,
 ) -> Option<AccountContext> {
-    // API key path: tier is directly available
+    // API key path
     if let Some(Extension(acct)) = account_ext {
-        let tier = acct.tier.parse::<BillingTier>().unwrap_or_default();
         return Some(AccountContext {
             account_id: acct.account_id.clone(),
-            tier,
         });
     }
 
-    // Session path: look up account_id + tier via DB
+    // Session path: look up account_id via DB
     if let (Some(Extension(user)), Some(pool)) = (user_ext, db_pool) {
         let row = sqlx::query(
-            "SELECT a.id, a.tier FROM account_members m \
+            "SELECT a.id FROM account_members m \
              JOIN accounts a ON a.id = m.account_id \
              WHERE m.user_id = $1 LIMIT 1",
         )
@@ -823,11 +819,8 @@ async fn extract_account_context(
         if let Some(row) = row {
             use sqlx::Row;
             let account_id: uuid::Uuid = row.get("id");
-            let tier_str: String = row.get("tier");
-            let tier = tier_str.parse::<BillingTier>().unwrap_or_default();
             return Some(AccountContext {
                 account_id: account_id.to_string(),
-                tier,
             });
         }
     }
@@ -1869,58 +1862,7 @@ pub(crate) async fn do_create_crawl(
         return Err(ApiError::new("Index UID is required", "validation_error"));
     }
 
-    // Enforce billing tier limits when account context is available
-    if let Some(ctx) = account_ctx {
-        let tier = ctx.tier;
-
-        // Max depth
-        if let Some(max_depth) = config.max_depth {
-            if max_depth > tier.max_depth() {
-                return Err(ApiError::new(
-                    format!(
-                        "Max depth {} exceeds your {} plan limit of {}",
-                        max_depth,
-                        tier,
-                        tier.max_depth()
-                    ),
-                    "tier_limit_exceeded",
-                ));
-            }
-        }
-
-        // JS rendering
-        if config.crawler_type == CrawlerType::Browser && !tier.js_rendering_enabled() {
-            return Err(ApiError::new(
-                format!(
-                    "JS rendering (browser crawler) is not available on the {} plan",
-                    tier
-                ),
-                "tier_limit_exceeded",
-            ));
-        }
-
-        // Concurrent jobs
-        let running_jobs = state
-            .crawl.jobs
-            .read()
-            .values()
-            .filter(|j| {
-                j.account_id.as_deref() == Some(&ctx.account_id)
-                    && matches!(j.status, JobStatus::Running | JobStatus::Pending)
-            })
-            .count() as u32;
-
-        if running_jobs >= tier.max_concurrent_jobs() {
-            return Err(ApiError::new(
-                format!(
-                    "Concurrent job limit reached ({}/{}). Upgrade your plan or wait for existing jobs to complete.",
-                    running_jobs,
-                    tier.max_concurrent_jobs()
-                ),
-                "tier_limit_exceeded",
-            ));
-        }
-    }
+    // Account context is used for attribution only (no tier enforcement)
 
     // Generate job ID
     let job_id = uuid::Uuid::new_v4().to_string();

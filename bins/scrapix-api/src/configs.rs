@@ -16,8 +16,6 @@ use tracing::{error, info, warn};
 
 use scrapix_core::CrawlConfig;
 
-use scrapix_core::billing::BillingTier;
-
 use crate::auth::{get_user_account_id, AuthenticatedAccount, AuthenticatedUser};
 use crate::{do_create_crawl, AccountContext, ApiError, AppState};
 
@@ -459,17 +457,8 @@ pub(crate) async fn trigger_config(
     let crawl_config: CrawlConfig = serde_json::from_value(config_json)
         .map_err(|e| ApiError::new(format!("Invalid stored config: {e}"), "internal_error"))?;
 
-    // Build account context for tier enforcement
-    let tier_str: String = sqlx::query_scalar("SELECT tier FROM accounts WHERE id = $1")
-        .bind(account_id)
-        .fetch_optional(pool)
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| "free".to_string());
     let account_ctx = AccountContext {
         account_id: account_id.to_string(),
-        tier: tier_str.parse::<BillingTier>().unwrap_or_default(),
     };
 
     let response = do_create_crawl(&state, crawl_config, Some(&account_ctx)).await?;
@@ -566,17 +555,8 @@ async fn run_cron_tick(state: &Arc<AppState>, pool: &PgPool) -> Result<(), sqlx:
             }
         };
 
-        // Build account context for tier enforcement
-        let tier_str: String = sqlx::query_scalar("SELECT tier FROM accounts WHERE id = $1")
-            .bind(account_id)
-            .fetch_optional(pool)
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| "free".to_string());
         let account_ctx = AccountContext {
             account_id: account_id.to_string(),
-            tier: tier_str.parse::<BillingTier>().unwrap_or_default(),
         };
 
         // Trigger crawl
