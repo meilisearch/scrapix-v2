@@ -3273,13 +3273,13 @@ async fn init_clickhouse() -> (
     );
 
     // Create event batcher (batch size of 100 events)
-    let batcher = Arc::new(CrawlEventBatcher::new(storage.clone(), 100));
+    let batcher = Arc::new(CrawlEventBatcher::new(storage.clone(), 100, "crawl_events"));
 
     // Create AI usage batcher (batch size of 50 events)
-    let ai_batcher = Arc::new(AiUsageBatcher::new(storage.clone(), 50));
+    let ai_batcher = Arc::new(AiUsageBatcher::new(storage.clone(), 50, "ai_usage"));
 
     // Create job event batcher (batch size of 200 events — all event types)
-    let job_batcher = Arc::new(JobEventBatcher::new(storage.clone(), 200));
+    let job_batcher = Arc::new(JobEventBatcher::new(storage.clone(), 200, "job_events"));
 
     // Create analytics state (sharing the same storage connection)
     let analytics_state = Arc::new(analytics::AnalyticsState::with_storage(storage));

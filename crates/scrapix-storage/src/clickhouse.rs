@@ -1445,28 +1445,63 @@ pub struct DailyUsageStats {
 }
 
 // ============================================================================
-// Event Batcher
+// Generic Event Batcher
 // ============================================================================
 
-/// Batches crawl events for efficient bulk inserts.
-pub struct CrawlEventBatcher {
-    storage: ClickHouseStorage,
-    batch: parking_lot::Mutex<Vec<CrawlEvent>>,
-    batch_size: usize,
+/// Trait for flushing a batch of events to a storage backend.
+#[async_trait::async_trait]
+pub trait BatchInsert<T: Send>: Send + Sync {
+    async fn insert_batch(&self, events: Vec<T>) -> Result<(), ClickHouseError>;
 }
 
-impl CrawlEventBatcher {
+#[async_trait::async_trait]
+impl BatchInsert<CrawlEvent> for ClickHouseStorage {
+    async fn insert_batch(&self, events: Vec<CrawlEvent>) -> Result<(), ClickHouseError> {
+        self.insert_crawl_events(events).await
+    }
+}
+
+#[async_trait::async_trait]
+impl BatchInsert<AiUsageClickHouseEvent> for ClickHouseStorage {
+    async fn insert_batch(
+        &self,
+        events: Vec<AiUsageClickHouseEvent>,
+    ) -> Result<(), ClickHouseError> {
+        self.insert_ai_usage_events(events).await
+    }
+}
+
+#[async_trait::async_trait]
+impl BatchInsert<JobEvent> for ClickHouseStorage {
+    async fn insert_batch(&self, events: Vec<JobEvent>) -> Result<(), ClickHouseError> {
+        self.insert_job_events(events).await
+    }
+}
+
+/// Generic event batcher that buffers events and flushes in bulk.
+pub struct EventBatcher<T: Send> {
+    storage: ClickHouseStorage,
+    batch: parking_lot::Mutex<Vec<T>>,
+    batch_size: usize,
+    label: &'static str,
+}
+
+impl<T: Send + 'static> EventBatcher<T>
+where
+    ClickHouseStorage: BatchInsert<T>,
+{
     /// Create a new event batcher.
-    pub fn new(storage: ClickHouseStorage, batch_size: usize) -> Self {
+    pub fn new(storage: ClickHouseStorage, batch_size: usize, label: &'static str) -> Self {
         Self {
             storage,
             batch: parking_lot::Mutex::new(Vec::with_capacity(batch_size)),
             batch_size,
+            label,
         }
     }
 
     /// Add an event to the batch. Flushes automatically when batch is full.
-    pub async fn add(&self, event: CrawlEvent) -> Result<(), ClickHouseError> {
+    pub async fn add(&self, event: T) -> Result<(), ClickHouseError> {
         let should_flush = {
             let mut batch = self.batch.lock();
             batch.push(event);
@@ -1488,7 +1523,7 @@ impl CrawlEventBatcher {
         };
 
         if !events.is_empty() {
-            self.storage.insert_crawl_events(events).await?;
+            self.storage.insert_batch(events).await?;
         }
 
         Ok(())
@@ -1500,17 +1535,21 @@ impl CrawlEventBatcher {
     }
 }
 
-impl Drop for CrawlEventBatcher {
+impl<T: Send> Drop for EventBatcher<T> {
     fn drop(&mut self) {
         let batch = std::mem::take(&mut *self.batch.lock());
         if !batch.is_empty() {
             warn!(
                 count = batch.len(),
-                "CrawlEventBatcher dropped with pending events"
+                label = self.label,
+                "EventBatcher dropped with pending events"
             );
         }
     }
 }
+
+/// Type aliases for backward compatibility.
+pub type CrawlEventBatcher = EventBatcher<CrawlEvent>;
 
 // ============================================================================
 // AI Usage Events
@@ -1582,137 +1621,13 @@ pub struct AiUsageStats {
     pub avg_duration_ms: f64,
 }
 
-/// Batches AI usage events for efficient bulk inserts.
-pub struct AiUsageBatcher {
-    storage: ClickHouseStorage,
-    batch: parking_lot::Mutex<Vec<AiUsageClickHouseEvent>>,
-    batch_size: usize,
-}
-
-impl AiUsageBatcher {
-    /// Create a new AI usage event batcher.
-    pub fn new(storage: ClickHouseStorage, batch_size: usize) -> Self {
-        Self {
-            storage,
-            batch: parking_lot::Mutex::new(Vec::with_capacity(batch_size)),
-            batch_size,
-        }
-    }
-
-    /// Add an event to the batch. Flushes automatically when batch is full.
-    pub async fn add(&self, event: AiUsageClickHouseEvent) -> Result<(), ClickHouseError> {
-        let should_flush = {
-            let mut batch = self.batch.lock();
-            batch.push(event);
-            batch.len() >= self.batch_size
-        };
-
-        if should_flush {
-            self.flush().await?;
-        }
-
-        Ok(())
-    }
-
-    /// Flush all pending events.
-    pub async fn flush(&self) -> Result<(), ClickHouseError> {
-        let events = {
-            let mut batch = self.batch.lock();
-            std::mem::take(&mut *batch)
-        };
-
-        if !events.is_empty() {
-            self.storage.insert_ai_usage_events(events).await?;
-        }
-
-        Ok(())
-    }
-
-    /// Get the number of pending events.
-    pub fn pending_count(&self) -> usize {
-        self.batch.lock().len()
-    }
-}
-
-impl Drop for AiUsageBatcher {
-    fn drop(&mut self) {
-        let batch = std::mem::take(&mut *self.batch.lock());
-        if !batch.is_empty() {
-            warn!(
-                count = batch.len(),
-                "AiUsageBatcher dropped with pending events"
-            );
-        }
-    }
-}
+pub type AiUsageBatcher = EventBatcher<AiUsageClickHouseEvent>;
 
 // ============================================================================
 // Job Event Batcher
 // ============================================================================
 
-/// Batches job events for efficient bulk inserts.
-pub struct JobEventBatcher {
-    storage: ClickHouseStorage,
-    batch: parking_lot::Mutex<Vec<JobEvent>>,
-    batch_size: usize,
-}
-
-impl JobEventBatcher {
-    /// Create a new job event batcher.
-    pub fn new(storage: ClickHouseStorage, batch_size: usize) -> Self {
-        Self {
-            storage,
-            batch: parking_lot::Mutex::new(Vec::with_capacity(batch_size)),
-            batch_size,
-        }
-    }
-
-    /// Add an event to the batch. Flushes automatically when batch is full.
-    pub async fn add(&self, event: JobEvent) -> Result<(), ClickHouseError> {
-        let should_flush = {
-            let mut batch = self.batch.lock();
-            batch.push(event);
-            batch.len() >= self.batch_size
-        };
-
-        if should_flush {
-            self.flush().await?;
-        }
-
-        Ok(())
-    }
-
-    /// Flush all pending events.
-    pub async fn flush(&self) -> Result<(), ClickHouseError> {
-        let events = {
-            let mut batch = self.batch.lock();
-            std::mem::take(&mut *batch)
-        };
-
-        if !events.is_empty() {
-            self.storage.insert_job_events(events).await?;
-        }
-
-        Ok(())
-    }
-
-    /// Get the number of pending events.
-    pub fn pending_count(&self) -> usize {
-        self.batch.lock().len()
-    }
-}
-
-impl Drop for JobEventBatcher {
-    fn drop(&mut self) {
-        let batch = std::mem::take(&mut *self.batch.lock());
-        if !batch.is_empty() {
-            warn!(
-                count = batch.len(),
-                "JobEventBatcher dropped with pending events"
-            );
-        }
-    }
-}
+pub type JobEventBatcher = EventBatcher<JobEvent>;
 
 // ============================================================================
 // Tests
