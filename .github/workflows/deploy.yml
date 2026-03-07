@@ -1,0 +1,60 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  # Detect which parts of the codebase changed
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      api: ${{ steps.filter.outputs.api }}
+      console: ${{ steps.filter.outputs.console }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            api:
+              - 'crates/**'
+              - 'bins/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'Dockerfile.heroku'
+            console:
+              - 'console/**'
+
+  deploy-api:
+    name: Deploy API
+    needs: changes
+    if: needs.changes.outputs.api == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Deploy to Heroku
+        uses: akhileshns/heroku-deploy@v3.13.15
+        with:
+          heroku_api_key: ${{ secrets.HEROKU_API_KEY }}
+          heroku_app_name: scrapix-api
+          heroku_email: ${{ secrets.HEROKU_EMAIL }}
+
+  deploy-console:
+    name: Deploy Console
+    needs: changes
+    if: needs.changes.outputs.console == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Deploy console subtree to Heroku
+        env:
+          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+        run: |
+          git remote add heroku-console https://heroku:${HEROKU_API_KEY}@git.heroku.com/scrapix-console.git
+          git push heroku-console $(git subtree split --prefix console main):refs/heads/main --force
