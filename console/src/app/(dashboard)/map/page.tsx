@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,8 +27,19 @@ import {
   Copy,
   Download,
 } from "lucide-react";
+import { codeToHtml } from "shiki";
 import { submitMap } from "@/lib/api";
 import type { MapResult, MapLink } from "@/lib/api-types";
+
+const MAP_EXAMPLE = `curl -X POST https://scrapix.meilisearch.dev/map \\
+  -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer YOUR_API_KEY" \\
+  -d '{
+    "url": "https://example.com",
+    "depth": 2,
+    "limit": 5000,
+    "search": "blog"
+  }'`;
 
 export default function MapPage() {
   const [url, setUrl] = useState("https://scrapix.meilisearch.dev");
@@ -291,21 +302,50 @@ export default function MapPage() {
         )}
 
         {!loading && !error && !result && (
-          <Card className="h-full flex items-center justify-center">
-            <div className="text-center text-muted-foreground space-y-2">
-              <Network className="h-10 w-10 mx-auto opacity-30" />
-              <p className="text-sm">
-                Enter a URL to discover all pages on a website.
-              </p>
-              <p className="text-xs">
-                Uses sitemaps and BFS link crawling to find pages with their
-                titles and descriptions.
+          <Card className="h-full flex flex-col">
+            <div className="px-6 pt-4 pb-2">
+              <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
+                API Example
               </p>
             </div>
+            <ScrollArea className="flex-1 min-h-0">
+              <MapCodeExample />
+            </ScrollArea>
           </Card>
         )}
       </div>
     </div>
+  );
+}
+
+function MapCodeExample() {
+  const [html, setHtml] = useState<string>("");
+
+  useEffect(() => {
+    let cancelled = false;
+    codeToHtml(MAP_EXAMPLE, {
+      lang: "bash",
+      themes: { light: "github-light", dark: "github-dark" },
+      defaultColor: false,
+    }).then((result) => {
+      if (!cancelled) setHtml(result);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!html) {
+    return (
+      <pre className="whitespace-pre-wrap font-mono text-xs p-6">{MAP_EXAMPLE}</pre>
+    );
+  }
+
+  return (
+    <div
+      className="p-6 text-xs [&_pre]:!bg-transparent [&_code]:!bg-transparent [&_.shiki]:!bg-transparent"
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
   );
 }
 

@@ -35,6 +35,30 @@ interface ResultPanelProps {
   error: string | null;
 }
 
+const SCRAPE_EXAMPLE = `curl -X POST https://scrapix.meilisearch.dev/scrape \\
+  -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer YOUR_API_KEY" \\
+  -d '{
+    "url": "https://example.com",
+    "formats": ["markdown", "metadata"],
+    "only_main_content": true,
+    "timeout_ms": 30000
+  }'`;
+
+const CRAWL_EXAMPLE = `curl -X POST https://scrapix.meilisearch.dev/crawl \\
+  -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer YOUR_API_KEY" \\
+  -d '{
+    "start_urls": ["https://example.com"],
+    "index_uid": "my-index",
+    "max_depth": 3,
+    "max_pages": 100,
+    "meilisearch": {
+      "url": "https://ms.example.com",
+      "api_key": "YOUR_MEILI_KEY"
+    }
+  }'`;
+
 export function ResultPanel({
   result,
   crawlResult,
@@ -58,14 +82,22 @@ export function ResultPanel({
     return <ScrapeResultState result={result} />;
   }
 
-  return <EmptyState />;
+  return <EmptyState mode={mode} />;
 }
 
-function EmptyState() {
+function EmptyState({ mode }: { mode: "scrape" | "crawl" }) {
+  const example = mode === "crawl" ? CRAWL_EXAMPLE : SCRAPE_EXAMPLE;
+
   return (
-    <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-3 py-20">
-      <Globe className="h-10 w-10 opacity-40" />
-      <p className="text-sm">Send a request to see results</p>
+    <div className="flex flex-col h-full">
+      <div className="px-4 pt-4 pb-2">
+        <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
+          API Example
+        </p>
+      </div>
+      <ScrollArea className="flex-1 min-h-0">
+        <HighlightedCode code={example} lang="bash" />
+      </ScrollArea>
     </div>
   );
 }
@@ -455,6 +487,37 @@ function MetadataView({ metadata }: { metadata: NonNullable<ScrapeResult["metada
           </div>
         )}
     </div>
+  );
+}
+
+function HighlightedCode({ code, lang = "json" }: { code: string; lang?: string }) {
+  const [html, setHtml] = useState<string>("");
+
+  useEffect(() => {
+    let cancelled = false;
+    codeToHtml(code, {
+      lang,
+      themes: { light: "github-light", dark: "github-dark" },
+      defaultColor: false,
+    }).then((result) => {
+      if (!cancelled) setHtml(result);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [code, lang]);
+
+  if (!html) {
+    return (
+      <pre className="whitespace-pre-wrap font-mono text-xs p-4">{code}</pre>
+    );
+  }
+
+  return (
+    <div
+      className="p-4 text-xs [&_pre]:!bg-transparent [&_code]:!bg-transparent [&_.shiki]:!bg-transparent"
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
   );
 }
 
