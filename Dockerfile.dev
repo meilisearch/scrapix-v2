@@ -30,7 +30,6 @@ COPY crates/scrapix-extractor/Cargo.toml crates/scrapix-extractor/Cargo.toml
 COPY crates/scrapix-ai/Cargo.toml crates/scrapix-ai/Cargo.toml
 COPY crates/scrapix-storage/Cargo.toml crates/scrapix-storage/Cargo.toml
 COPY crates/scrapix-queue/Cargo.toml crates/scrapix-queue/Cargo.toml
-COPY crates/scrapix-telemetry/Cargo.toml crates/scrapix-telemetry/Cargo.toml
 COPY bins/scrapix-api/Cargo.toml bins/scrapix-api/Cargo.toml
 COPY bins/scrapix-worker-crawler/Cargo.toml bins/scrapix-worker-crawler/Cargo.toml
 COPY bins/scrapix-worker-content/Cargo.toml bins/scrapix-worker-content/Cargo.toml
@@ -41,7 +40,7 @@ COPY tests/Cargo.toml tests/Cargo.toml
 
 # Create dummy source files so cargo can resolve the workspace
 RUN set -e; \
-    for crate in core frontier crawler parser extractor ai storage queue telemetry; do \
+    for crate in core frontier crawler parser extractor ai storage queue; do \
         mkdir -p crates/scrapix-$crate/src && echo "" > crates/scrapix-$crate/src/lib.rs; \
     done; \
     for bin in scrapix-api scrapix-worker-crawler scrapix-worker-content scrapix-frontier-service scrapix-cli; do \

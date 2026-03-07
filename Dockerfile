@@ -38,7 +38,6 @@ COPY crates/scrapix-extractor/Cargo.toml crates/scrapix-extractor/Cargo.toml
 COPY crates/scrapix-ai/Cargo.toml crates/scrapix-ai/Cargo.toml
 COPY crates/scrapix-storage/Cargo.toml crates/scrapix-storage/Cargo.toml
 COPY crates/scrapix-queue/Cargo.toml crates/scrapix-queue/Cargo.toml
-COPY crates/scrapix-telemetry/Cargo.toml crates/scrapix-telemetry/Cargo.toml
 COPY bins/scrapix-api/Cargo.toml bins/scrapix-api/Cargo.toml
 COPY bins/scrapix-worker-crawler/Cargo.toml bins/scrapix-worker-crawler/Cargo.toml
 COPY bins/scrapix-worker-content/Cargo.toml bins/scrapix-worker-content/Cargo.toml
@@ -57,7 +56,6 @@ RUN mkdir -p crates/scrapix-core/src && echo "" > crates/scrapix-core/src/lib.rs
     && mkdir -p crates/scrapix-ai/src && echo "" > crates/scrapix-ai/src/lib.rs \
     && mkdir -p crates/scrapix-storage/src && echo "" > crates/scrapix-storage/src/lib.rs \
     && mkdir -p crates/scrapix-queue/src && echo "" > crates/scrapix-queue/src/lib.rs \
-    && mkdir -p crates/scrapix-telemetry/src && echo "" > crates/scrapix-telemetry/src/lib.rs \
     && mkdir -p bins/scrapix-api/src && echo "" > bins/scrapix-api/src/lib.rs && echo "fn main() {}" > bins/scrapix-api/src/main.rs \
     && mkdir -p bins/scrapix-worker-crawler/src && echo "" > bins/scrapix-worker-crawler/src/lib.rs && echo "fn main() {}" > bins/scrapix-worker-crawler/src/main.rs \
     && mkdir -p bins/scrapix-worker-content/src && echo "" > bins/scrapix-worker-content/src/lib.rs && echo "fn main() {}" > bins/scrapix-worker-content/src/main.rs \
