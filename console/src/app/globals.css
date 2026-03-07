@@ -3,7 +3,7 @@
 @plugin "@tailwindcss/typography";
 
 @custom-variant dark (&:is(.dark *));
-@custom-variant neon (&:is(.neon *));
+@custom-variant glitch (&:is(.glitch *));
 
 @theme inline {
   --color-background: var(--background);
@@ -46,10 +46,8 @@
   --radius-2xl: calc(var(--radius) + 8px);
   --radius-3xl: calc(var(--radius) + 12px);
   --radius-4xl: calc(var(--radius) + 16px);
-  --color-neon-magenta: var(--neon-magenta);
-  --color-neon-cyan: var(--neon-cyan);
-  --color-neon-violet: var(--neon-violet);
-  --color-neon-blue: var(--neon-blue);
+  --color-glitch-cyan: var(--glitch-cyan);
+  --color-glitch-red: var(--glitch-red);
 }
 
 :root {
@@ -85,10 +83,8 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
-  --neon-magenta: oklch(0.7 0.25 330);
-  --neon-cyan: oklch(0.8 0.15 195);
-  --neon-violet: oklch(0.6 0.25 300);
-  --neon-blue: oklch(0.65 0.2 255);
+  --glitch-cyan: oklch(0.83 0.12 192);
+  --glitch-red: oklch(0.50 0.22 25);
 }
 
 .dark {
@@ -125,42 +121,46 @@
   --sidebar-ring: oklch(0.556 0 0);
 }
 
-.neon {
-  --background: oklch(0.1 0.005 280);
-  --foreground: oklch(0.92 0.01 280);
-  --card: oklch(0.14 0.008 280);
-  --card-foreground: oklch(0.92 0.01 280);
-  --popover: oklch(0.14 0.008 280);
-  --popover-foreground: oklch(0.92 0.01 280);
-  --primary: oklch(0.7 0.25 330);
-  --primary-foreground: oklch(0.98 0 0);
-  --secondary: oklch(0.18 0.01 280);
-  --secondary-foreground: oklch(0.88 0.02 280);
-  --muted: oklch(0.18 0.01 280);
-  --muted-foreground: oklch(0.6 0.03 280);
-  --accent: oklch(0.2 0.02 300);
-  --accent-foreground: oklch(0.9 0.05 300);
-  --destructive: oklch(0.65 0.25 15);
-  --border: oklch(0.3 0.04 300 / 40%);
-  --input: oklch(0.3 0.04 300 / 50%);
-  --ring: oklch(0.7 0.25 330);
-  --chart-1: oklch(0.7 0.25 330);
-  --chart-2: oklch(0.8 0.15 195);
-  --chart-3: oklch(0.6 0.25 300);
-  --chart-4: oklch(0.65 0.2 255);
-  --chart-5: oklch(0.75 0.2 150);
-  --sidebar: oklch(0.12 0.008 280);
-  --sidebar-foreground: oklch(0.88 0.02 280);
-  --sidebar-primary: oklch(0.7 0.25 330);
-  --sidebar-primary-foreground: oklch(0.98 0 0);
-  --sidebar-accent: oklch(0.18 0.015 300);
-  --sidebar-accent-foreground: oklch(0.9 0.05 300);
-  --sidebar-border: oklch(0.3 0.04 300 / 30%);
-  --sidebar-ring: oklch(0.7 0.25 330);
-  --neon-magenta: oklch(0.7 0.25 330);
-  --neon-cyan: oklch(0.8 0.15 195);
-  --neon-violet: oklch(0.6 0.25 300);
-  --neon-blue: oklch(0.65 0.2 255);
+/* ─── Glitch theme ───
+   Inspired by the logo's chromatic aberration:
+   - Base layer (white/dark)
+   - Cyan (#39E5E4) shifted 1px top-left
+   - Red (#D6151C) shifted 1px bottom-right
+*/
+.glitch {
+  --background: oklch(0.08 0 0);
+  --foreground: oklch(0.93 0 0);
+  --card: oklch(0.12 0 0);
+  --card-foreground: oklch(0.93 0 0);
+  --popover: oklch(0.12 0 0);
+  --popover-foreground: oklch(0.93 0 0);
+  --primary: oklch(0.83 0.12 192);
+  --primary-foreground: oklch(0.08 0 0);
+  --secondary: oklch(0.16 0 0);
+  --secondary-foreground: oklch(0.88 0 0);
+  --muted: oklch(0.16 0 0);
+  --muted-foreground: oklch(0.55 0 0);
+  --accent: oklch(0.18 0.01 192);
+  --accent-foreground: oklch(0.9 0.03 192);
+  --destructive: oklch(0.50 0.22 25);
+  --border: oklch(1 0 0 / 8%);
+  --input: oklch(1 0 0 / 12%);
+  --ring: oklch(0.83 0.12 192);
+  --chart-1: oklch(0.83 0.12 192);
+  --chart-2: oklch(0.50 0.22 25);
+  --chart-3: oklch(0.7 0.08 192);
+  --chart-4: oklch(0.65 0.15 25);
+  --chart-5: oklch(0.75 0.05 0);
+  --sidebar: oklch(0.1 0 0);
+  --sidebar-foreground: oklch(0.88 0 0);
+  --sidebar-primary: oklch(0.83 0.12 192);
+  --sidebar-primary-foreground: oklch(0.08 0 0);
+  --sidebar-accent: oklch(0.16 0.005 192);
+  --sidebar-accent-foreground: oklch(0.9 0.03 192);
+  --sidebar-border: oklch(1 0 0 / 6%);
+  --sidebar-ring: oklch(0.83 0.12 192);
+  --glitch-cyan: oklch(0.83 0.12 192);
+  --glitch-red: oklch(0.50 0.22 25);
 }
 
 @layer base {
@@ -182,22 +182,22 @@
 .dark .shiki span {
   color: var(--shiki-dark) !important;
 }
-.neon .shiki,
-.neon .shiki span {
+.glitch .shiki,
+.glitch .shiki span {
   color: var(--shiki-dark) !important;
 }
 
-/* ─── Neon theme effects ─── */
+/* ─── Glitch theme effects ─── */
 
-/* Halftone / comic dot texture on body */
-.neon body {
+/* Subtle noise/grain texture on body */
+.glitch body {
   background-image:
-    radial-gradient(circle, oklch(0.3 0.04 300 / 6%) 1px, transparent 1px);
-  background-size: 4px 4px;
+    radial-gradient(circle, oklch(1 0 0 / 3%) 1px, transparent 1px);
+  background-size: 3px 3px;
 }
 
 /* Faint scanline overlay */
-.neon body::after {
+.glitch body::after {
   content: "";
   position: fixed;
   inset: 0;
@@ -207,160 +207,166 @@
     0deg,
     transparent,
     transparent 2px,
-    oklch(0 0 0 / 3%) 2px,
-    oklch(0 0 0 / 3%) 4px
+    oklch(0 0 0 / 4%) 2px,
+    oklch(0 0 0 / 4%) 4px
   );
 }
 
-/* Neon card glow borders */
-.neon [data-slot="card"],
-.neon .neon-card {
-  border: 1px solid oklch(0.5 0.15 300 / 25%);
+/* Glitch card borders — subtle cyan/red edge */
+.glitch [data-slot="card"],
+.glitch .glitch-card {
+  border: 1px solid oklch(1 0 0 / 6%);
   box-shadow:
-    inset 0 1px 0 oklch(1 0 0 / 3%),
-    0 0 20px oklch(0.5 0.15 300 / 8%);
+    -1px -1px 0 oklch(0.83 0.12 192 / 8%),
+    1px 1px 0 oklch(0.50 0.22 25 / 8%);
 }
 
-/* Active sidebar item neon glow */
-.neon .neon-nav-active {
-  background: oklch(0.7 0.25 330 / 12%);
-  color: oklch(0.7 0.25 330);
+/* Active sidebar item — cyan accent */
+.glitch .glitch-nav-active {
+  background: oklch(0.83 0.12 192 / 10%);
+  color: oklch(0.83 0.12 192);
   box-shadow:
-    -2px 0 8px oklch(0.7 0.25 330 / 20%),
-    inset -2px 0 0 oklch(0.7 0.25 330 / 60%);
+    inset -2px 0 0 oklch(0.83 0.12 192 / 60%);
 }
 
-/* Primary button electric glow */
-.neon .neon-btn-primary {
-  background: linear-gradient(
-    135deg,
-    oklch(0.7 0.25 330),
-    oklch(0.6 0.25 300)
-  );
+/* Primary button with chromatic edge glow */
+.glitch .glitch-btn-primary {
+  background: oklch(0.83 0.12 192);
+  color: oklch(0.08 0 0);
   box-shadow:
-    0 0 15px oklch(0.7 0.25 330 / 35%),
-    0 0 30px oklch(0.6 0.25 300 / 15%);
+    -1px -1px 0 oklch(0.83 0.12 192 / 60%),
+    1px 1px 0 oklch(0.50 0.22 25 / 40%),
+    0 0 12px oklch(0.83 0.12 192 / 20%);
   transition: box-shadow 0.2s ease;
 }
-.neon .neon-btn-primary:hover {
+.glitch .glitch-btn-primary:hover {
   box-shadow:
-    0 0 20px oklch(0.7 0.25 330 / 50%),
-    0 0 40px oklch(0.6 0.25 300 / 25%);
+    -2px -2px 0 oklch(0.83 0.12 192 / 70%),
+    2px 2px 0 oklch(0.50 0.22 25 / 50%),
+    0 0 20px oklch(0.83 0.12 192 / 30%);
 }
 
 /* Subtle radial glow behind panels */
-.neon .neon-glow-panel {
+.glitch .glitch-glow-panel {
   position: relative;
 }
-.neon .neon-glow-panel::before {
+.glitch .glitch-glow-panel::before {
   content: "";
   position: absolute;
   inset: -1px;
   border-radius: inherit;
   background: radial-gradient(
     ellipse at 50% 0%,
-    oklch(0.6 0.2 300 / 8%) 0%,
+    oklch(0.83 0.12 192 / 5%) 0%,
     transparent 70%
   );
   pointer-events: none;
   z-index: 0;
 }
 
-/* Glitch shimmer on the sidebar brand */
-.neon .neon-brand {
+/* Chromatic aberration on the sidebar brand — matches logo exactly */
+.glitch .glitch-brand {
   text-shadow:
-    1px 0 oklch(0.8 0.15 195 / 40%),
-    -1px 0 oklch(0.7 0.25 330 / 40%);
+    -1px -1px 0 oklch(0.83 0.12 192 / 50%),
+    1px 1px 0 oklch(0.50 0.22 25 / 50%);
 }
 
 /* Chromatic aberration on section headers */
-.neon .neon-section-label {
+.glitch .glitch-section-label {
   text-shadow:
-    0.5px 0 oklch(0.8 0.15 195 / 30%),
-    -0.5px 0 oklch(0.7 0.25 330 / 30%);
+    -0.5px -0.5px 0 oklch(0.83 0.12 192 / 35%),
+    0.5px 0.5px 0 oklch(0.50 0.22 25 / 35%);
   letter-spacing: 0.15em;
 }
 
 /* Luminous separator line */
-.neon .neon-separator {
+.glitch .glitch-separator {
   border-color: transparent;
   background: linear-gradient(
     90deg,
     transparent,
-    oklch(0.5 0.15 300 / 30%),
-    oklch(0.7 0.25 330 / 20%),
+    oklch(0.83 0.12 192 / 20%),
+    oklch(0.50 0.22 25 / 15%),
     transparent
   );
   height: 1px;
 }
 
-/* Animated subtle glitch particles (sparse) */
-@keyframes neon-drift {
-  0%, 100% { opacity: 0; transform: translateY(0) translateX(0); }
-  10% { opacity: 0.6; }
-  90% { opacity: 0.6; }
-  50% { transform: translateY(-30px) translateX(5px); }
+/* Glitch flicker animation */
+@keyframes glitch-flicker {
+  0%, 100% { opacity: 1; }
+  92% { opacity: 1; }
+  93% { opacity: 0.8; transform: translateX(2px); }
+  94% { opacity: 1; transform: translateX(-1px); }
+  95% { opacity: 0.9; transform: translateX(0); }
 }
 
-.neon .neon-particles::after {
+/* Sparse chromatic shift particles */
+.glitch .glitch-particles::after {
   content: "";
   position: absolute;
-  top: 20%;
-  right: 5%;
+  top: 15%;
+  right: 8%;
   width: 2px;
   height: 2px;
-  background: oklch(0.8 0.15 195);
-  border-radius: 50%;
+  background: oklch(0.83 0.12 192);
+  border-radius: 0;
   box-shadow:
-    30px 40px 0 oklch(0.7 0.25 330 / 50%),
-    80px -20px 0 oklch(0.8 0.15 195 / 40%),
-    -40px 60px 0 oklch(0.6 0.25 300 / 30%),
-    120px 80px 0 oklch(0.65 0.2 255 / 35%);
-  animation: neon-drift 8s ease-in-out infinite;
+    30px 40px 0 oklch(0.83 0.12 192 / 40%),
+    32px 42px 0 oklch(0.50 0.22 25 / 40%),
+    80px -20px 0 oklch(0.50 0.22 25 / 30%),
+    78px -22px 0 oklch(0.83 0.12 192 / 30%),
+    -40px 60px 0 oklch(0.83 0.12 192 / 25%),
+    120px 80px 0 oklch(0.50 0.22 25 / 25%);
+  animation: glitch-flicker 4s step-end infinite;
   pointer-events: none;
   z-index: 0;
 }
 
-/* Header border glow */
-.neon .neon-header {
-  border-bottom-color: oklch(0.5 0.15 300 / 20%);
-  box-shadow: 0 1px 12px oklch(0.5 0.15 300 / 8%);
+/* Header border with chromatic split */
+.glitch .glitch-header {
+  border-bottom-color: oklch(1 0 0 / 6%);
+  box-shadow:
+    0 1px 0 oklch(0.83 0.12 192 / 10%),
+    0 2px 0 oklch(0.50 0.22 25 / 6%);
 }
 
-/* Sidebar border glow */
-.neon .neon-sidebar {
-  border-right-color: oklch(0.5 0.15 300 / 20%);
-  box-shadow: 1px 0 15px oklch(0.5 0.15 300 / 6%);
+/* Sidebar border with chromatic split */
+.glitch .glitch-sidebar {
+  border-right-color: oklch(1 0 0 / 6%);
+  box-shadow:
+    1px 0 0 oklch(0.83 0.12 192 / 8%),
+    2px 0 0 oklch(0.50 0.22 25 / 5%);
 }
 
-/* Metric value neon tint */
-.neon .neon-metric {
+/* Metric value with cyan tint */
+.glitch .glitch-metric {
   background: linear-gradient(
     135deg,
-    oklch(0.92 0.01 280),
-    oklch(0.8 0.08 300)
+    oklch(0.93 0 0),
+    oklch(0.83 0.12 192)
   );
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
 
-/* Angular energy on hover (cards) */
-.neon [data-slot="card"]:hover,
-.neon .neon-card:hover {
-  border-color: oklch(0.5 0.15 300 / 40%);
+/* Card hover with chromatic aberration intensify */
+.glitch [data-slot="card"]:hover,
+.glitch .glitch-card:hover {
+  border-color: oklch(1 0 0 / 10%);
   box-shadow:
-    inset 0 1px 0 oklch(1 0 0 / 5%),
-    0 0 25px oklch(0.5 0.15 300 / 12%),
-    0 0 2px oklch(0.7 0.25 330 / 15%);
+    -2px -2px 0 oklch(0.83 0.12 192 / 12%),
+    2px 2px 0 oklch(0.50 0.22 25 / 12%),
+    0 0 15px oklch(0.83 0.12 192 / 6%);
 }
 
-/* Status dot pulse for neon */
-@keyframes neon-pulse {
-  0%, 100% { box-shadow: 0 0 4px oklch(0.75 0.2 150 / 50%); }
-  50% { box-shadow: 0 0 10px oklch(0.75 0.2 150 / 80%); }
+/* Status dot pulse — cyan */
+@keyframes glitch-pulse {
+  0%, 100% { box-shadow: 0 0 4px oklch(0.83 0.12 192 / 50%); }
+  50% { box-shadow: 0 0 10px oklch(0.83 0.12 192 / 80%); }
 }
 
-.neon .neon-status-dot {
-  animation: neon-pulse 2s ease-in-out infinite;
+.glitch .glitch-status-dot {
+  animation: glitch-pulse 2s ease-in-out infinite;
 }

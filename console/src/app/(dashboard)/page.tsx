@@ -38,13 +38,13 @@ function StatCard({
   href?: string;
 }) {
   const content = (
-    <Card className={cn("neon-card neon-glow-panel", href && "transition-colors hover:border-primary/50 cursor-pointer")}>
+    <Card className={cn("glitch-card glitch-glow-panel", href && "transition-colors hover:border-primary/50 cursor-pointer")}>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
         <CardTitle className="text-sm font-medium">{name}</CardTitle>
         <Icon className="h-4 w-4 text-muted-foreground" />
       </CardHeader>
       <CardContent>
-        <div className="text-2xl font-bold neon-metric">{value}</div>
+        <div className="text-2xl font-bold glitch-metric">{value}</div>
       </CardContent>
     </Card>
   );
@@ -117,14 +117,14 @@ export default function DashboardPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight neon-brand">Dashboard</h2>
+          <h2 className="text-2xl font-bold tracking-tight glitch-brand">Dashboard</h2>
           <p className="text-muted-foreground">
             {account
               ? `Welcome back, ${account.name}`
               : "Your crawling overview"}
           </p>
         </div>
-        <Button asChild className="neon-btn-primary">
+        <Button asChild className="glitch-btn-primary">
           <Link href="/playground">
             <Play className="h-4 w-4 mr-2" />
             New Crawl
@@ -164,7 +164,7 @@ export default function DashboardPage() {
 
       <div className="grid gap-4 lg:grid-cols-3">
         {/* Recent Errors */}
-        <Card className="lg:col-span-2 neon-card neon-glow-panel neon-particles">
+        <Card className="lg:col-span-2 glitch-card glitch-glow-panel glitch-particles">
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
               <div>
@@ -214,7 +214,7 @@ export default function DashboardPage() {
         </Card>
 
         {/* Quick Actions */}
-        <Card className="neon-card neon-glow-panel">
+        <Card className="glitch-card glitch-glow-panel">
           <CardHeader>
             <CardTitle>Quick Actions</CardTitle>
           </CardHeader>

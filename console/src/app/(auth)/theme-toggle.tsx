@@ -22,11 +22,11 @@ export function ThemeToggle() {
       className="absolute right-4 top-4"
       onClick={() => {
         if (theme === "light") setTheme("dark");
-        else if (theme === "dark") setTheme("neon");
+        else if (theme === "dark") setTheme("glitch");
         else setTheme("light");
       }}
     >
-      {theme === "neon" ? (
+      {theme === "glitch" ? (
         <Zap className="h-4 w-4" />
       ) : theme === "dark" ? (
         <Sun className="h-4 w-4" />
