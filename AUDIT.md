@@ -15,10 +15,9 @@ Results of a comprehensive static analysis of the Rust codebase covering error h
 - Applied to both `fetch()` and `fetch_conditional()` in `fetcher.rs`
 - Added same check to `/scrape` and `/map` API endpoints in `lib.rs`
 
-### 1.2 — Credentials stored plaintext in Postgres
-**`bins/scrapix-api/src/lib.rs:1928`**
-- Meilisearch API keys are persisted in `JobState` → Postgres plaintext
-- Either encrypt at rest or stop persisting the key (re-read from env at swap time)
+### 1.2 — Credentials stored plaintext in Postgres ✅ DONE
+- `jobs_db.rs` — Never persist `swap_meilisearch_api_key` (bind NULL)
+- `lib.rs` — Redact `meilisearch.api_key` from config JSON before DB storage (both code paths)
 
 ### 1.3 — Upgrade API key hashing from SHA-256 to Argon2/bcrypt
 **`bins/scrapix-api/src/auth/middleware.rs:59`**
@@ -64,11 +63,15 @@ Results of a comprehensive static analysis of the Rust codebase covering error h
 - `preprocess_html()` — now warns on invalid CSS selectors (both include and exclude)
 - Shutdown task results — now warns on failures instead of silently ignoring
 
-### 3.2 — Add error context to bare `?` operators
-- Deferred — requires touching many files, low risk of bugs
+### 3.2 — Add error context to bare `?` operators ✅ DONE
+- `html.rs` — URL parse errors now include the URL
+- `object_storage.rs` — JSON ser/de errors now include the storage key
+- `lib.rs` — Server address parse error now includes host/port
+- `jobs_db.rs` — Silent `unwrap_or_default()` on start_urls now logs a warning
 
 ### 3.3 — Unify error types
-- Deferred — `AiClientError` → `ScrapixError` integration requires API changes
+- Added `ScrapixError::Ai(String)` variant
+- Full unification deferred — `AiClientError`/`ExtractionError`/`SummaryError` → `ScrapixError` requires ~56 reference updates across 7 files
 
 ---
 
@@ -109,8 +112,8 @@ The concurrency patterns are solid:
 
 | Phase | Total | Done | Deferred |
 |-------|-------|------|----------|
-| 1. Security | 5 | 3 | 2 (credential storage, key hashing) |
+| 1. Security | 5 | 4 | 1 (key hashing — SHA-256 acceptable for API keys) |
 | 2. Architecture | 5 | 2 | 3 (large refactors for separate PRs) |
-| 3. Error handling | 3 | 1 | 2 (context, error unification) |
+| 3. Error handling | 3 | 2 | 1 (full AI error unification) |
 | 4. Performance | 5 | 3 | 2 (API signature changes) |
-| **Total** | **18** | **9** | **9** |
+| **Total** | **18** | **11** | **7** |

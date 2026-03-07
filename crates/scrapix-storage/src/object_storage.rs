@@ -589,7 +589,12 @@ impl S3Storage {
         key: &str,
         value: &T,
     ) -> Result<(), ObjectStorageError> {
-        let data = serde_json::to_vec(value)?;
+        let data = serde_json::to_vec(value).map_err(|e| {
+            ObjectStorageError::ConfigError(format!(
+                "Failed to serialize JSON for key '{}': {}",
+                key, e
+            ))
+        })?;
         self.put_object(key, &data, Some("application/json")).await
     }
 
@@ -600,7 +605,12 @@ impl S3Storage {
         key: &str,
     ) -> Result<T, ObjectStorageError> {
         let data = self.get_object(key).await?;
-        let value = serde_json::from_slice(&data)?;
+        let value = serde_json::from_slice(&data).map_err(|e| {
+            ObjectStorageError::ConfigError(format!(
+                "Failed to deserialize JSON for key '{}': {}",
+                key, e
+            ))
+        })?;
         Ok(value)
     }
 

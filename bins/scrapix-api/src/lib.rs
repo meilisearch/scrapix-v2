@@ -3824,7 +3824,9 @@ pub async fn run_with_bus(
     app = app.layer(cors);
 
     // Start server with graceful shutdown
-    let addr: SocketAddr = format!("{}:{}", args.host, args.port).parse()?;
+    let addr: SocketAddr = format!("{}:{}", args.host, args.port)
+        .parse()
+        .map_err(|e| anyhow::anyhow!("Invalid server address '{}:{}': {}", args.host, args.port, e))?;
 
     // Retry binding in case the previous process hasn't released the port yet (hot-reload)
     let listener = {

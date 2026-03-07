@@ -59,7 +59,10 @@ fn row_to_job_state(row: &sqlx::postgres::PgRow) -> JobState {
         error_message: row.get("error_message"),
         crawl_rate: row.get("crawl_rate"),
         eta_seconds: row.get::<Option<i64>, _>("eta_seconds").map(|v| v as u64),
-        start_urls: serde_json::from_value(start_urls).unwrap_or_default(),
+        start_urls: serde_json::from_value(start_urls).unwrap_or_else(|e| {
+            warn!(job_id = %row.get::<String, _>("job_id"), error = %e, "Failed to deserialize start_urls from database");
+            Vec::new()
+        }),
         max_pages: row.get::<Option<i64>, _>("max_pages").map(|v| v as u64),
         config: row.get("config"),
         swap_temp_index: row.get("swap_temp_index"),
