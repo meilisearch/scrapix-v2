@@ -142,7 +142,7 @@ export default function MapPage() {
   };
 
   return (
-    <div className="flex flex-col gap-4 h-[calc(100vh-6rem)]">
+    <div className="flex flex-col gap-4 h-full">
       {/* URL Input + Options */}
       <Card>
         <CardContent className="p-4">

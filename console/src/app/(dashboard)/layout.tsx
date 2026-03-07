@@ -1,5 +1,5 @@
 import { Sidebar } from "@/components/dashboard/sidebar";
-import { Header } from "@/components/dashboard/header";
+import { MobileHeader } from "@/components/dashboard/header";
 
 export default function DashboardLayout({
   children,
@@ -10,8 +10,8 @@ export default function DashboardLayout({
     <div className="flex h-screen bg-background">
       <Sidebar />
       <div className="flex flex-1 flex-col overflow-hidden">
-        <Header />
-        <main className="flex-1 overflow-y-auto p-6">{children}</main>
+        <MobileHeader />
+        <main className="flex-1 overflow-hidden p-6">{children}</main>
       </div>
     </div>
   );

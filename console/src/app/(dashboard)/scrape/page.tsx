@@ -82,7 +82,7 @@ export default function ScrapePage() {
   };
 
   return (
-    <div className="flex flex-col gap-4 h-[calc(100vh-6rem)]">
+    <div className="flex flex-col gap-4 h-full">
       {services.length > 0 && (
         <div className="flex items-center gap-3 px-1">
           {services.map((svc) => (
