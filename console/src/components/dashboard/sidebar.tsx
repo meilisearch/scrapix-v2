@@ -178,7 +178,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             ) : (
               <Moon className="mr-3 h-4 w-4" />
             )}
-            {theme === "glitch" ? "Glitch" : theme === "dark" ? "Light" : "Dark"} mode
+            {theme === "glitch" ? "Glitch" : theme === "dark" ? "Dark" : "Light"} mode
           </Button>
         )}
         <DropdownMenu>

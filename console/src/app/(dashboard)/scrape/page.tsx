@@ -3,10 +3,8 @@
 import { useState, useCallback, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
 import { submitScrape } from "@/lib/api";
 import type { ScrapeResult } from "@/lib/api-types";
-import { useServiceHealth } from "@/lib/hooks";
 import { UrlBar } from "../playground/url-bar";
 import { ScrapeOptions, type ScrapeState } from "../playground/scrape-options";
 import { ResultPanel } from "../playground/result-panel";
@@ -25,9 +23,6 @@ export default function ScrapePage() {
     timeout_ms: "30000",
     ai_summary: false,
   });
-
-  const { data: healthData } = useServiceHealth();
-  const services = healthData?.services ?? [];
 
   useEffect(() => {
     setRuns(loadRuns());
@@ -83,29 +78,6 @@ export default function ScrapePage() {
 
   return (
     <div className="flex flex-col gap-4 h-full">
-      {services.length > 0 && (
-        <div className="flex items-center gap-3 px-1">
-          {services.map((svc) => (
-            <Badge
-              key={svc.name}
-              variant="outline"
-              className="text-xs gap-1.5 font-normal"
-            >
-              <span
-                className={`inline-block h-1.5 w-1.5 rounded-full ${
-                  svc.status === "up"
-                    ? "bg-green-500"
-                    : svc.status === "idle"
-                      ? "bg-yellow-500"
-                      : "bg-gray-400"
-                }`}
-              />
-              {svc.name}
-            </Badge>
-          ))}
-        </div>
-      )}
-
       <UrlBar
         mode="scrape"
         url={url}

@@ -3,9 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
 import { createCrawl } from "@/lib/api";
-import { useServiceHealth } from "@/lib/hooks";
 import { UrlBar } from "../playground/url-bar";
 import { CrawlOptions, type CrawlState, defaultCrawlState } from "../playground/crawl-options";
 import { ResultPanel } from "../playground/result-panel";
@@ -23,9 +21,6 @@ export default function CrawlPage() {
   const [runs, setRuns] = useState<RunEntry[]>([]);
 
   const [crawlState, setCrawlState] = useState<CrawlState>(defaultCrawlState);
-  const { data: healthData } = useServiceHealth();
-  const services = healthData?.services ?? [];
-
   useEffect(() => {
     setRuns(loadRuns());
   }, []);
@@ -215,29 +210,6 @@ export default function CrawlPage() {
 
   return (
     <div className="flex flex-col gap-4 h-full">
-      {services.length > 0 && (
-        <div className="flex items-center gap-3 px-1">
-          {services.map((svc) => (
-            <Badge
-              key={svc.name}
-              variant="outline"
-              className="text-xs gap-1.5 font-normal"
-            >
-              <span
-                className={`inline-block h-1.5 w-1.5 rounded-full ${
-                  svc.status === "up"
-                    ? "bg-green-500"
-                    : svc.status === "idle"
-                      ? "bg-yellow-500"
-                      : "bg-gray-400"
-                }`}
-              />
-              {svc.name}
-            </Badge>
-          ))}
-        </div>
-      )}
-
       <UrlBar
         mode="crawl"
         url={url}
