@@ -243,7 +243,9 @@ export default function DashboardPage() {
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-muted-foreground">Credits</span>
                   <span className="font-medium">
-                    {account?.credits_balance?.toLocaleString() ?? "0"}
+                    {(account as Record<string, unknown>)?.credits_balance != null
+                      ? Number((account as Record<string, unknown>).credits_balance).toLocaleString()
+                      : "0"}
                   </span>
                 </div>
                 <div className="flex items-center justify-between text-sm">

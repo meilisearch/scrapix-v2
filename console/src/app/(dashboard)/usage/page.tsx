@@ -67,6 +67,63 @@ function formatHour(hour: string): string {
   }
 }
 
+/** Fill missing hours with zero-valued entries so the chart has a continuous timeline. */
+function fillHourlyGaps(
+  data: { hour: string; requests: number; successes: number; failures: number; success_rate: number; avg_duration_ms: number; total_bytes: number }[],
+  hours: number,
+): typeof data {
+  const now = new Date();
+  // Round down to current hour
+  now.setMinutes(0, 0, 0);
+  const byKey = new Map(data.map((d) => {
+    const k = new Date(d.hour);
+    k.setMinutes(0, 0, 0);
+    return [k.getTime(), d];
+  }));
+
+  const result: typeof data = [];
+  for (let i = hours - 1; i >= 0; i--) {
+    const t = new Date(now.getTime() - i * 3600_000);
+    const existing = byKey.get(t.getTime());
+    result.push(existing ?? {
+      hour: t.toISOString(),
+      requests: 0,
+      successes: 0,
+      failures: 0,
+      success_rate: 0,
+      avg_duration_ms: 0,
+      total_bytes: 0,
+    });
+  }
+  return result;
+}
+
+/** Fill missing days with zero-valued entries for the daily breakdown table. */
+function fillDailyGaps(
+  data: { date: string; requests: number; bytes: number; js_renders: number; ai_prompt_tokens: number; ai_completion_tokens: number }[],
+  days: number,
+): typeof data {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  const byKey = new Map(data.map((d) => [d.date, d]));
+
+  const result: typeof data = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const t = new Date(now.getTime() - i * 86400_000);
+    const key = t.toISOString().slice(0, 10);
+    const existing = byKey.get(key);
+    result.push(existing ?? {
+      date: key,
+      requests: 0,
+      bytes: 0,
+      js_renders: 0,
+      ai_prompt_tokens: 0,
+      ai_completion_tokens: 0,
+    });
+  }
+  return result;
+}
+
 export default function UsagePage() {
   const [rangeIdx, setRangeIdx] = useState(0);
   const range = TIME_RANGES[rangeIdx];
@@ -116,14 +173,14 @@ export default function UsagePage() {
   const aiTokens = (usage?.ai_prompt_tokens ?? 0) + (usage?.ai_completion_tokens ?? 0);
   const jsRenders = usage?.js_renders ?? 0;
 
-  const hourlyData = hourly?.data?.map((row) => ({
+  const hourlyData = fillHourlyGaps(hourly?.data ?? [], range.hours).map((row) => ({
     ...row,
     hour: formatHour(row.hour),
-  })) ?? [];
+  }));
 
   const domainData = topDomains?.data?.slice(0, 10) ?? [];
 
-  const dailyData = dailyUsage?.data ?? [];
+  const dailyData = fillDailyGaps(dailyUsage?.data ?? [], range.days);
 
   return (
     <div className="space-y-6">
@@ -214,7 +271,7 @@ export default function UsagePage() {
         <CardContent>
           {hourlyLoading ? (
             <Skeleton className="h-[300px] w-full" />
-          ) : hourlyData.length > 0 ? (
+          ) : (
             <ResponsiveContainer width="100%" height={300}>
               <AreaChart data={hourlyData}>
                 <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
@@ -253,10 +310,6 @@ export default function UsagePage() {
                 />
               </AreaChart>
             </ResponsiveContainer>
-          ) : (
-            <p className="text-sm text-muted-foreground py-12 text-center">
-              No activity data for this period
-            </p>
           )}
         </CardContent>
       </Card>
@@ -271,7 +324,7 @@ export default function UsagePage() {
           <CardContent>
             {hourlyLoading ? (
               <Skeleton className="h-[250px] w-full" />
-            ) : hourlyData.length > 0 ? (
+            ) : (
               <ResponsiveContainer width="100%" height={250}>
                 <AreaChart data={hourlyData}>
                   <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
@@ -305,10 +358,6 @@ export default function UsagePage() {
                   />
                 </AreaChart>
               </ResponsiveContainer>
-            ) : (
-              <p className="text-sm text-muted-foreground py-12 text-center">
-                No bandwidth data for this period
-              </p>
             )}
           </CardContent>
         </Card>
