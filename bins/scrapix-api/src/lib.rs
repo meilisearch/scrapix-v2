@@ -1508,34 +1508,19 @@ async fn scrape_url(
     if !(200..300).contains(&status_code) {
         // Track failed scrape in ClickHouse analytics
         if let Some(ref batcher) = state.analytics.clickhouse_batcher {
-            let domain = extract_domain(&final_url).unwrap_or_default();
             let account_id = account_ctx
                 .as_ref()
                 .map(|c| c.account_id.clone())
                 .unwrap_or_default();
-            let ch_event = ClickHouseCrawlEvent {
-                url: final_url.clone(),
-                domain,
+            log_scrape_analytics(
+                batcher,
+                &final_url,
                 status_code,
-                response_time_ms: start_time.elapsed().as_millis() as u32,
-                content_length: 0,
-                content_type: String::new(),
-                js_rendered: false,
-                depth: 0,
-                worker_id: String::new(),
-                job_id: "scrape".to_string(),
+                start_time.elapsed().as_millis() as u64,
+                0,
                 account_id,
-                crawled_at: time::OffsetDateTime::now_utc(),
-                error: format!("HTTP {}", status_code),
-                links_extracted: 0,
-                content_changed: false,
-            };
-            let batcher = batcher.clone();
-            tokio::spawn(async move {
-                if let Err(e) = batcher.add(ch_event).await {
-                    debug!(error = %e, "Failed to add scrape event to ClickHouse batcher");
-                }
-            });
+                format!("HTTP {}", status_code),
+            );
         }
 
         return Ok(Json(ScrapeResponse {
@@ -1748,35 +1733,19 @@ async fn scrape_url(
 
     // Track successful scrape in ClickHouse analytics
     if let Some(ref batcher) = state.analytics.clickhouse_batcher {
-        let domain = extract_domain(&final_url).unwrap_or_default();
         let account_id = account_ctx
             .as_ref()
             .map(|c| c.account_id.clone())
             .unwrap_or_default();
-        let content_length = original_html_len;
-        let ch_event = ClickHouseCrawlEvent {
-            url: final_url.clone(),
-            domain,
+        log_scrape_analytics(
+            batcher,
+            &final_url,
             status_code,
-            response_time_ms: scrape_duration_ms as u32,
-            content_length,
-            content_type: String::new(),
-            js_rendered: false,
-            depth: 0,
-            worker_id: String::new(),
-            job_id: "scrape".to_string(),
+            scrape_duration_ms,
+            original_html_len,
             account_id,
-            crawled_at: time::OffsetDateTime::now_utc(),
-            error: String::new(),
-            links_extracted: 0,
-            content_changed: false,
-        };
-        let batcher = batcher.clone();
-        tokio::spawn(async move {
-            if let Err(e) = batcher.add(ch_event).await {
-                debug!(error = %e, "Failed to add scrape event to ClickHouse batcher");
-            }
-        });
+            String::new(),
+        );
     }
 
     info!(
@@ -1804,6 +1773,42 @@ async fn scrape_url(
         status_code,
         scrape_duration_ms,
     }))
+}
+
+/// Log a scrape event to ClickHouse analytics (fire-and-forget).
+fn log_scrape_analytics(
+    batcher: &Arc<CrawlEventBatcher>,
+    url: &str,
+    status_code: u16,
+    duration_ms: u64,
+    content_length: u64,
+    account_id: String,
+    error: String,
+) {
+    let domain = extract_domain(url).unwrap_or_default();
+    let ch_event = ClickHouseCrawlEvent {
+        url: url.to_string(),
+        domain,
+        status_code,
+        response_time_ms: duration_ms as u32,
+        content_length,
+        content_type: String::new(),
+        js_rendered: false,
+        depth: 0,
+        worker_id: String::new(),
+        job_id: "scrape".to_string(),
+        account_id,
+        crawled_at: time::OffsetDateTime::now_utc(),
+        error,
+        links_extracted: 0,
+        content_changed: false,
+    };
+    let batcher = batcher.clone();
+    tokio::spawn(async move {
+        if let Err(e) = batcher.add(ch_event).await {
+            debug!(error = %e, "Failed to add scrape event to ClickHouse batcher");
+        }
+    });
 }
 
 /// Extract links from HTML

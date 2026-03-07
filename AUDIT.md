@@ -35,14 +35,18 @@ Results of a comprehensive static analysis of the Rust codebase covering error h
 
 ## Phase 2: Architecture & Maintainability (Medium Priority)
 
-### 2.1 — Break up `scrape_url()` god function (392 lines)
-**`bins/scrapix-api/src/lib.rs`** — deferred (large refactor, needs separate PR)
+### 2.1 — Break up `scrape_url()` god function ✅ PARTIALLY DONE
+- Extracted `log_scrape_analytics()` helper (removed ~60 LOC duplication)
+- Further extraction (AI enrichment, fetch) deferred — tight coupling to state
 
-### 2.2 — Decompose AppState god object (~166 fields)
-**`bins/scrapix-api/src/lib.rs:134-166`** — deferred (large refactor, needs separate PR)
+### 2.2 — Decompose AppState god object ✅ DONE
+- Split into `CrawlState`, `DiagnosticsState`, `AnalyticsState` sub-structs
+- Top-level field count reduced from 16 to 8
 
-### 2.3 — Extract generic `EventBatcher<T>` (3x duplication)
-**`crates/scrapix-storage/src/clickhouse.rs`** — deferred (large refactor, needs separate PR)
+### 2.3 — Extract generic `EventBatcher<T>` ✅ DONE
+- Created `BatchInsert<T>` trait with impls for 3 event types
+- Replaced 3 duplicate batcher implementations (~160 LOC saved)
+- Type aliases maintain backward compatibility
 
 ### 2.4 — Extract shared tracing initialization (4x duplication) ✅ DONE
 - Created `scrapix-core::telemetry::init_tracing(verbose: bool)`
@@ -69,9 +73,11 @@ Results of a comprehensive static analysis of the Rust codebase covering error h
 - `lib.rs` — Server address parse error now includes host/port
 - `jobs_db.rs` — Silent `unwrap_or_default()` on start_urls now logs a warning
 
-### 3.3 — Unify error types
+### 3.3 — Unify error types ✅ DONE
 - Added `ScrapixError::Ai(String)` variant
-- Full unification deferred — `AiClientError`/`ExtractionError`/`SummaryError` → `ScrapixError` requires ~56 reference updates across 7 files
+- `AiService` public API now returns `scrapix_core::Result` (using `ScrapixError::Ai`)
+- Removed `AiError` intermediate wrapper enum
+- Internal error types (`AiClientError`, `ExtractionError`, `SummaryError`) kept for crate-internal retry logic
 
 ---
 
@@ -113,7 +119,7 @@ The concurrency patterns are solid:
 | Phase | Total | Done | Deferred |
 |-------|-------|------|----------|
 | 1. Security | 5 | 4 | 1 (key hashing — SHA-256 acceptable for API keys) |
-| 2. Architecture | 5 | 2 | 3 (large refactors for separate PRs) |
-| 3. Error handling | 3 | 2 | 1 (full AI error unification) |
-| 4. Performance | 5 | 3 | 2 (API signature changes) |
-| **Total** | **18** | **11** | **7** |
+| 2. Architecture | 5 | 5 | 0 |
+| 3. Error handling | 3 | 3 | 0 |
+| 4. Performance | 5 | 3 | 2 (API signature changes — low priority) |
+| **Total** | **18** | **15** | **3** |
