@@ -130,20 +130,30 @@ pub struct Args {
     pub verbose: bool,
 }
 
-/// Application state shared across handlers
-struct AppState {
-    /// Message bus producer for publishing URLs
-    producer: AnyProducer,
+/// Crawl job state: jobs, events, activity tracking
+struct CrawlState {
     /// Job state storage (in-memory, could be Redis)
     jobs: RwLock<HashMap<String, JobState>>,
     /// Event broadcaster for SSE
     event_tx: broadcast::Sender<(String, CrawlEvent)>,
-    /// Configuration
-    config: AppConfig,
+    /// Last activity time per job (for idle-based completion detection)
+    job_last_activity: RwLock<HashMap<String, std::time::Instant>>,
+    /// Job IDs with pending counter updates awaiting DB flush
+    dirty_jobs: RwLock<HashSet<String>>,
+}
+
+/// Diagnostics: errors, domain stats, service health
+struct DiagnosticsState {
     /// Recent errors ring buffer (for diagnostics)
     recent_errors: RwLock<VecDeque<ErrorRecord>>,
     /// Per-domain counters (for diagnostics)
     domain_counters: RwLock<HashMap<String, DomainCounter>>,
+    /// Last time each service type was seen (for health monitoring)
+    service_last_seen: RwLock<HashMap<String, std::time::Instant>>,
+}
+
+/// ClickHouse analytics batchers
+struct AnalyticsState {
     /// ClickHouse event batcher (optional - for analytics persistence)
     clickhouse_batcher: Option<Arc<CrawlEventBatcher>>,
     /// ClickHouse AI usage batcher (optional)
@@ -151,18 +161,26 @@ struct AppState {
     ai_usage_batcher: Option<Arc<AiUsageBatcher>>,
     /// ClickHouse job event batcher (optional - persists all event types)
     job_event_batcher: Option<Arc<JobEventBatcher>>,
-    /// Last activity time per job (for idle-based completion detection)
-    job_last_activity: RwLock<HashMap<String, std::time::Instant>>,
-    /// Last time each service type was seen (for health monitoring)
-    service_last_seen: RwLock<HashMap<String, std::time::Instant>>,
+}
+
+/// Application state shared across handlers
+struct AppState {
+    /// Message bus producer for publishing URLs
+    producer: AnyProducer,
+    /// Configuration
+    config: AppConfig,
+    /// Crawl job state
+    crawl: CrawlState,
+    /// Diagnostics and observability
+    diagnostics: DiagnosticsState,
+    /// Analytics batchers
+    analytics: AnalyticsState,
     /// Shared HTTP fetcher for /scrape endpoint (connection pooling, retries, DNS cache)
     fetcher: Arc<HttpFetcher>,
     /// Optional AI service for /scrape enrichment
     ai_service: Option<Arc<AiService>>,
     /// PostgreSQL connection pool (for saved configs, cron scheduling)
     db_pool: Option<sqlx::PgPool>,
-    /// Job IDs with pending counter updates awaiting DB flush
-    dirty_jobs: RwLock<HashSet<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -185,26 +203,32 @@ impl AppState {
         let (event_tx, _) = broadcast::channel(10_000);
         Self {
             producer,
-            jobs: RwLock::new(HashMap::new()),
-            event_tx,
             config,
-            recent_errors: RwLock::new(VecDeque::with_capacity(1000)),
-            domain_counters: RwLock::new(HashMap::new()),
-            clickhouse_batcher,
-            ai_usage_batcher,
-            job_event_batcher,
-            job_last_activity: RwLock::new(HashMap::new()),
-            service_last_seen: RwLock::new(HashMap::new()),
+            crawl: CrawlState {
+                jobs: RwLock::new(HashMap::new()),
+                event_tx,
+                job_last_activity: RwLock::new(HashMap::new()),
+                dirty_jobs: RwLock::new(HashSet::new()),
+            },
+            diagnostics: DiagnosticsState {
+                recent_errors: RwLock::new(VecDeque::with_capacity(1000)),
+                domain_counters: RwLock::new(HashMap::new()),
+                service_last_seen: RwLock::new(HashMap::new()),
+            },
+            analytics: AnalyticsState {
+                clickhouse_batcher,
+                ai_usage_batcher,
+                job_event_batcher,
+            },
             fetcher,
             ai_service,
             db_pool,
-            dirty_jobs: RwLock::new(HashSet::new()),
         }
     }
 
     /// Create a new job
     fn create_job(&self, job_id: &str, index_uid: &str) -> JobState {
-        let mut jobs = self.jobs.write();
+        let mut jobs = self.crawl.jobs.write();
 
         // Evict old jobs if at capacity
         if jobs.len() >= self.config.max_jobs {
@@ -233,7 +257,7 @@ impl AppState {
 
     /// Get a job by ID
     fn get_job(&self, job_id: &str) -> Option<JobState> {
-        self.jobs.read().get(job_id).cloned()
+        self.crawl.jobs.read().get(job_id).cloned()
     }
 
     /// Update a job
@@ -241,7 +265,7 @@ impl AppState {
     where
         F: FnOnce(&mut JobState),
     {
-        let mut jobs = self.jobs.write();
+        let mut jobs = self.crawl.jobs.write();
         if let Some(job) = jobs.get_mut(job_id) {
             f(job);
             Some(job.clone())
@@ -252,13 +276,13 @@ impl AppState {
 
     /// List all jobs
     fn list_jobs(&self, limit: usize, offset: usize) -> Vec<JobState> {
-        let jobs = self.jobs.read();
+        let jobs = self.crawl.jobs.read();
         jobs.values().skip(offset).take(limit).cloned().collect()
     }
 
     /// Broadcast an event
     fn broadcast_event(&self, job_id: &str, event: CrawlEvent) {
-        if let Err(e) = self.event_tx.send((job_id.to_string(), event)) {
+        if let Err(e) = self.crawl.event_tx.send((job_id.to_string(), event)) {
             debug!("No active event subscribers, dropping event: {}", e);
         }
     }
@@ -268,7 +292,7 @@ impl AppState {
         // Track last activity for idle-based completion detection
         {
             let now = std::time::Instant::now();
-            self.job_last_activity
+            self.crawl.job_last_activity
                 .write()
                 .insert(job_id.to_string(), now);
 
@@ -280,12 +304,12 @@ impl AppState {
                 _ => None,
             };
             if let Some(svc) = service {
-                self.service_last_seen.write().insert(svc.to_string(), now);
+                self.diagnostics.service_last_seen.write().insert(svc.to_string(), now);
             }
         }
 
         // Persist to ClickHouse crawl_events if configured (PageCrawled/PageFailed only)
-        if let Some(ref batcher) = self.clickhouse_batcher {
+        if let Some(ref batcher) = self.analytics.clickhouse_batcher {
             if let Some(ch_event) = kafka_event_to_clickhouse(job_id, event) {
                 let batcher = batcher.clone();
                 tokio::spawn(async move {
@@ -297,7 +321,7 @@ impl AppState {
         }
 
         // Persist to ClickHouse job_events (all event types)
-        if let Some(ref batcher) = self.job_event_batcher {
+        if let Some(ref batcher) = self.analytics.job_event_batcher {
             let job_event = crawl_event_to_job_event(job_id, event);
             let batcher = batcher.clone();
             tokio::spawn(async move {
@@ -323,11 +347,11 @@ impl AppState {
                         }
                     }
                 });
-                self.dirty_jobs.write().insert(job_id.to_string());
+                self.crawl.dirty_jobs.write().insert(job_id.to_string());
 
                 // Track domain stats
                 if let Some(domain) = extract_domain(url) {
-                    let mut counters = self.domain_counters.write();
+                    let mut counters = self.diagnostics.domain_counters.write();
                     let counter = counters.entry(domain).or_default();
                     counter.requests += 1;
                     counter.successes += 1;
@@ -343,7 +367,7 @@ impl AppState {
                 self.update_job(job_id, |j| {
                     j.errors += 1;
                 });
-                self.dirty_jobs.write().insert(job_id.to_string());
+                self.crawl.dirty_jobs.write().insert(job_id.to_string());
 
                 // Track error
                 let domain = extract_domain(url).unwrap_or_else(|| "unknown".to_string());
@@ -358,7 +382,7 @@ impl AppState {
                 };
 
                 {
-                    let mut errors = self.recent_errors.write();
+                    let mut errors = self.diagnostics.recent_errors.write();
                     errors.push_back(error_record);
                     while errors.len() > 1000 {
                         errors.pop_front();
@@ -367,7 +391,7 @@ impl AppState {
 
                 // Track domain stats
                 {
-                    let mut counters = self.domain_counters.write();
+                    let mut counters = self.diagnostics.domain_counters.write();
                     let counter = counters.entry(domain).or_default();
                     counter.requests += 1;
                     counter.failures += 1;
@@ -378,7 +402,7 @@ impl AppState {
                     j.pages_indexed += 1;
                     j.documents_sent += 1;
                 });
-                self.dirty_jobs.write().insert(job_id.to_string());
+                self.crawl.dirty_jobs.write().insert(job_id.to_string());
             }
             CrawlEvent::JobCompleted {
                 pages_crawled,
@@ -397,7 +421,7 @@ impl AppState {
                 });
                 // Immediate DB write for lifecycle event
                 if let (Some(ref pool), Some(snapshot)) = (&self.db_pool, updated) {
-                    self.dirty_jobs.write().remove(job_id);
+                    self.crawl.dirty_jobs.write().remove(job_id);
                     let pool = pool.clone();
                     tokio::spawn(async move { jobs_db::update_job_full(&pool, &snapshot).await });
                 }
@@ -405,7 +429,7 @@ impl AppState {
             CrawlEvent::JobFailed { error, .. } => {
                 // Best-effort cleanup of temp index if this was a replace_index job
                 let swap_info = {
-                    let jobs = self.jobs.read();
+                    let jobs = self.crawl.jobs.read();
                     jobs.get(job_id).and_then(|j| {
                         if let (Some(temp), Some(url)) =
                             (&j.swap_temp_index, &j.swap_meilisearch_url)
@@ -445,7 +469,7 @@ impl AppState {
                 });
                 // Immediate DB write for lifecycle event
                 if let (Some(ref pool), Some(snapshot)) = (&self.db_pool, updated) {
-                    self.dirty_jobs.write().remove(job_id);
+                    self.crawl.dirty_jobs.write().remove(job_id);
                     let pool = pool.clone();
                     tokio::spawn(async move { jobs_db::update_job_full(&pool, &snapshot).await });
                 }
@@ -457,7 +481,7 @@ impl AppState {
                         j.eta_seconds = Some((*count as f64 / j.crawl_rate) as u64);
                     }
                 });
-                self.dirty_jobs.write().insert(job_id.to_string());
+                self.crawl.dirty_jobs.write().insert(job_id.to_string());
             }
             _ => {}
         }
@@ -1269,7 +1293,7 @@ struct ServiceHealthResponse {
 /// Service health endpoint — reports liveness of each component
 async fn health_services(State(state): State<Arc<AppState>>) -> Json<ServiceHealthResponse> {
     let now = std::time::Instant::now();
-    let seen = state.service_last_seen.read();
+    let seen = state.diagnostics.service_last_seen.read();
     let kafka_connected = state.producer.is_healthy();
 
     let worker_status = |name: &str| -> ServiceStatus {
@@ -1483,7 +1507,7 @@ async fn scrape_url(
     // Check for success status
     if !(200..300).contains(&status_code) {
         // Track failed scrape in ClickHouse analytics
-        if let Some(ref batcher) = state.clickhouse_batcher {
+        if let Some(ref batcher) = state.analytics.clickhouse_batcher {
             let domain = extract_domain(&final_url).unwrap_or_default();
             let account_id = account_ctx
                 .as_ref()
@@ -1723,7 +1747,7 @@ async fn scrape_url(
     let scrape_duration_ms = start_time.elapsed().as_millis() as u64;
 
     // Track successful scrape in ClickHouse analytics
-    if let Some(ref batcher) = state.clickhouse_batcher {
+    if let Some(ref batcher) = state.analytics.clickhouse_batcher {
         let domain = extract_domain(&final_url).unwrap_or_default();
         let account_id = account_ctx
             .as_ref()
@@ -1872,7 +1896,7 @@ pub(crate) async fn do_create_crawl(
 
         // Concurrent jobs
         let running_jobs = state
-            .jobs
+            .crawl.jobs
             .read()
             .values()
             .filter(|j| {
@@ -1916,7 +1940,7 @@ pub(crate) async fn do_create_crawl(
     // Create job state (tracks the target index_uid, not the temp one)
     let mut job = if let Some(ctx) = account_ctx {
         let j = JobState::with_account(&job_id, &target_index_uid, &ctx.account_id);
-        let mut jobs = state.jobs.write();
+        let mut jobs = state.crawl.jobs.write();
         // Evict old jobs if at capacity
         if jobs.len() >= state.config.max_jobs {
             let to_remove: Vec<String> = jobs
@@ -2537,7 +2561,7 @@ async fn create_crawl_sync(
     let job_id = response.job_id.clone();
 
     // Subscribe to events
-    let mut rx = state.event_tx.subscribe();
+    let mut rx = state.crawl.event_tx.subscribe();
 
     // Wait for job completion with timeout
     let timeout = Duration::from_secs(3600); // 1 hour timeout
@@ -2632,7 +2656,7 @@ async fn job_events(
         .ok_or_else(|| ApiError::new("Job not found", "not_found"))?;
     check_job_ownership(&job, &account_ctx)?;
 
-    let rx = state.event_tx.subscribe();
+    let rx = state.crawl.event_tx.subscribe();
     let target_job_id = job_id.clone();
 
     // Use futures::StreamExt for sync filter_map
@@ -2659,7 +2683,7 @@ async fn job_events(
 /// System stats endpoint
 async fn handle_stats(State(state): State<Arc<AppState>>) -> Json<SystemStatsResponse> {
     // Compute job summary
-    let jobs = state.jobs.read();
+    let jobs = state.crawl.jobs.read();
     let mut running = 0;
     let mut completed = 0;
     let mut failed = 0;
@@ -2686,8 +2710,8 @@ async fn handle_stats(State(state): State<Arc<AppState>>) -> Json<SystemStatsRes
     drop(jobs);
 
     // Compute diagnostics stats
-    let errors_count = state.recent_errors.read().len();
-    let counters = state.domain_counters.read();
+    let errors_count = state.diagnostics.recent_errors.read().len();
+    let counters = state.diagnostics.domain_counters.read();
     let tracked_domains = counters.len();
     let mut total_requests = 0u64;
     let mut total_successes = 0u64;
@@ -2729,7 +2753,7 @@ async fn handle_errors(
     State(state): State<Arc<AppState>>,
     Query(params): Query<ErrorsQuery>,
 ) -> Json<ErrorsResponse> {
-    let errors = state.recent_errors.read();
+    let errors = state.diagnostics.recent_errors.read();
 
     // Filter by job_id if specified
     let filtered: Vec<ErrorRecord> = if let Some(ref job_id) = params.job_id {
@@ -2779,7 +2803,7 @@ async fn handle_domains(
     State(state): State<Arc<AppState>>,
     Query(params): Query<DomainsQuery>,
 ) -> Json<DomainsResponse> {
-    let counters = state.domain_counters.read();
+    let counters = state.diagnostics.domain_counters.read();
 
     // Filter by pattern if specified
     let filtered: Vec<(&String, &DomainCounter)> = if let Some(ref filter) = params.filter {
@@ -2881,7 +2905,7 @@ async fn handle_ws_connection(socket: WebSocket, state: Arc<AppState>) {
         Arc::new(RwLock::new(std::collections::HashSet::new()));
 
     // Subscribe to broadcast channel for events
-    let mut event_rx = state.event_tx.subscribe();
+    let mut event_rx = state.crawl.event_tx.subscribe();
 
     // Spawn task to forward events to WebSocket
     let subs = subscriptions.clone();
@@ -3010,7 +3034,7 @@ async fn handle_job_ws_connection(socket: WebSocket, state: Arc<AppState>, job_i
     let (mut sender, mut receiver) = socket.split();
 
     // Subscribe to broadcast channel
-    let mut event_rx = state.event_tx.subscribe();
+    let mut event_rx = state.crawl.event_tx.subscribe();
     let target_job_id = job_id.clone();
 
     // Send initial status
@@ -3108,7 +3132,7 @@ async fn cancel_job(
 
     // Persist cancellation to Postgres
     if let Some(ref pool) = state.db_pool {
-        state.dirty_jobs.write().remove(&job_id);
+        state.crawl.dirty_jobs.write().remove(&job_id);
         let pool = pool.clone();
         let snapshot = job.clone();
         tokio::spawn(async move { jobs_db::update_job_full(&pool, &snapshot).await });
@@ -3145,7 +3169,7 @@ async fn list_jobs(
         };
 
         // Overlay in-memory state for active jobs (fresher counters)
-        let in_memory = state.jobs.read();
+        let in_memory = state.crawl.jobs.read();
         for job in &mut db_jobs {
             if let Some(mem_job) = in_memory.get(&job.job_id) {
                 if matches!(mem_job.status, JobStatus::Running | JobStatus::Pending) {
@@ -3156,7 +3180,7 @@ async fn list_jobs(
         db_jobs
     } else if let Some(ctx) = &account_ctx {
         // No DB — filter in-memory by account
-        let all_jobs = state.jobs.read();
+        let all_jobs = state.crawl.jobs.read();
         all_jobs
             .values()
             .filter(|j| j.account_id.as_deref() == Some(&ctx.account_id))
@@ -3405,8 +3429,8 @@ pub async fn run_with_bus(
         let recovered = jobs_db::load_active_jobs(pool).await;
         if !recovered.is_empty() {
             let now = std::time::Instant::now();
-            let mut jobs = state.jobs.write();
-            let mut activity = state.job_last_activity.write();
+            let mut jobs = state.crawl.jobs.write();
+            let mut activity = state.crawl.job_last_activity.write();
             for job in &recovered {
                 jobs.insert(job.job_id.clone(), job.clone());
                 if matches!(job.status, JobStatus::Running) {
@@ -3492,10 +3516,10 @@ pub async fn run_with_bus(
                         // Flush dirty job counters to Postgres
                         if let Some(ref pool) = flush_state.db_pool {
                             let dirty_ids: Vec<String> =
-                                flush_state.dirty_jobs.write().drain().collect();
+                                flush_state.crawl.dirty_jobs.write().drain().collect();
                             if !dirty_ids.is_empty() {
                                 let snapshots: Vec<JobState> = {
-                                    let jobs = flush_state.jobs.read();
+                                    let jobs = flush_state.crawl.jobs.read();
                                     dirty_ids
                                         .iter()
                                         .filter_map(|id| jobs.get(id).cloned())
@@ -3525,10 +3549,10 @@ pub async fn run_with_bus(
                         // Final Postgres flush
                         if let Some(ref pool) = flush_state.db_pool {
                             let dirty_ids: Vec<String> =
-                                flush_state.dirty_jobs.write().drain().collect();
+                                flush_state.crawl.dirty_jobs.write().drain().collect();
                             if !dirty_ids.is_empty() {
                                 let snapshots: Vec<JobState> = {
-                                    let jobs = flush_state.jobs.read();
+                                    let jobs = flush_state.crawl.jobs.read();
                                     dirty_ids
                                         .iter()
                                         .filter_map(|id| jobs.get(id).cloned())
@@ -3569,8 +3593,8 @@ pub async fn run_with_bus(
                     // (job_id, pages_crawled, pages_indexed, errors, swap_temp_index, swap_target_index, swap_search_api_key, index_uid)
                     type IdleJobInfo = (String, u64, u64, u64, Option<String>, Option<String>, Option<String>, String);
                     let idle_jobs: Vec<IdleJobInfo> = {
-                        let jobs = idle_state.jobs.read();
-                        let activity = idle_state.job_last_activity.read();
+                        let jobs = idle_state.crawl.jobs.read();
+                        let activity = idle_state.crawl.job_last_activity.read();
                         jobs.iter()
                             .filter(|(_, j)| matches!(j.status, JobStatus::Running))
                             .filter(|(_, j)| j.pages_crawled > 0) // Must have done some work
@@ -3594,7 +3618,7 @@ pub async fn run_with_bus(
 
                     for (job_id, pages_crawled, documents_indexed, errors, swap_temp, swap_url, swap_key, index_uid) in idle_jobs {
                         let duration_secs = {
-                            let jobs = idle_state.jobs.read();
+                            let jobs = idle_state.crawl.jobs.read();
                             jobs.get(&job_id)
                                 .and_then(|j| j.duration_seconds())
                                 .unwrap_or(0) as u64
@@ -3642,7 +3666,7 @@ pub async fn run_with_bus(
                                     };
                                     idle_state.process_event(&job_id, &event);
                                     idle_state.broadcast_event(&job_id, event);
-                                    idle_state.job_last_activity.write().remove(&job_id);
+                                    idle_state.crawl.job_last_activity.write().remove(&job_id);
                                     continue;
                                 }
                             }
@@ -3670,7 +3694,7 @@ pub async fn run_with_bus(
                         idle_state.broadcast_event(&job_id, event);
 
                         // Clean up activity tracking
-                        idle_state.job_last_activity.write().remove(&job_id);
+                        idle_state.crawl.job_last_activity.write().remove(&job_id);
                     }
                 }
                 _ = idle_shutdown_rx.changed() => {
