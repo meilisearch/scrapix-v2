@@ -71,20 +71,13 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <div className="flex h-full flex-col">
       <div className="flex h-14 items-center px-6 border-b">
-        <Link href="/" className="flex items-center space-x-2" onClick={onNavigate}>
-          <Image
-            src={isDark ? "/icon_dark_transparent.svg" : "/icon_light_transparent.svg"}
-            alt="Scrapix"
-            width={32}
-            height={32}
-            className="h-8 w-8"
-          />
+        <Link href="/" className="flex items-center" onClick={onNavigate}>
           <Image
             src={isDark ? "/logotype_dark.svg" : "/logotype_light.svg"}
             alt="Scrapix"
-            width={100}
-            height={28}
-            className="h-5 w-auto"
+            width={120}
+            height={32}
+            className="h-7 w-auto"
           />
         </Link>
       </div>
