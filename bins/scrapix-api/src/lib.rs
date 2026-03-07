@@ -87,8 +87,9 @@ use scrapix_queue::{
     topic_names, AnyConsumer, AnyProducer, ConsumerBuilder, CrawlEvent, ProducerBuilder, UrlMessage,
 };
 use scrapix_storage::clickhouse::{
-    AiUsageBatcher, AiUsageClickHouseEvent, ClickHouseStorage, CrawlEvent as ClickHouseCrawlEvent,
-    CrawlEventBatcher, JobEvent as ClickHouseJobEvent, JobEventBatcher,
+    AiUsageBatcher, AiUsageEvent as ClickHouseAiUsageEvent, ClickHouseStorage,
+    JobEvent as ClickHouseJobEvent, JobEventBatcher, RequestEvent as ClickHouseRequestEvent,
+    RequestEventBatcher,
 };
 
 /// Scrapix API Server
@@ -153,12 +154,12 @@ struct DiagnosticsState {
 
 /// ClickHouse analytics batchers
 struct AnalyticsState {
-    /// ClickHouse event batcher (optional - for analytics persistence)
-    clickhouse_batcher: Option<Arc<CrawlEventBatcher>>,
-    /// ClickHouse AI usage batcher (optional)
+    /// Request event batcher (billing atom: 1 row per API call)
+    request_batcher: Option<Arc<RequestEventBatcher>>,
+    /// AI usage batcher (per-LLM-call tracking)
     #[allow(dead_code)]
     ai_usage_batcher: Option<Arc<AiUsageBatcher>>,
-    /// ClickHouse job event batcher (optional - persists all event types)
+    /// Job event batcher (lifecycle: JobStarted/Completed/Failed)
     job_event_batcher: Option<Arc<JobEventBatcher>>,
 }
 
@@ -192,7 +193,7 @@ impl AppState {
     fn new(
         producer: AnyProducer,
         config: AppConfig,
-        clickhouse_batcher: Option<Arc<CrawlEventBatcher>>,
+        request_batcher: Option<Arc<RequestEventBatcher>>,
         ai_usage_batcher: Option<Arc<AiUsageBatcher>>,
         job_event_batcher: Option<Arc<JobEventBatcher>>,
         fetcher: Arc<HttpFetcher>,
@@ -215,7 +216,7 @@ impl AppState {
                 service_last_seen: RwLock::new(HashMap::new()),
             },
             analytics: AnalyticsState {
-                clickhouse_batcher,
+                request_batcher,
                 ai_usage_batcher,
                 job_event_batcher,
             },
@@ -307,27 +308,68 @@ impl AppState {
             }
         }
 
-        // Persist to ClickHouse crawl_events if configured (PageCrawled/PageFailed only)
-        if let Some(ref batcher) = self.analytics.clickhouse_batcher {
-            if let Some(ch_event) = kafka_event_to_clickhouse(job_id, event) {
+        // Persist lifecycle events to ClickHouse job_events (JobStarted/Completed/Failed only)
+        if let Some(ref batcher) = self.analytics.job_event_batcher {
+            if let Some(job_event) = crawl_event_to_job_event(job_id, event) {
                 let batcher = batcher.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = batcher.add(ch_event).await {
-                        debug!(error = %e, "Failed to add event to ClickHouse batcher");
+                    if let Err(e) = batcher.add(job_event).await {
+                        debug!(error = %e, "Failed to add job event to ClickHouse batcher");
                     }
                 });
             }
         }
 
-        // Persist to ClickHouse job_events (all event types)
-        if let Some(ref batcher) = self.analytics.job_event_batcher {
-            let job_event = crawl_event_to_job_event(job_id, event);
-            let batcher = batcher.clone();
-            tokio::spawn(async move {
-                if let Err(e) = batcher.add(job_event).await {
-                    debug!(error = %e, "Failed to add job event to ClickHouse batcher");
-                }
-            });
+        // Persist crawl completion to request_events (1 row per crawl job at completion)
+        if let Some(ref batcher) = self.analytics.request_batcher {
+            if let CrawlEvent::JobCompleted {
+                account_id,
+                pages_crawled,
+                bytes_downloaded,
+                duration_secs,
+                errors,
+                ..
+            } = event
+            {
+                // Look up the job to get the start URL and index_uid
+                let (url, domain) = {
+                    let jobs = self.crawl.jobs.read();
+                    jobs.get(job_id)
+                        .map(|j| {
+                            let url = j.start_urls.first().cloned().unwrap_or_default();
+                            let domain = extract_domain(&url).unwrap_or_default();
+                            (url, domain)
+                        })
+                        .unwrap_or_default()
+                };
+
+                let ch_event = ClickHouseRequestEvent {
+                    account_id: account_id.clone().unwrap_or_default(),
+                    job_id: job_id.to_string(),
+                    operation: "crawl".to_string(),
+                    url,
+                    domain,
+                    status_code: if *errors > 0 { 0 } else { 200 },
+                    duration_ms: (*duration_secs * 1000) as u32,
+                    content_length: *bytes_downloaded,
+                    error: String::new(),
+                    js_rendered: false,
+                    ai_summary: false,
+                    ai_extraction: false,
+                    ai_prompt_tokens: 0,
+                    ai_completion_tokens: 0,
+                    ai_model: String::new(),
+                    urls_found: 0,
+                    pages_fetched: *pages_crawled as u32,
+                    timestamp: time::OffsetDateTime::now_utc(),
+                };
+                let batcher = batcher.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = batcher.add(ch_event).await {
+                        debug!(error = %e, "Failed to add crawl request event to ClickHouse");
+                    }
+                });
+            }
         }
 
         match event {
@@ -520,74 +562,14 @@ fn extract_status_code(error: &str) -> Option<u16> {
     None
 }
 
-/// Convert a Kafka CrawlEvent to a ClickHouse CrawlEvent for analytics persistence
-fn kafka_event_to_clickhouse(job_id: &str, event: &CrawlEvent) -> Option<ClickHouseCrawlEvent> {
-    match event {
-        CrawlEvent::PageCrawled {
-            url,
-            status,
-            content_length,
-            duration_ms,
-            account_id,
-            ..
-        } => {
-            let domain = extract_domain(url).unwrap_or_default();
-            Some(ClickHouseCrawlEvent {
-                url: url.clone(),
-                domain,
-                status_code: *status,
-                response_time_ms: *duration_ms as u32,
-                content_length: *content_length,
-                content_type: String::new(),
-                js_rendered: false,
-                depth: 0,
-                worker_id: String::new(),
-                job_id: job_id.to_string(),
-                account_id: account_id.clone().unwrap_or_default(),
-                crawled_at: time::OffsetDateTime::now_utc(),
-                error: String::new(),
-                links_extracted: 0,
-                content_changed: false,
-            })
-        }
-        CrawlEvent::PageFailed {
-            url,
-            error,
-            account_id,
-            ..
-        } => {
-            let domain = extract_domain(url).unwrap_or_default();
-            let status_code = extract_status_code(error).unwrap_or(0);
-            Some(ClickHouseCrawlEvent {
-                url: url.clone(),
-                domain,
-                status_code,
-                response_time_ms: 0,
-                content_length: 0,
-                content_type: String::new(),
-                js_rendered: false,
-                depth: 0,
-                worker_id: String::new(),
-                job_id: job_id.to_string(),
-                account_id: account_id.clone().unwrap_or_default(),
-                crawled_at: time::OffsetDateTime::now_utc(),
-                error: error.clone(),
-                links_extracted: 0,
-                content_changed: false,
-            })
-        }
-        _ => None, // Other events don't map to crawl_events table
-    }
-}
-
 /// Convert a millisecond epoch timestamp to OffsetDateTime.
 fn offset_datetime_from_millis(millis: i64) -> time::OffsetDateTime {
     time::OffsetDateTime::from_unix_timestamp(millis / 1000)
         .unwrap_or_else(|_| time::OffsetDateTime::now_utc())
 }
 
-/// Convert any Kafka CrawlEvent to a ClickHouse JobEvent for the job_events table.
-fn crawl_event_to_job_event(job_id: &str, event: &CrawlEvent) -> ClickHouseJobEvent {
+/// Convert a CrawlEvent to a ClickHouse JobEvent. Only lifecycle events are persisted.
+fn crawl_event_to_job_event(job_id: &str, event: &CrawlEvent) -> Option<ClickHouseJobEvent> {
     match event {
         CrawlEvent::JobStarted {
             index_uid,
@@ -595,15 +577,16 @@ fn crawl_event_to_job_event(job_id: &str, event: &CrawlEvent) -> ClickHouseJobEv
             start_urls,
             timestamp,
             ..
-        } => ClickHouseJobEvent {
+        } => Some(ClickHouseJobEvent {
             event_type: "JobStarted".to_string(),
             job_id: job_id.to_string(),
             account_id: account_id.clone().unwrap_or_default(),
             index_uid: index_uid.clone(),
             start_urls: start_urls.clone(),
+            operation: "crawl".to_string(),
             timestamp: offset_datetime_from_millis(*timestamp),
             ..Default::default()
-        },
+        }),
         CrawlEvent::JobCompleted {
             account_id,
             pages_crawled,
@@ -613,7 +596,7 @@ fn crawl_event_to_job_event(job_id: &str, event: &CrawlEvent) -> ClickHouseJobEv
             duration_secs,
             timestamp,
             ..
-        } => ClickHouseJobEvent {
+        } => Some(ClickHouseJobEvent {
             event_type: "JobCompleted".to_string(),
             job_id: job_id.to_string(),
             account_id: account_id.clone().unwrap_or_default(),
@@ -624,118 +607,21 @@ fn crawl_event_to_job_event(job_id: &str, event: &CrawlEvent) -> ClickHouseJobEv
             duration_secs: *duration_secs,
             timestamp: offset_datetime_from_millis(*timestamp),
             ..Default::default()
-        },
+        }),
         CrawlEvent::JobFailed {
             account_id,
             error,
             timestamp,
             ..
-        } => ClickHouseJobEvent {
+        } => Some(ClickHouseJobEvent {
             event_type: "JobFailed".to_string(),
             job_id: job_id.to_string(),
             account_id: account_id.clone().unwrap_or_default(),
             error: error.clone(),
             timestamp: offset_datetime_from_millis(*timestamp),
             ..Default::default()
-        },
-        CrawlEvent::PageCrawled {
-            account_id,
-            url,
-            status,
-            content_length,
-            duration_ms,
-            timestamp,
-            ..
-        } => {
-            let domain = extract_domain(url).unwrap_or_default();
-            ClickHouseJobEvent {
-                event_type: "PageCrawled".to_string(),
-                job_id: job_id.to_string(),
-                account_id: account_id.clone().unwrap_or_default(),
-                url: url.clone(),
-                domain,
-                status_code: *status,
-                content_length: *content_length,
-                duration_ms: *duration_ms as u32,
-                timestamp: offset_datetime_from_millis(*timestamp),
-                ..Default::default()
-            }
-        }
-        CrawlEvent::PageFailed {
-            account_id,
-            url,
-            error,
-            retry_count,
-            timestamp,
-            ..
-        } => {
-            let domain = extract_domain(url).unwrap_or_default();
-            ClickHouseJobEvent {
-                event_type: "PageFailed".to_string(),
-                job_id: job_id.to_string(),
-                account_id: account_id.clone().unwrap_or_default(),
-                url: url.clone(),
-                domain,
-                error: error.clone(),
-                retry_count: *retry_count,
-                timestamp: offset_datetime_from_millis(*timestamp),
-                ..Default::default()
-            }
-        }
-        CrawlEvent::DocumentIndexed {
-            account_id,
-            url,
-            document_id,
-            timestamp,
-            ..
-        } => ClickHouseJobEvent {
-            event_type: "DocumentIndexed".to_string(),
-            job_id: job_id.to_string(),
-            account_id: account_id.clone().unwrap_or_default(),
-            url: url.clone(),
-            document_id: document_id.clone(),
-            timestamp: offset_datetime_from_millis(*timestamp),
-            ..Default::default()
-        },
-        CrawlEvent::UrlsDiscovered {
-            source_url,
-            count,
-            timestamp,
-            ..
-        } => ClickHouseJobEvent {
-            event_type: "UrlsDiscovered".to_string(),
-            job_id: job_id.to_string(),
-            source_url: source_url.clone(),
-            count: *count as u32,
-            timestamp: offset_datetime_from_millis(*timestamp),
-            ..Default::default()
-        },
-        CrawlEvent::RateLimited {
-            domain,
-            wait_ms,
-            timestamp,
-            ..
-        } => ClickHouseJobEvent {
-            event_type: "RateLimited".to_string(),
-            job_id: job_id.to_string(),
-            domain: domain.clone(),
-            wait_ms: *wait_ms,
-            timestamp: offset_datetime_from_millis(*timestamp),
-            ..Default::default()
-        },
-        CrawlEvent::PageSkipped {
-            url,
-            reason,
-            timestamp,
-            ..
-        } => ClickHouseJobEvent {
-            event_type: "PageSkipped".to_string(),
-            job_id: job_id.to_string(),
-            url: url.clone(),
-            reason: reason.clone(),
-            timestamp: offset_datetime_from_millis(*timestamp),
-            ..Default::default()
-        },
+        }),
+        _ => None, // Only lifecycle events go to job_events
     }
 }
 
@@ -1499,13 +1385,13 @@ async fn scrape_url(
 
     // Check for success status
     if !(200..300).contains(&status_code) {
-        // Track failed scrape in ClickHouse analytics
-        if let Some(ref batcher) = state.analytics.clickhouse_batcher {
+        // Track failed scrape in ClickHouse request_events
+        if let Some(ref batcher) = state.analytics.request_batcher {
             let account_id = account_ctx
                 .as_ref()
                 .map(|c| c.account_id.clone())
                 .unwrap_or_default();
-            log_scrape_analytics(
+            log_scrape_request(
                 batcher,
                 &final_url,
                 status_code,
@@ -1513,6 +1399,8 @@ async fn scrape_url(
                 0,
                 account_id,
                 format!("HTTP {}", status_code),
+                false,
+                false,
             );
         }
 
@@ -1724,13 +1612,15 @@ async fn scrape_url(
 
     let scrape_duration_ms = start_time.elapsed().as_millis() as u64;
 
-    // Track successful scrape in ClickHouse analytics
-    if let Some(ref batcher) = state.analytics.clickhouse_batcher {
+    // Track successful scrape in ClickHouse request_events
+    let has_ai_summary = request.ai.as_ref().is_some_and(|ai| ai.summary);
+    let has_ai_extraction = request.ai.as_ref().is_some_and(|ai| ai.extract.is_some());
+    if let Some(ref batcher) = state.analytics.request_batcher {
         let account_id = account_ctx
             .as_ref()
             .map(|c| c.account_id.clone())
             .unwrap_or_default();
-        log_scrape_analytics(
+        log_scrape_request(
             batcher,
             &final_url,
             status_code,
@@ -1738,6 +1628,8 @@ async fn scrape_url(
             original_html_len,
             account_id,
             String::new(),
+            has_ai_summary,
+            has_ai_extraction,
         );
     }
 
@@ -1768,38 +1660,43 @@ async fn scrape_url(
     }))
 }
 
-/// Log a scrape event to ClickHouse analytics (fire-and-forget).
-fn log_scrape_analytics(
-    batcher: &Arc<CrawlEventBatcher>,
+/// Log a scrape request to ClickHouse request_events (fire-and-forget).
+fn log_scrape_request(
+    batcher: &Arc<RequestEventBatcher>,
     url: &str,
     status_code: u16,
     duration_ms: u64,
     content_length: u64,
     account_id: String,
     error: String,
+    ai_summary: bool,
+    ai_extraction: bool,
 ) {
     let domain = extract_domain(url).unwrap_or_default();
-    let ch_event = ClickHouseCrawlEvent {
+    let event = ClickHouseRequestEvent {
+        account_id,
+        job_id: String::new(),
+        operation: "scrape".to_string(),
         url: url.to_string(),
         domain,
         status_code,
-        response_time_ms: duration_ms as u32,
+        duration_ms: duration_ms as u32,
         content_length,
-        content_type: String::new(),
-        js_rendered: false,
-        depth: 0,
-        worker_id: String::new(),
-        job_id: "scrape".to_string(),
-        account_id,
-        crawled_at: time::OffsetDateTime::now_utc(),
         error,
-        links_extracted: 0,
-        content_changed: false,
+        js_rendered: false,
+        ai_summary,
+        ai_extraction,
+        ai_prompt_tokens: 0,
+        ai_completion_tokens: 0,
+        ai_model: String::new(),
+        urls_found: 0,
+        pages_fetched: 1,
+        timestamp: time::OffsetDateTime::now_utc(),
     };
     let batcher = batcher.clone();
     tokio::spawn(async move {
-        if let Err(e) = batcher.add(ch_event).await {
-            debug!(error = %e, "Failed to add scrape event to ClickHouse batcher");
+        if let Err(e) = batcher.add(event).await {
+            debug!(error = %e, "Failed to add scrape request event to ClickHouse");
         }
     });
 }
@@ -2471,6 +2368,41 @@ async fn map_url(
         duration_ms,
         "Map completed"
     );
+
+    // Track map request in ClickHouse request_events
+    if let Some(ref batcher) = state.analytics.request_batcher {
+        let account_id = _account_ctx
+            .as_ref()
+            .map(|c| c.account_id.clone())
+            .unwrap_or_default();
+        let domain = extract_domain(&request.url).unwrap_or_default();
+        let event = ClickHouseRequestEvent {
+            account_id,
+            job_id: String::new(),
+            operation: "map".to_string(),
+            url: request.url.clone(),
+            domain,
+            status_code: 200,
+            duration_ms: duration_ms as u32,
+            content_length: 0,
+            error: String::new(),
+            js_rendered: false,
+            ai_summary: false,
+            ai_extraction: false,
+            ai_prompt_tokens: 0,
+            ai_completion_tokens: 0,
+            ai_model: String::new(),
+            urls_found: total as u32,
+            pages_fetched: visited.len() as u32,
+            timestamp: time::OffsetDateTime::now_utc(),
+        };
+        let batcher = batcher.clone();
+        tokio::spawn(async move {
+            if let Err(e) = batcher.add(event).await {
+                debug!(error = %e, "Failed to add map request event to ClickHouse");
+            }
+        });
+    }
 
     Ok(Json(MapResponse {
         success: true,
@@ -3203,10 +3135,10 @@ fn start_event_consumer(
 // ============================================================================
 
 /// Initialize ClickHouse storage and event batchers.
-/// Returns (AnalyticsState for API, CrawlEventBatcher for crawl persistence, AiUsageBatcher for AI tracking, JobEventBatcher for all events).
+/// Returns (AnalyticsState for API, RequestEventBatcher, AiUsageBatcher, JobEventBatcher).
 async fn init_clickhouse() -> (
     Option<Arc<analytics::AnalyticsState>>,
-    Option<Arc<CrawlEventBatcher>>,
+    Option<Arc<RequestEventBatcher>>,
     Option<Arc<AiUsageBatcher>>,
     Option<Arc<JobEventBatcher>>,
 ) {
@@ -3243,14 +3175,14 @@ async fn init_clickhouse() -> (
         "Connected to ClickHouse"
     );
 
-    // Create event batcher (batch size of 100 events)
-    let batcher = Arc::new(CrawlEventBatcher::new(storage.clone(), 100, "crawl_events"));
+    // Create request event batcher (batch size of 50 — 1 row per API call)
+    let batcher = Arc::new(RequestEventBatcher::new(storage.clone(), 50, "request_events"));
 
     // Create AI usage batcher (batch size of 50 events)
     let ai_batcher = Arc::new(AiUsageBatcher::new(storage.clone(), 50, "ai_usage"));
 
-    // Create job event batcher (batch size of 200 events — all event types)
-    let job_batcher = Arc::new(JobEventBatcher::new(storage.clone(), 200, "job_events"));
+    // Create job event batcher (batch size of 50 — lifecycle events only)
+    let job_batcher = Arc::new(JobEventBatcher::new(storage.clone(), 50, "job_events"));
 
     // Create analytics state (sharing the same storage connection)
     let analytics_state = Arc::new(analytics::AnalyticsState::with_storage(storage));
@@ -3284,7 +3216,7 @@ pub async fn run_with_bus(
     );
 
     // Initialize ClickHouse for analytics (optional)
-    let (analytics_state, clickhouse_batcher, ai_usage_batcher, job_event_batcher) =
+    let (analytics_state, request_batcher, ai_usage_batcher, job_event_batcher) =
         init_clickhouse().await;
 
     // Initialize auth state if DATABASE_URL is provided
@@ -3363,7 +3295,7 @@ pub async fn run_with_bus(
     let state = Arc::new(AppState::new(
         producer,
         config,
-        clickhouse_batcher.clone(),
+        request_batcher.clone(),
         ai_usage_batcher.clone(),
         job_event_batcher.clone(),
         fetcher,
@@ -3405,7 +3337,7 @@ pub async fn run_with_bus(
             let batcher = batcher.clone();
             let handle = tokio::spawn(async move {
                 while let Some(event) = rx.recv().await {
-                    let ch_event = AiUsageClickHouseEvent {
+                    let ch_event = ClickHouseAiUsageEvent {
                         provider: event.provider,
                         model: event.model,
                         operation: String::new(), // API /scrape doesn't have operation context
@@ -3430,12 +3362,12 @@ pub async fn run_with_bus(
         };
 
     // Start periodic flush task (ClickHouse batchers + Postgres dirty job counters)
-    let has_flush_work = clickhouse_batcher.is_some()
+    let has_flush_work = request_batcher.is_some()
         || ai_usage_batcher.is_some()
         || job_event_batcher.is_some()
         || state.db_pool.is_some();
     let flush_handle = if has_flush_work {
-        let crawl_batcher = clickhouse_batcher.clone();
+        let req_batcher = request_batcher.clone();
         let ai_batcher = ai_usage_batcher.clone();
         let job_batcher = job_event_batcher.clone();
         let flush_state = state.clone();
@@ -3445,9 +3377,9 @@ pub async fn run_with_bus(
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        if let Some(ref b) = crawl_batcher {
+                        if let Some(ref b) = req_batcher {
                             if let Err(e) = b.flush().await {
-                                warn!(error = %e, "Failed to flush ClickHouse crawl batcher");
+                                warn!(error = %e, "Failed to flush ClickHouse request batcher");
                             }
                         }
                         if let Some(ref b) = ai_batcher {
@@ -3478,9 +3410,9 @@ pub async fn run_with_bus(
                     }
                     _ = shutdown_rx.changed() => {
                         info!("Flush task shutting down, performing final flush");
-                        if let Some(ref b) = crawl_batcher {
+                        if let Some(ref b) = req_batcher {
                             if let Err(e) = b.flush().await {
-                                warn!(error = %e, "Failed final ClickHouse crawl flush");
+                                warn!(error = %e, "Failed final ClickHouse request flush");
                             }
                         }
                         if let Some(ref b) = ai_batcher {
@@ -3513,7 +3445,7 @@ pub async fn run_with_bus(
                 }
             }
         });
-        if clickhouse_batcher.is_some() || ai_usage_batcher.is_some() {
+        if request_batcher.is_some() || ai_usage_batcher.is_some() {
             info!("ClickHouse event persistence enabled (flush interval: 5s)");
         }
         if state.db_pool.is_some() {

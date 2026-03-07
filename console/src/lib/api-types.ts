@@ -241,7 +241,7 @@ export interface HourlyStatsRow {
   successes: number;
   failures: number;
   success_rate: number;
-  avg_response_time_ms: number;
+  avg_duration_ms: number;
   total_bytes: number;
 }
 
@@ -250,7 +250,7 @@ export interface KpisRow {
   total_bytes: number;
   unique_domains: number;
   success_rate: number;
-  avg_response_time_ms: number;
+  avg_duration_ms: number;
   errors_count: number;
 }
 
@@ -260,18 +260,20 @@ export interface AccountUsageRow {
   successful_requests: number;
   failed_requests: number;
   total_bytes: number;
-  avg_response_time_ms: number;
+  avg_duration_ms: number;
   unique_domains: number;
-  total_jobs: number;
   js_renders: number;
+  ai_prompt_tokens: number;
+  ai_completion_tokens: number;
 }
 
 export interface DailyUsageRow {
   date: string;
   requests: number;
   bytes: number;
-  jobs: number;
   js_renders: number;
+  ai_prompt_tokens: number;
+  ai_completion_tokens: number;
 }
 
 export interface TopDomainRow {
@@ -280,7 +282,6 @@ export interface TopDomainRow {
   successful_requests: number;
   failed_requests: number;
   success_rate: number;
-  avg_response_time_ms: number;
+  avg_duration_ms: number;
   total_bytes: number;
-  unique_urls: number;
 }

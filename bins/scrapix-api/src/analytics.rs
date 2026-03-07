@@ -158,9 +158,8 @@ pub struct TopDomainRow {
     pub successful_requests: u64,
     pub failed_requests: u64,
     pub success_rate: f64,
-    pub avg_response_time_ms: f64,
+    pub avg_duration_ms: f64,
     pub total_bytes: u64,
-    pub unique_urls: u64,
 }
 
 async fn pipe_top_domains(
@@ -198,9 +197,8 @@ async fn pipe_top_domains(
                 successful_requests: s.successful_requests,
                 failed_requests: s.failed_requests,
                 success_rate,
-                avg_response_time_ms: s.avg_response_time_ms,
+                avg_duration_ms: s.avg_duration_ms,
                 total_bytes: s.total_bytes,
-                unique_urls: s.unique_urls,
             }
         })
         .collect();
@@ -229,15 +227,11 @@ async fn pipe_top_domains(
                 col_type: "Float64".into(),
             },
             ColumnMeta {
-                name: "avg_response_time_ms".into(),
+                name: "avg_duration_ms".into(),
                 col_type: "Float64".into(),
             },
             ColumnMeta {
                 name: "total_bytes".into(),
-                col_type: "UInt64".into(),
-            },
-            ColumnMeta {
-                name: "unique_urls".into(),
                 col_type: "UInt64".into(),
             },
         ],
@@ -295,9 +289,8 @@ async fn pipe_domain_stats(
         successful_requests: stats.successful_requests,
         failed_requests: stats.failed_requests,
         success_rate,
-        avg_response_time_ms: stats.avg_response_time_ms,
+        avg_duration_ms: stats.avg_duration_ms,
         total_bytes: stats.total_bytes,
-        unique_urls: stats.unique_urls,
     }];
 
     Ok(Json(AnalyticsResponse {
@@ -323,15 +316,11 @@ async fn pipe_domain_stats(
                 col_type: "Float64".into(),
             },
             ColumnMeta {
-                name: "avg_response_time_ms".into(),
+                name: "avg_duration_ms".into(),
                 col_type: "Float64".into(),
             },
             ColumnMeta {
                 name: "total_bytes".into(),
-                col_type: "UInt64".into(),
-            },
-            ColumnMeta {
-                name: "unique_urls".into(),
                 col_type: "UInt64".into(),
             },
         ],
@@ -362,7 +351,7 @@ pub struct HourlyStatsRow {
     pub successes: u64,
     pub failures: u64,
     pub success_rate: f64,
-    pub avg_response_time_ms: f64,
+    pub avg_duration_ms: f64,
     pub total_bytes: u64,
 }
 
@@ -401,7 +390,7 @@ async fn pipe_hourly_stats(
                 successes: s.successes,
                 failures: s.failures,
                 success_rate,
-                avg_response_time_ms: s.avg_response_time_ms,
+                avg_duration_ms: s.avg_duration_ms,
                 total_bytes: s.total_bytes,
             }
         })
@@ -431,7 +420,7 @@ async fn pipe_hourly_stats(
                 col_type: "Float64".into(),
             },
             ColumnMeta {
-                name: "avg_response_time_ms".into(),
+                name: "avg_duration_ms".into(),
                 col_type: "Float64".into(),
             },
             ColumnMeta {
@@ -536,12 +525,12 @@ pub struct JobStatsParams {
 #[derive(Debug, Serialize)]
 pub struct JobStatsRow {
     pub job_id: String,
-    pub total_urls: u64,
-    pub successful_urls: u64,
-    pub failed_urls: u64,
+    pub total_requests: u64,
+    pub successful_requests: u64,
+    pub failed_requests: u64,
     pub success_rate: f64,
     pub total_bytes: u64,
-    pub avg_response_time_ms: f64,
+    pub avg_duration_ms: f64,
     pub unique_domains: u64,
     pub started_at: String,
     pub last_activity_at: String,
@@ -571,20 +560,20 @@ async fn pipe_job_stats(
 
     let data = match stats {
         Some(s) => {
-            let success_rate = if s.total_urls > 0 {
-                s.successful_urls as f64 / s.total_urls as f64 * 100.0
+            let success_rate = if s.total_requests > 0 {
+                s.successful_requests as f64 / s.total_requests as f64 * 100.0
             } else {
                 0.0
             };
             let duration = (s.last_activity_at - s.started_at).whole_seconds();
             vec![JobStatsRow {
                 job_id: s.job_id,
-                total_urls: s.total_urls,
-                successful_urls: s.successful_urls,
-                failed_urls: s.failed_urls,
+                total_requests: s.total_requests,
+                successful_requests: s.successful_requests,
+                failed_requests: s.failed_requests,
                 success_rate,
                 total_bytes: s.total_bytes,
-                avg_response_time_ms: s.avg_response_time_ms,
+                avg_duration_ms: s.avg_duration_ms,
                 unique_domains: s.unique_domains,
                 started_at: s.started_at.to_string(),
                 last_activity_at: s.last_activity_at.to_string(),
@@ -602,15 +591,15 @@ async fn pipe_job_stats(
                 col_type: "String".into(),
             },
             ColumnMeta {
-                name: "total_urls".into(),
+                name: "total_requests".into(),
                 col_type: "UInt64".into(),
             },
             ColumnMeta {
-                name: "successful_urls".into(),
+                name: "successful_requests".into(),
                 col_type: "UInt64".into(),
             },
             ColumnMeta {
-                name: "failed_urls".into(),
+                name: "failed_requests".into(),
                 col_type: "UInt64".into(),
             },
             ColumnMeta {
@@ -622,7 +611,7 @@ async fn pipe_job_stats(
                 col_type: "UInt64".into(),
             },
             ColumnMeta {
-                name: "avg_response_time_ms".into(),
+                name: "avg_duration_ms".into(),
                 col_type: "Float64".into(),
             },
             ColumnMeta {
@@ -662,7 +651,7 @@ pub struct KpisRow {
     pub total_bytes: u64,
     pub unique_domains: u64,
     pub success_rate: f64,
-    pub avg_response_time_ms: f64,
+    pub avg_duration_ms: f64,
     pub errors_count: u64,
 }
 
@@ -698,7 +687,7 @@ async fn pipe_kpis(
         total_crawls += d.total_requests;
         total_successes += d.successful_requests;
         total_bytes += d.total_bytes;
-        total_response_time += d.avg_response_time_ms * d.total_requests as f64;
+        total_response_time += d.avg_duration_ms * d.total_requests as f64;
         errors_count += d.failed_requests;
     }
 
@@ -708,7 +697,7 @@ async fn pipe_kpis(
         0.0
     };
 
-    let avg_response_time_ms = if total_crawls > 0 {
+    let avg_duration_ms = if total_crawls > 0 {
         total_response_time / total_crawls as f64
     } else {
         0.0
@@ -719,7 +708,7 @@ async fn pipe_kpis(
         total_bytes,
         unique_domains: domains.len() as u64,
         success_rate,
-        avg_response_time_ms,
+        avg_duration_ms,
         errors_count,
     }];
 
@@ -742,7 +731,7 @@ async fn pipe_kpis(
                 col_type: "Float64".into(),
             },
             ColumnMeta {
-                name: "avg_response_time_ms".into(),
+                name: "avg_duration_ms".into(),
                 col_type: "Float64".into(),
             },
             ColumnMeta {
@@ -860,14 +849,12 @@ async fn pipe_ai_usage(
 #[derive(Debug, Deserialize)]
 pub struct JobTimelineParams {
     job_id: String,
-    #[serde(default)]
-    event_type: Option<String>,
     #[serde(default = "default_timeline_limit")]
     limit: u32,
 }
 
 fn default_timeline_limit() -> u32 {
-    1000
+    100
 }
 
 #[derive(Debug, Serialize)]
@@ -875,25 +862,14 @@ pub struct JobTimelineRow {
     pub event_type: String,
     pub job_id: String,
     pub account_id: String,
+    pub operation: String,
     pub index_uid: String,
-    pub url: String,
-    pub domain: String,
-    pub status_code: u16,
-    pub duration_ms: u32,
-    pub content_length: u64,
-    pub error: String,
-    pub document_id: String,
-    pub source_url: String,
-    pub count: u32,
-    pub reason: String,
-    pub wait_ms: u64,
-    pub retry_count: u32,
     pub pages_crawled: u64,
     pub documents_indexed: u64,
     pub errors: u64,
     pub bytes_downloaded: u64,
     pub duration_secs: u64,
-    pub start_urls: Vec<String>,
+    pub error: String,
     pub timestamp: String,
 }
 
@@ -905,7 +881,7 @@ async fn pipe_job_timeline(
 
     let events = state
         .storage
-        .get_job_events(&params.job_id, params.event_type.as_deref(), params.limit)
+        .get_job_events(&params.job_id, params.limit)
         .await
         .map_err(|e| {
             error!("job_timeline query failed: {}", e);
@@ -924,25 +900,14 @@ async fn pipe_job_timeline(
             event_type: e.event_type,
             job_id: e.job_id,
             account_id: e.account_id,
+            operation: e.operation,
             index_uid: e.index_uid,
-            url: e.url,
-            domain: e.domain,
-            status_code: e.status_code,
-            duration_ms: e.duration_ms,
-            content_length: e.content_length,
-            error: e.error,
-            document_id: e.document_id,
-            source_url: e.source_url,
-            count: e.count,
-            reason: e.reason,
-            wait_ms: e.wait_ms,
-            retry_count: e.retry_count,
             pages_crawled: e.pages_crawled,
             documents_indexed: e.documents_indexed,
             errors: e.errors,
             bytes_downloaded: e.bytes_downloaded,
             duration_secs: e.duration_secs,
-            start_urls: e.start_urls,
+            error: e.error,
             timestamp: e.timestamp.to_string(),
         })
         .collect();
@@ -1064,10 +1029,11 @@ pub struct AccountUsageRow {
     pub successful_requests: u64,
     pub failed_requests: u64,
     pub total_bytes: u64,
-    pub avg_response_time_ms: f64,
+    pub avg_duration_ms: f64,
     pub unique_domains: u64,
-    pub total_jobs: u64,
     pub js_renders: u64,
+    pub ai_prompt_tokens: u64,
+    pub ai_completion_tokens: u64,
 }
 
 async fn pipe_account_usage(
@@ -1097,10 +1063,11 @@ async fn pipe_account_usage(
         successful_requests: stats.successful_requests,
         failed_requests: stats.failed_requests,
         total_bytes: stats.total_bytes,
-        avg_response_time_ms: stats.avg_response_time_ms,
+        avg_duration_ms: stats.avg_duration_ms,
         unique_domains: stats.unique_domains,
-        total_jobs: stats.total_jobs,
         js_renders: stats.js_renders,
+        ai_prompt_tokens: stats.ai_prompt_tokens,
+        ai_completion_tokens: stats.ai_completion_tokens,
     }];
 
     Ok(Json(AnalyticsResponse {
@@ -1126,7 +1093,7 @@ async fn pipe_account_usage(
                 col_type: "UInt64".into(),
             },
             ColumnMeta {
-                name: "avg_response_time_ms".into(),
+                name: "avg_duration_ms".into(),
                 col_type: "Float64".into(),
             },
             ColumnMeta {
@@ -1134,11 +1101,15 @@ async fn pipe_account_usage(
                 col_type: "UInt64".into(),
             },
             ColumnMeta {
-                name: "total_jobs".into(),
+                name: "js_renders".into(),
                 col_type: "UInt64".into(),
             },
             ColumnMeta {
-                name: "js_renders".into(),
+                name: "ai_prompt_tokens".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "ai_completion_tokens".into(),
                 col_type: "UInt64".into(),
             },
         ],
@@ -1172,8 +1143,9 @@ pub struct AccountDailyUsageRow {
     pub date: String,
     pub requests: u64,
     pub bytes: u64,
-    pub jobs: u64,
     pub js_renders: u64,
+    pub ai_prompt_tokens: u64,
+    pub ai_completion_tokens: u64,
 }
 
 async fn pipe_account_daily_usage(
@@ -1203,8 +1175,9 @@ async fn pipe_account_daily_usage(
             date: s.date.to_string(),
             requests: s.requests,
             bytes: s.bytes,
-            jobs: s.jobs,
             js_renders: s.js_renders,
+            ai_prompt_tokens: s.ai_prompt_tokens,
+            ai_completion_tokens: s.ai_completion_tokens,
         })
         .collect();
 
@@ -1224,11 +1197,15 @@ async fn pipe_account_daily_usage(
                 col_type: "UInt64".into(),
             },
             ColumnMeta {
-                name: "jobs".into(),
+                name: "js_renders".into(),
                 col_type: "UInt64".into(),
             },
             ColumnMeta {
-                name: "js_renders".into(),
+                name: "ai_prompt_tokens".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "ai_completion_tokens".into(),
                 col_type: "UInt64".into(),
             },
         ],
@@ -1368,7 +1345,7 @@ async fn list_pipes() -> Json<Vec<PipeInfo>> {
         },
         PipeInfo {
             name: "job_timeline".into(),
-            description: "Full event timeline for a specific job".into(),
+            description: "Job lifecycle events (started, completed, failed)".into(),
             parameters: vec![
                 ParamInfo {
                     name: "job_id".into(),
@@ -1377,16 +1354,10 @@ async fn list_pipes() -> Json<Vec<PipeInfo>> {
                     default: None,
                 },
                 ParamInfo {
-                    name: "event_type".into(),
-                    param_type: "string".into(),
-                    required: false,
-                    default: None,
-                },
-                ParamInfo {
                     name: "limit".into(),
                     param_type: "integer".into(),
                     required: false,
-                    default: Some("1000".into()),
+                    default: Some("100".into()),
                 },
             ],
             endpoint: "/analytics/v0/pipes/job_timeline.json".into(),
@@ -1404,7 +1375,7 @@ async fn list_pipes() -> Json<Vec<PipeInfo>> {
         },
         PipeInfo {
             name: "account_usage".into(),
-            description: "Account usage summary (requests, bandwidth, jobs, JS renders)".into(),
+            description: "Account usage summary (requests, bandwidth, JS renders, AI tokens)".into(),
             parameters: vec![
                 ParamInfo {
                     name: "account_id".into(),

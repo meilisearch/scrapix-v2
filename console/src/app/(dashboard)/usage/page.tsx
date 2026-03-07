@@ -19,7 +19,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { Globe, HardDrive, Briefcase, Monitor } from "lucide-react";
+import { Globe, HardDrive, Sparkles, Monitor } from "lucide-react";
 import {
   fetchKpis,
   fetchHourlyStats,
@@ -113,7 +113,7 @@ export default function UsagePage() {
 
   const pagesCrawled = usage?.total_requests ?? kpi?.total_crawls ?? 0;
   const bandwidth = usage?.total_bytes ?? kpi?.total_bytes ?? 0;
-  const jobs = usage?.total_jobs ?? 0;
+  const aiTokens = (usage?.ai_prompt_tokens ?? 0) + (usage?.ai_completion_tokens ?? 0);
   const jsRenders = usage?.js_renders ?? 0;
 
   const hourlyData = hourly?.data?.map((row) => ({
@@ -185,11 +185,11 @@ export default function UsagePage() {
             </Card>
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Jobs</CardTitle>
-                <Briefcase className="h-4 w-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">AI Tokens</CardTitle>
+                <Sparkles className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{formatNumber(jobs)}</div>
+                <div className="text-2xl font-bold">{formatNumber(aiTokens)}</div>
               </CardContent>
             </Card>
             <Card>
@@ -377,8 +377,8 @@ export default function UsagePage() {
                     <TableHead>Date</TableHead>
                     <TableHead className="text-right">Requests</TableHead>
                     <TableHead className="text-right">Bandwidth</TableHead>
-                    <TableHead className="text-right">Jobs</TableHead>
                     <TableHead className="text-right">JS Renders</TableHead>
+                    <TableHead className="text-right">AI Tokens</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -387,8 +387,8 @@ export default function UsagePage() {
                       <TableCell className="font-medium">{row.date}</TableCell>
                       <TableCell className="text-right">{formatNumber(row.requests)}</TableCell>
                       <TableCell className="text-right">{formatBytes(row.bytes)}</TableCell>
-                      <TableCell className="text-right">{formatNumber(row.jobs)}</TableCell>
                       <TableCell className="text-right">{formatNumber(row.js_renders)}</TableCell>
+                      <TableCell className="text-right">{formatNumber((row.ai_prompt_tokens ?? 0) + (row.ai_completion_tokens ?? 0))}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
