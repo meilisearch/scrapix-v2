@@ -75,10 +75,12 @@ impl HtmlParser {
     /// Parse a raw page into a document
     #[instrument(skip(self, page), fields(url = %page.url))]
     pub fn parse(&self, page: &RawPage) -> Result<Document> {
-        let url = Url::parse(&page.final_url)?;
-        let domain = url
-            .host_str()
-            .ok_or_else(|| ScrapixError::Parse("URL has no host".to_string()))?;
+        let url = Url::parse(&page.final_url).map_err(|e| {
+            ScrapixError::Parse(format!("Failed to parse URL '{}': {}", page.final_url, e))
+        })?;
+        let domain = url.host_str().ok_or_else(|| {
+            ScrapixError::Parse(format!("URL has no host: '{}'", page.final_url))
+        })?;
 
         let mut doc = Document::new(&page.final_url, domain);
 

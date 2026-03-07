@@ -1941,7 +1941,15 @@ pub(crate) async fn do_create_crawl(
     };
     job.start_urls = config.start_urls.clone();
     job.max_pages = config.max_pages;
-    job.config = serde_json::to_value(&config).ok();
+    // Redact sensitive fields before persisting config to database
+    job.config = serde_json::to_value(&config).ok().map(|mut v| {
+        if let Some(ms) = v.get_mut("meilisearch") {
+            if let Some(obj) = ms.as_object_mut() {
+                obj.insert("api_key".to_string(), serde_json::Value::String("***".to_string()));
+            }
+        }
+        v
+    });
     if config.replace_index {
         job.swap_temp_index = Some(pipeline_index_uid.clone());
         job.swap_meilisearch_url = Some(config.meilisearch.url.clone());
@@ -2084,7 +2092,15 @@ pub(crate) async fn do_create_crawl(
         j.status = JobStatus::Running;
         j.start_urls = config.start_urls.clone();
         j.max_pages = config.max_pages;
-        j.config = serde_json::to_value(&config).ok();
+        // Redact sensitive fields before persisting config to database
+        j.config = serde_json::to_value(&config).ok().map(|mut v| {
+            if let Some(ms) = v.get_mut("meilisearch") {
+                if let Some(obj) = ms.as_object_mut() {
+                    obj.insert("api_key".to_string(), serde_json::Value::String("***".to_string()));
+                }
+            }
+            v
+        });
         j.started_at = Some(chrono::Utc::now());
         j.swap_temp_index = swap_temp;
         j.swap_meilisearch_url = swap_url;

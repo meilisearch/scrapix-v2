@@ -112,7 +112,7 @@ pub async fn insert_job(pool: &PgPool, job: &JobState) {
     .bind(&job.config)
     .bind(&job.swap_temp_index)
     .bind(&job.swap_meilisearch_url)
-    .bind(&job.swap_meilisearch_api_key)
+    .bind(&None::<String>) // Never persist Meilisearch API key to database
     .execute(pool)
     .await;
 

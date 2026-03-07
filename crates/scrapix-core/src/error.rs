@@ -53,6 +53,9 @@ pub enum ScrapixError {
     #[error("Connection error: {0}")]
     Connection(String),
 
+    #[error("AI error: {0}")]
+    Ai(String),
+
     #[error("Internal error: {0}")]
     Internal(#[from] anyhow::Error),
 }

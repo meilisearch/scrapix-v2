@@ -10,7 +10,7 @@ members = [
     "crates/scrapix-ai",
     "crates/scrapix-storage",
     "crates/scrapix-queue",
-    "crates/scrapix-telemetry",
+
     "bins/scrapix-api",
     "bins/scrapix-worker-crawler",
     "bins/scrapix-worker-content",
@@ -105,11 +105,6 @@ tiktoken-rs = "0.6"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "time"] }
 time = { version = "0.3", features = ["formatting"] }
-opentelemetry = "0.27"
-opentelemetry-otlp = { version = "0.27", features = ["tokio"] }
-opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
-metrics = "0.24"
-metrics-exporter-prometheus = "0.16"
 
 # Error handling
 thiserror = "1.0"
