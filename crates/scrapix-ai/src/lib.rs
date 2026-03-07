@@ -54,37 +54,22 @@ pub mod providers;
 pub mod summary;
 
 // Re-export main types from client
-pub use client::{
-    AiClient, AiClientConfig, AiClientError, AiUsageEvent, AiUsageReceiver, ChatResponse,
-};
+pub use client::{AiClient, AiClientConfig, AiUsageEvent, AiUsageReceiver, ChatResponse};
 
 // Re-export extraction types
 pub use extraction::{
-    AiExtractor, ExtractionConfig, ExtractionError, ExtractionResult, ExtractionSchema,
-    FieldDefinition, SchemaBuilder, DEFAULT_EXTRACTION_MODEL, DEFAULT_MAX_RESPONSE_TOKENS,
+    AiExtractor, ExtractionConfig, ExtractionResult, ExtractionSchema, FieldDefinition,
+    SchemaBuilder, DEFAULT_EXTRACTION_MODEL, DEFAULT_MAX_RESPONSE_TOKENS,
 };
 
 // Re-export summary types
 pub use summary::{
-    Summarizer, SummaryConfig, SummaryConfigBuilder, SummaryError, SummaryLength, SummaryResult,
-    SummaryStyle, DEFAULT_SUMMARY_MODEL,
+    Summarizer, SummaryConfig, SummaryConfigBuilder, SummaryLength, SummaryResult, SummaryStyle,
+    DEFAULT_SUMMARY_MODEL,
 };
 
+use scrapix_core::{Result, ScrapixError};
 use std::sync::Arc;
-use thiserror::Error;
-
-/// Combined error type for all AI operations
-#[derive(Debug, Error)]
-pub enum AiError {
-    #[error("Client error: {0}")]
-    Client(#[from] AiClientError),
-
-    #[error("Extraction error: {0}")]
-    Extraction(#[from] ExtractionError),
-
-    #[error("Summary error: {0}")]
-    Summary(#[from] SummaryError),
-}
 
 /// Unified AI service providing all AI capabilities
 ///
@@ -154,17 +139,16 @@ impl AiService {
     }
 
     /// Extract data using a custom prompt
-    pub async fn extract(&self, content: &str, prompt: &str) -> Result<ExtractionResult, AiError> {
-        let extractor = self.extractor.as_ref().ok_or_else(|| {
-            AiError::Extraction(ExtractionError::Config(
-                "Extraction not enabled".to_string(),
-            ))
-        })?;
+    pub async fn extract(&self, content: &str, prompt: &str) -> Result<ExtractionResult> {
+        let extractor = self
+            .extractor
+            .as_ref()
+            .ok_or_else(|| ScrapixError::Ai("Extraction not enabled".to_string()))?;
 
         extractor
             .extract_with_prompt(content, prompt)
             .await
-            .map_err(AiError::from)
+            .map_err(|e| ScrapixError::Ai(e.to_string()))
     }
 
     /// Extract structured data using a schema
@@ -172,53 +156,55 @@ impl AiService {
         &self,
         content: &str,
         schema: &ExtractionSchema,
-    ) -> Result<ExtractionResult, AiError> {
-        let extractor = self.extractor.as_ref().ok_or_else(|| {
-            AiError::Extraction(ExtractionError::Config(
-                "Extraction not enabled".to_string(),
-            ))
-        })?;
+    ) -> Result<ExtractionResult> {
+        let extractor = self
+            .extractor
+            .as_ref()
+            .ok_or_else(|| ScrapixError::Ai("Extraction not enabled".to_string()))?;
 
         extractor
             .extract_with_schema(content, schema)
             .await
-            .map_err(AiError::from)
+            .map_err(|e| ScrapixError::Ai(e.to_string()))
     }
 
     /// Summarize content
-    pub async fn summarize(&self, content: &str) -> Result<SummaryResult, AiError> {
-        let summarizer = self.summarizer.as_ref().ok_or_else(|| {
-            AiError::Summary(SummaryError::Config(
-                "Summarization not enabled".to_string(),
-            ))
-        })?;
+    pub async fn summarize(&self, content: &str) -> Result<SummaryResult> {
+        let summarizer = self
+            .summarizer
+            .as_ref()
+            .ok_or_else(|| ScrapixError::Ai("Summarization not enabled".to_string()))?;
 
-        summarizer.summarize(content).await.map_err(AiError::from)
+        summarizer
+            .summarize(content)
+            .await
+            .map_err(|e| ScrapixError::Ai(e.to_string()))
     }
 
     /// Generate a TL;DR
-    pub async fn tldr(&self, content: &str) -> Result<String, AiError> {
-        let summarizer = self.summarizer.as_ref().ok_or_else(|| {
-            AiError::Summary(SummaryError::Config(
-                "Summarization not enabled".to_string(),
-            ))
-        })?;
+    pub async fn tldr(&self, content: &str) -> Result<String> {
+        let summarizer = self
+            .summarizer
+            .as_ref()
+            .ok_or_else(|| ScrapixError::Ai("Summarization not enabled".to_string()))?;
 
-        summarizer.tldr(content).await.map_err(AiError::from)
+        summarizer
+            .tldr(content)
+            .await
+            .map_err(|e| ScrapixError::Ai(e.to_string()))
     }
 
     /// Generate a headline
-    pub async fn headline(&self, content: &str) -> Result<String, AiError> {
-        let summarizer = self.summarizer.as_ref().ok_or_else(|| {
-            AiError::Summary(SummaryError::Config(
-                "Summarization not enabled".to_string(),
-            ))
-        })?;
+    pub async fn headline(&self, content: &str) -> Result<String> {
+        let summarizer = self
+            .summarizer
+            .as_ref()
+            .ok_or_else(|| ScrapixError::Ai("Summarization not enabled".to_string()))?;
 
         summarizer
             .generate_headline(content)
             .await
-            .map_err(AiError::from)
+            .map_err(|e| ScrapixError::Ai(e.to_string()))
     }
 }
 
