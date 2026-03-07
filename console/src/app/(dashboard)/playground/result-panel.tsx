@@ -95,9 +95,9 @@ function EmptyState({ mode }: { mode: "scrape" | "crawl" }) {
           API Example
         </p>
       </div>
-      <ScrollArea className="flex-1 min-h-0">
-        <HighlightedCode code={example} lang="bash" />
-      </ScrollArea>
+      <div className="px-4 pb-4 flex-1 min-h-0">
+        <CodeBlock code={example} lang="bash" />
+      </div>
     </div>
   );
 }
@@ -518,6 +518,41 @@ function HighlightedCode({ code, lang = "json" }: { code: string; lang?: string 
       className="p-4 text-xs [&_pre]:!bg-transparent [&_code]:!bg-transparent [&_.shiki]:!bg-transparent"
       dangerouslySetInnerHTML={{ __html: html }}
     />
+  );
+}
+
+export function CodeBlock({ code, lang = "bash" }: { code: string; lang?: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(code);
+    setCopied(true);
+    toast.success("Copied to clipboard");
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="relative rounded-lg border bg-muted/30 overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/50">
+        <span className="text-xs text-muted-foreground font-mono">{lang}</span>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+          onClick={handleCopy}
+        >
+          {copied ? (
+            <CheckCircle2 className="mr-1.5 h-3 w-3" />
+          ) : (
+            <Copy className="mr-1.5 h-3 w-3" />
+          )}
+          {copied ? "Copied" : "Copy"}
+        </Button>
+      </div>
+      <ScrollArea className="max-h-[500px]">
+        <HighlightedCode code={code} lang={lang} />
+      </ScrollArea>
+    </div>
   );
 }
 

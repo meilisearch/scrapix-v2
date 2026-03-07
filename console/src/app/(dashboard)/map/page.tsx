@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,8 +27,8 @@ import {
   Copy,
   Download,
 } from "lucide-react";
-import { codeToHtml } from "shiki";
 import { submitMap } from "@/lib/api";
+import { CodeBlock } from "@/app/(dashboard)/playground/result-panel";
 import type { MapResult, MapLink } from "@/lib/api-types";
 
 const MAP_EXAMPLE = `curl -X POST https://scrapix.meilisearch.dev/map \\
@@ -308,44 +308,13 @@ export default function MapPage() {
                 API Example
               </p>
             </div>
-            <ScrollArea className="flex-1 min-h-0">
-              <MapCodeExample />
-            </ScrollArea>
+            <div className="px-6 pb-6 flex-1 min-h-0">
+              <CodeBlock code={MAP_EXAMPLE} lang="bash" />
+            </div>
           </Card>
         )}
       </div>
     </div>
-  );
-}
-
-function MapCodeExample() {
-  const [html, setHtml] = useState<string>("");
-
-  useEffect(() => {
-    let cancelled = false;
-    codeToHtml(MAP_EXAMPLE, {
-      lang: "bash",
-      themes: { light: "github-light", dark: "github-dark" },
-      defaultColor: false,
-    }).then((result) => {
-      if (!cancelled) setHtml(result);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  if (!html) {
-    return (
-      <pre className="whitespace-pre-wrap font-mono text-xs p-6">{MAP_EXAMPLE}</pre>
-    );
-  }
-
-  return (
-    <div
-      className="p-6 text-xs [&_pre]:!bg-transparent [&_code]:!bg-transparent [&_.shiki]:!bg-transparent"
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
   );
 }
 
