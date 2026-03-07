@@ -83,15 +83,19 @@ Results of a comprehensive static analysis of the Rust codebase covering error h
 
 ## Phase 4: Performance (Lower Priority)
 
-### 4.1 — Reduce cloning in hot paths
+### 4.1 — Reduce cloning in hot paths ✅ REVIEWED
 - `simhash.rs` — optimized `normalize()` to avoid intermediate String allocations (single-pass)
-- linkgraph/channel cloning — deferred (API signature changes)
+- Remaining clones reviewed: DNS cache (1-2 IPs, negligible), URL strings in graph/dedup (would require Arc<str> refactor)
+- No further action — cost of remaining clones is low vs. refactoring complexity
 
 ### 4.2 — Remove unnecessary `collect()` calls ✅ DONE
 - `linkgraph.rs:stats()` — replaced Vec collect + iter with single-pass min/max/sum loops
 
-### 4.3 — Fix function signatures taking `Vec` by value
-- Deferred — public API change, callers already pass owned Vecs
+### 4.3 — Fix function signatures taking `Vec` by value ✅ REVIEWED
+- Reviewed all candidates: partition.rs, priority.rs, clickhouse.rs, meilisearch.rs
+- Most functions legitimately need ownership (moving into data structures)
+- ClickHouse insert functions receive from `std::mem::take` in batchers — owned Vec is natural
+- No action needed — current signatures are correct
 
 ### 4.4 — Use HashSet for tag lookups
 - Skipped — Vec has only 14-20 items, `contains` cost is negligible
@@ -121,5 +125,5 @@ The concurrency patterns are solid:
 | 1. Security | 5 | 4 | 1 (key hashing — SHA-256 acceptable for API keys) |
 | 2. Architecture | 5 | 5 | 0 |
 | 3. Error handling | 3 | 3 | 0 |
-| 4. Performance | 5 | 3 | 2 (API signature changes — low priority) |
-| **Total** | **18** | **15** | **3** |
+| 4. Performance | 5 | 5 | 0 |
+| **Total** | **18** | **17** | **1** |
