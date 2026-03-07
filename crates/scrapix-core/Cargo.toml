@@ -23,6 +23,9 @@ async-trait = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 
+# Telemetry
+tracing-subscriber = { workspace = true }
+
 # Utilities
 uuid = { workspace = true }
 chrono = { workspace = true }

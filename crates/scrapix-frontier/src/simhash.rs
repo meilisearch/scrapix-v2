@@ -161,14 +161,23 @@ impl SimHash {
 
     /// Normalize text for consistent hashing
     fn normalize(&self, content: &str) -> String {
-        content
-            .to_lowercase()
-            .chars()
-            .filter(|c| c.is_alphanumeric() || c.is_whitespace())
-            .collect::<String>()
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
+        let mut result = String::with_capacity(content.len());
+        let mut prev_was_space = true; // Collapse leading whitespace
+        for c in content.chars() {
+            if c.is_alphanumeric() {
+                if prev_was_space && !result.is_empty() {
+                    result.push(' ');
+                }
+                // Manual lowercase for ASCII fast path
+                for lc in c.to_lowercase() {
+                    result.push(lc);
+                }
+                prev_was_space = false;
+            } else if c.is_whitespace() {
+                prev_was_space = true;
+            }
+        }
+        result
     }
 
     /// Hash a single token using SipHash

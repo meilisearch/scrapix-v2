@@ -311,10 +311,14 @@ impl LinkGraph {
         let link_count: usize = pages.values().map(|n| n.outbound.len()).sum();
 
         let (min_score, max_score, total_score) = if page_count > 0 {
-            let scores: Vec<f64> = pages.values().map(|n| n.score).collect();
-            let min = scores.iter().cloned().fold(f64::INFINITY, f64::min);
-            let max = scores.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-            let total: f64 = scores.iter().sum();
+            let mut min = f64::INFINITY;
+            let mut max = f64::NEG_INFINITY;
+            let mut total = 0.0f64;
+            for n in pages.values() {
+                min = min.min(n.score);
+                max = max.max(n.score);
+                total += n.score;
+            }
             (min, max, total)
         } else {
             (0.0, 0.0, 0.0)
@@ -327,10 +331,15 @@ impl LinkGraph {
         };
 
         let (min_inbound, max_inbound, total_inbound) = if page_count > 0 {
-            let inbounds: Vec<usize> = pages.values().map(|n| n.inbound.len()).collect();
-            let min = *inbounds.iter().min().unwrap_or(&0);
-            let max = *inbounds.iter().max().unwrap_or(&0);
-            let total: usize = inbounds.iter().sum();
+            let mut min = usize::MAX;
+            let mut max = 0usize;
+            let mut total = 0usize;
+            for n in pages.values() {
+                let len = n.inbound.len();
+                min = min.min(len);
+                max = max.max(len);
+                total += len;
+            }
             (min, max, total)
         } else {
             (0, 0, 0)

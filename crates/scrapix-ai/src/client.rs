@@ -308,7 +308,9 @@ impl AiClient {
         max_tokens: Option<u32>,
         temperature: Option<f32>,
     ) -> Result<ChatResponse, AiClientError> {
-        let _permit = self.semaphore.acquire().await.unwrap();
+        let _permit = self.semaphore.acquire().await.map_err(|_| {
+            AiClientError::Config("Semaphore closed, client is shutting down".to_string())
+        })?;
         let call_start = Instant::now();
 
         let mut attempt = 0;
@@ -335,7 +337,7 @@ impl AiClient {
 
                     // Emit usage event if tracking is enabled
                     if let Some(ref tx) = self.usage_tx {
-                        let _ = tx.send(AiUsageEvent {
+                        if let Err(e) = tx.send(AiUsageEvent {
                             provider: self.config.provider.clone(),
                             model: response.model.clone(),
                             prompt_tokens: response.prompt_tokens,
@@ -343,7 +345,9 @@ impl AiClient {
                             total_tokens: response.total_tokens,
                             duration_ms,
                             timestamp: chrono::Utc::now(),
-                        });
+                        }) {
+                            debug!("Usage tracking channel closed: {}", e);
+                        }
                     }
 
                     return Ok(response.into());

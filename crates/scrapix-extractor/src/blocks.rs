@@ -347,7 +347,10 @@ impl BlockSplitter {
 
     /// Extract blocks from the full document
     fn extract_blocks_from_document(&self, document: &Html) -> Vec<ContentBlock> {
-        let body_selector = Selector::parse("body").expect("valid body selector");
+        use std::sync::OnceLock;
+        static BODY_SELECTOR: OnceLock<Selector> = OnceLock::new();
+        let body_selector =
+            BODY_SELECTOR.get_or_init(|| Selector::parse("body").expect("valid body selector"));
         if let Some(body) = document.select(&body_selector).next() {
             self.extract_blocks_from_element(&body)
         } else {

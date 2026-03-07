@@ -258,7 +258,9 @@ impl AppState {
 
     /// Broadcast an event
     fn broadcast_event(&self, job_id: &str, event: CrawlEvent) {
-        let _ = self.event_tx.send((job_id.to_string(), event));
+        if let Err(e) = self.event_tx.send((job_id.to_string(), event)) {
+            debug!("No active event subscribers, dropping event: {}", e);
+        }
     }
 
     /// Process an event and update job state accordingly
@@ -1334,9 +1336,14 @@ fn preprocess_html(
     let working_html = if !include_selectors.is_empty() {
         let mut parts = Vec::new();
         for sel_str in include_selectors {
-            if let Ok(selector) = Selector::parse(sel_str) {
-                for element in document.select(&selector) {
-                    parts.push(element.html());
+            match Selector::parse(sel_str) {
+                Ok(selector) => {
+                    for element in document.select(&selector) {
+                        parts.push(element.html());
+                    }
+                }
+                Err(e) => {
+                    warn!(selector = %sel_str, error = ?e, "Invalid include CSS selector, skipping");
                 }
             }
         }
@@ -1352,11 +1359,16 @@ fn preprocess_html(
     if !exclude_selectors.is_empty() {
         let mut result = working_html;
         for sel_str in exclude_selectors {
-            if let Ok(selector) = Selector::parse(sel_str) {
-                let doc = Html::parse_document(&result);
-                for element in doc.select(&selector) {
-                    let outer = element.html();
-                    result = result.replacen(&outer, "", 1);
+            match Selector::parse(sel_str) {
+                Ok(selector) => {
+                    let doc = Html::parse_document(&result);
+                    for element in doc.select(&selector) {
+                        let outer = element.html();
+                        result = result.replacen(&outer, "", 1);
+                    }
+                }
+                Err(e) => {
+                    warn!(selector = %sel_str, error = ?e, "Invalid exclude CSS selector, skipping");
                 }
             }
         }
@@ -1391,6 +1403,14 @@ async fn scrape_url(
     if !matches!(parsed_url.scheme(), "http" | "https") {
         return Err(ApiError::new(
             "Only http and https URLs are supported",
+            "validation_error",
+        ));
+    }
+
+    // Block raw IP addresses to prevent SSRF
+    if matches!(parsed_url.host(), Some(url::Host::Ipv4(_)) | Some(url::Host::Ipv6(_))) {
+        return Err(ApiError::new(
+            "Raw IP addresses are not allowed, use a hostname instead",
             "validation_error",
         ));
     }
@@ -2160,8 +2180,12 @@ struct MapFetchResult {
 /// Extract links from an HTML document, resolving relative URLs against a base.
 /// Only returns same-domain http(s) links.
 fn extract_page_links(html: &str, base_url: &url::Url) -> Vec<(String, Option<String>)> {
+    use std::sync::OnceLock;
+    static LINK_SELECTOR: OnceLock<scraper::Selector> = OnceLock::new();
+
     let document = scraper::Html::parse_document(html);
-    let link_selector = scraper::Selector::parse("a[href]").unwrap();
+    let link_selector =
+        LINK_SELECTOR.get_or_init(|| scraper::Selector::parse("a[href]").expect("valid selector"));
     let base_domain = base_url.host_str().unwrap_or("");
 
     let mut links = Vec::new();
@@ -2198,6 +2222,18 @@ async fn map_fetch_page(
     url: String,
     base_url: url::Url,
 ) -> Option<MapFetchResult> {
+    use regex::Regex;
+    use std::sync::LazyLock;
+
+    static RE_TITLE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?is)<title[^>]*>(.*?)</title>").unwrap());
+    static RE_DESC: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"(?is)<meta[^>]+name\s*=\s*["']description["'][^>]+content\s*=\s*["']([^"']*)["']"#).unwrap()
+    });
+    static RE_DESC_ALT: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"(?is)<meta[^>]+content\s*=\s*["']([^"']*)["'][^>]+name\s*=\s*["']description["']"#).unwrap()
+    });
+
     let crawl_url = CrawlUrl::seed(&url);
     let page = match tokio::time::timeout(Duration::from_secs(10), fetcher.fetch(&crawl_url)).await
     {
@@ -2205,21 +2241,21 @@ async fn map_fetch_page(
         _ => return None,
     };
 
-    let document = scraper::Html::parse_document(&page.html);
+    // Extract title and description from the head via regex (avoids a full DOM parse)
+    let head_end = page.html.find("</head>").unwrap_or(8192.min(page.html.len()));
+    let head = &page.html[..head_end];
 
-    // Extract title
-    let title = scraper::Selector::parse("title")
-        .ok()
-        .and_then(|sel| document.select(&sel).next())
-        .map(|el| el.text().collect::<String>().trim().to_string())
+    let title = RE_TITLE
+        .captures(head)
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str().trim().to_string())
         .filter(|t| !t.is_empty());
 
-    // Extract meta description
-    let description = scraper::Selector::parse(r#"meta[name="description"]"#)
-        .ok()
-        .and_then(|sel| document.select(&sel).next())
-        .and_then(|el| el.value().attr("content"))
-        .map(|s| s.trim().to_string())
+    let description = RE_DESC
+        .captures(head)
+        .or_else(|| RE_DESC_ALT.captures(head))
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str().trim().to_string())
         .filter(|d| !d.is_empty());
 
     let child_links = extract_page_links(&page.html, &base_url);
@@ -2261,73 +2297,83 @@ async fn map_url(
         ));
     }
 
+    // Block raw IP addresses to prevent SSRF
+    if matches!(parsed_url.host(), Some(url::Host::Ipv4(_)) | Some(url::Host::Ipv6(_))) {
+        return Err(ApiError::new(
+            "Raw IP addresses are not allowed, use a hostname instead",
+            "validation_error",
+        ));
+    }
+
     let limit = request.limit.min(10_000);
     let max_depth = request.depth.min(5);
 
     info!(url = %request.url, limit, depth = max_depth, "Mapping website URLs");
 
+    use futures::stream::FuturesUnordered;
+
     // Track visited URLs and collected results
-    let visited: Arc<parking_lot::Mutex<HashSet<String>>> =
-        Arc::new(parking_lot::Mutex::new(HashSet::new()));
-    let results: Arc<parking_lot::Mutex<Vec<MapLink>>> =
-        Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let mut visited = HashSet::new();
+    let mut results: Vec<MapLink> = Vec::new();
 
     // Seed the initial URL
-    visited.lock().insert(request.url.clone());
+    visited.insert(request.url.clone());
 
     // The base URL is used to restrict crawling to the same domain
     let base_url = parsed_url.clone();
 
-    // 1. Seed sitemap URLs into visited + results (no title/description yet)
-    //    They'll be picked up in the BFS if within depth, otherwise added as-is.
-    let mut sitemap_urls_to_crawl: Vec<String> = Vec::new();
-    if request.sitemap {
-        let sitemap_parser = SitemapParser::with_defaults();
-        match sitemap_parser.discover_all_urls(&request.url).await {
-            Ok(sitemap_urls) => {
-                debug!(count = sitemap_urls.len(), "Discovered URLs from sitemaps");
-                let base_domain = base_url.host_str().unwrap_or("");
-                let mut vis = visited.lock();
-                for su in sitemap_urls {
-                    // Only include same-domain sitemap URLs
-                    if let Ok(su_parsed) = url::Url::parse(&su.loc) {
-                        if su_parsed.host_str().unwrap_or("") == base_domain
-                            && vis.insert(su.loc.clone())
-                        {
-                            sitemap_urls_to_crawl.push(su.loc);
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(50));
+    let fetcher = state.fetcher.clone();
+
+    // 1. Start sitemap discovery concurrently with the first BFS fetch
+    let mut sitemap_handle = if request.sitemap {
+        let url = request.url.clone();
+        Some(tokio::spawn(async move {
+            let sitemap_parser = SitemapParser::with_defaults();
+            sitemap_parser.discover_all_urls(&url).await.ok()
+        }))
+    } else {
+        None
+    };
+
+    // 2. BFS crawl with concurrent fetching
+    let mut frontier: Vec<String> = vec![request.url.clone()];
+
+    // Total timeout for BFS traversal to prevent unbounded crawling
+    let map_deadline = std::time::Instant::now() + Duration::from_secs(60);
+
+    for current_depth in 0..=max_depth {
+        if frontier.is_empty() || results.len() >= limit {
+            break;
+        }
+
+        // Enforce total timeout
+        if std::time::Instant::now() > map_deadline {
+            warn!(url = %request.url, "Map operation timed out after 60s");
+            break;
+        }
+
+        // After depth 0, merge sitemap results into the frontier
+        if current_depth == 1 {
+            if let Some(handle) = sitemap_handle.take() {
+                if let Ok(Some(sitemap_urls)) = handle.await {
+                    debug!(count = sitemap_urls.len(), "Discovered URLs from sitemaps");
+                    let base_domain = base_url.host_str().unwrap_or("");
+                    for su in sitemap_urls {
+                        if let Ok(su_parsed) = url::Url::parse(&su.loc) {
+                            if su_parsed.host_str().unwrap_or("") == base_domain
+                                && visited.insert(su.loc.clone())
+                            {
+                                frontier.push(su.loc);
+                            }
                         }
                     }
                 }
             }
-            Err(e) => {
-                warn!(error = %e, "Sitemap discovery failed, continuing with page crawling");
-            }
-        }
-    }
-
-    // 2. BFS crawl with concurrent fetching
-    let semaphore = Arc::new(tokio::sync::Semaphore::new(20));
-    let fetcher = state.fetcher.clone();
-
-    // Current frontier: URLs to fetch at this depth level
-    let mut frontier: Vec<String> = vec![request.url.clone()];
-
-    for current_depth in 0..=max_depth {
-        if frontier.is_empty() || results.lock().len() >= limit {
-            break;
-        }
-
-        // On the first depth, also include sitemap URLs in the frontier
-        if current_depth == 0 {
-            let remaining = limit.saturating_sub(frontier.len());
-            let extra: Vec<String> = sitemap_urls_to_crawl
-                .drain(..sitemap_urls_to_crawl.len().min(remaining))
-                .collect();
-            frontier.extend(extra);
         }
 
         // Cap frontier size to avoid runaway crawls
-        let budget = limit.saturating_sub(results.lock().len());
+        let budget = limit.saturating_sub(results.len());
         frontier.truncate(budget);
 
         debug!(
@@ -2336,8 +2382,8 @@ async fn map_url(
             "BFS depth level"
         );
 
-        // Spawn concurrent fetch tasks for the entire frontier
-        let tasks: Vec<_> = frontier
+        // Spawn concurrent fetch tasks and collect via FuturesUnordered
+        let mut in_flight: FuturesUnordered<_> = frontier
             .drain(..)
             .map(|url| {
                 let semaphore = semaphore.clone();
@@ -2350,31 +2396,27 @@ async fn map_url(
             })
             .collect();
 
-        // Collect results and build next frontier
+        // Process results as they arrive (fastest first)
         let mut next_frontier: Vec<String> = Vec::new();
 
-        for task in tasks {
-            if let Ok(Some(result)) = task.await {
-                // Store the fetched page's metadata
-                results.lock().push(MapLink {
-                    url: result.url,
-                    title: result.title,
-                    description: result.description,
+        while let Some(task_result) = in_flight.next().await {
+            if let Ok(Some(fetch_result)) = task_result {
+                results.push(MapLink {
+                    url: fetch_result.url,
+                    title: fetch_result.title,
+                    description: fetch_result.description,
                 });
 
-                // Queue child links for next depth (if not at max depth)
                 if current_depth < max_depth {
-                    let mut vis = visited.lock();
-                    for (child_url, _anchor) in result.child_links {
-                        if vis.len() < limit && vis.insert(child_url.clone()) {
+                    for (child_url, _anchor) in fetch_result.child_links {
+                        if visited.len() < limit && visited.insert(child_url.clone()) {
                             next_frontier.push(child_url);
                         }
                     }
                 }
             }
 
-            // Early exit if we've hit the limit
-            if results.lock().len() >= limit {
+            if results.len() >= limit {
                 break;
             }
         }
@@ -2382,30 +2424,30 @@ async fn map_url(
         frontier = next_frontier;
     }
 
-    // 3. Any remaining sitemap URLs that weren't crawled get added without metadata
-    {
-        let mut res = results.lock();
-        let vis = visited.lock();
-        for sitemap_url in &sitemap_urls_to_crawl {
-            if res.len() >= limit {
-                break;
+    // 3. If sitemap wasn't consumed yet (e.g. max_depth=0), collect remaining URLs
+    if let Some(handle) = sitemap_handle {
+        if let Ok(Some(sitemap_urls)) = handle.await {
+            let base_domain = base_url.host_str().unwrap_or("");
+            for su in sitemap_urls {
+                if results.len() >= limit {
+                    break;
+                }
+                if let Ok(su_parsed) = url::Url::parse(&su.loc) {
+                    if su_parsed.host_str().unwrap_or("") == base_domain
+                        && !visited.contains(&su.loc)
+                    {
+                        results.push(MapLink {
+                            url: su.loc,
+                            title: None,
+                            description: None,
+                        });
+                    }
+                }
             }
-            if vis.contains(sitemap_url) {
-                // Already visited or in results
-                continue;
-            }
-            res.push(MapLink {
-                url: sitemap_url.clone(),
-                title: None,
-                description: None,
-            });
         }
     }
 
-    let mut links = match Arc::try_unwrap(results) {
-        Ok(mutex) => mutex.into_inner(),
-        Err(arc) => arc.lock().clone(),
-    };
+    let mut links = results;
 
     // 4. Apply search filter if provided
     if let Some(ref search) = request.search {
@@ -3799,13 +3841,21 @@ pub async fn run_with_bus(
 
     // Wait for background tasks to finish cleanly
     info!("Waiting for background tasks to shut down...");
-    let _ = consumer_handle.await;
-    let _ = idle_handle.await;
+    if let Err(e) = consumer_handle.await {
+        warn!("Consumer task failed during shutdown: {}", e);
+    }
+    if let Err(e) = idle_handle.await {
+        warn!("Idle detector task failed during shutdown: {}", e);
+    }
     if let Some(handle) = cron_handle {
-        let _ = handle.await;
+        if let Err(e) = handle.await {
+            warn!("Cron task failed during shutdown: {}", e);
+        }
     }
     if let Some(handle) = flush_handle {
-        let _ = handle.await;
+        if let Err(e) = handle.await {
+            warn!("Flush task failed during shutdown: {}", e);
+        }
     }
     if let Some(handle) = ai_receiver_handle {
         handle.abort();

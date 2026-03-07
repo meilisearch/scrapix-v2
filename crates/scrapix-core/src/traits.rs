@@ -94,31 +94,6 @@ pub trait Queue: Send + Sync {
 
     /// Receive messages from the queue
     async fn receive(&self, topic: &str, max_messages: usize) -> Result<Vec<Self::Message>>;
-
-    /// Acknowledge message processing
-    async fn ack(&self, topic: &str, message_id: &str) -> Result<()>;
-}
-
-/// Trait for metrics collection
-pub trait Metrics: Send + Sync {
-    /// Increment a counter
-    fn increment(&self, name: &str, value: u64);
-
-    /// Record a gauge value
-    fn gauge(&self, name: &str, value: f64);
-
-    /// Record a histogram value
-    fn histogram(&self, name: &str, value: f64);
-
-    /// Record timing in milliseconds
-    fn timing(&self, name: &str, ms: u64);
-}
-
-/// Trait for webhook notifications
-#[async_trait]
-pub trait WebhookSender: Send + Sync {
-    /// Send a webhook notification
-    async fn send(&self, event: &str, payload: serde_json::Value) -> Result<()>;
 }
 
 /// Trait for rate limiting

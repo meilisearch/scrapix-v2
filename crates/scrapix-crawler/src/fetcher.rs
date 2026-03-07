@@ -210,6 +210,21 @@ impl HttpFetcher {
         })
     }
 
+    /// Reject URLs whose host is a raw IP address (v4 or v6) to prevent SSRF.
+    /// Only hostnames (domain names) are allowed.
+    fn reject_ip_host(url: &Url) -> Result<()> {
+        match url.host() {
+            Some(url::Host::Ipv4(_)) | Some(url::Host::Ipv6(_)) => {
+                Err(ScrapixError::Crawl(format!(
+                    "Raw IP addresses are not allowed, use a hostname instead: {}",
+                    url
+                )))
+            }
+            Some(url::Host::Domain(_)) => Ok(()),
+            None => Err(ScrapixError::Crawl(format!("URL has no host: {}", url))),
+        }
+    }
+
     /// Create a new HTTP fetcher with default configuration
     pub fn with_defaults(robots_cache: Arc<RobotsCache>) -> Result<Self> {
         Self::new(FetcherConfig::default(), robots_cache)
@@ -225,6 +240,9 @@ impl HttpFetcher {
     #[instrument(skip(self), fields(url = %url.url))]
     pub async fn fetch(&self, url: &CrawlUrl) -> Result<RawPage> {
         let parsed_url = Url::parse(&url.url)?;
+
+        // Block raw IP addresses to prevent SSRF
+        Self::reject_ip_host(&parsed_url)?;
 
         // Check robots.txt
         if !self.robots_cache.is_allowed(&url.url).await? {
@@ -291,6 +309,9 @@ impl HttpFetcher {
         conditional_headers: &ConditionalRequestHeaders,
     ) -> Result<FetchResult> {
         let parsed_url = Url::parse(&url.url)?;
+
+        // Block raw IP addresses to prevent SSRF
+        Self::reject_ip_host(&parsed_url)?;
 
         // Check robots.txt
         if !self.robots_cache.is_allowed(&url.url).await? {

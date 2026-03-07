@@ -13,6 +13,7 @@ pub mod billing;
 pub mod config;
 pub mod document;
 pub mod error;
+pub mod telemetry;
 pub mod traits;
 
 pub use billing::*;
