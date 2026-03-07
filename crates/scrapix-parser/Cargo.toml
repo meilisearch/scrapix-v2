@@ -9,16 +9,11 @@ license.workspace = true
 [dependencies]
 scrapix-core = { path = "../scrapix-core" }
 
-tokio = { workspace = true }
 async-trait = { workspace = true }
-serde = { workspace = true }
 serde_json = { workspace = true }
-thiserror = { workspace = true }
-anyhow = { workspace = true }
 
 # HTML parsing
 scraper = { workspace = true }
-html5ever = { workspace = true }
 ego-tree = "0.10.0"
 
 # URL handling
@@ -41,7 +36,6 @@ chrono = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
-rand = { workspace = true }
 
 [[bench]]
 name = "parser_benchmarks"

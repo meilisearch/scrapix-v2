@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
+import { useTheme } from "next-themes";
 import { cn } from "@/lib/utils";
 import {
   LayoutDashboard,
@@ -57,6 +59,8 @@ const navGroups = [
 export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   const router = useRouter();
+  const { resolvedTheme } = useTheme();
+  const isDark = resolvedTheme === "dark" || resolvedTheme === "neon";
 
   const handleLogout = async () => {
     await logout();
@@ -68,10 +72,20 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
     <div className="flex h-full flex-col">
       <div className="flex h-14 items-center px-6 border-b">
         <Link href="/" className="flex items-center space-x-2" onClick={onNavigate}>
-          <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
-            <span className="text-primary-foreground font-bold text-sm">S</span>
-          </div>
-          <span className="text-xl font-bold neon-brand">Scrapix</span>
+          <Image
+            src={isDark ? "/icon_dark_transparent.svg" : "/icon_light_transparent.svg"}
+            alt="Scrapix"
+            width={32}
+            height={32}
+            className="h-8 w-8"
+          />
+          <Image
+            src={isDark ? "/logotype_dark.svg" : "/logotype_light.svg"}
+            alt="Scrapix"
+            width={100}
+            height={28}
+            className="h-5 w-auto"
+          />
         </Link>
       </div>
       <nav className="flex-1 space-y-4 px-3 py-4">

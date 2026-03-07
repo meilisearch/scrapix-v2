@@ -14,25 +14,19 @@ scrapix-parser = { path = "../crates/scrapix-parser" }
 scrapix-extractor = { path = "../crates/scrapix-extractor" }
 scrapix-frontier = { path = "../crates/scrapix-frontier" }
 scrapix-crawler = { path = "../crates/scrapix-crawler" }
-scrapix-storage = { path = "../crates/scrapix-storage" }
-scrapix-queue = { path = "../crates/scrapix-queue" }
 
 # Async runtime
 tokio = { workspace = true }
-futures = { workspace = true }
 
 # HTTP mocking
 wiremock = { workspace = true }
 
 # Utilities
-serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
 url = { workspace = true }
-uuid = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-anyhow = { workspace = true }
 parking_lot = { workspace = true }
 
 [lib]

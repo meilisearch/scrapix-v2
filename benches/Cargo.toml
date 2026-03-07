@@ -9,7 +9,6 @@ scrapix-core = { path = "../crates/scrapix-core" }
 scrapix-frontier = { path = "../crates/scrapix-frontier" }
 scrapix-parser = { path = "../crates/scrapix-parser" }
 
-tokio = { workspace = true }
 criterion = { workspace = true }
 rand = { workspace = true }
 chrono = { workspace = true }

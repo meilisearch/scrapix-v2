@@ -18,11 +18,9 @@ anyhow = { workspace = true }
 
 # HTTP client
 reqwest = { workspace = true }
-hyper = { workspace = true }
 
 # URL handling
 url = { workspace = true }
-percent-encoding = { workspace = true }
 
 # HTML parsing (for link extraction)
 scraper = { workspace = true }
@@ -50,9 +48,6 @@ fantoccini = { workspace = true, optional = true }
 
 # Utilities
 chrono = { workspace = true }
-uuid = { workspace = true }
-bytes = { workspace = true }
-base64 = { workspace = true }
 parking_lot = { workspace = true }
 
 # Tracing

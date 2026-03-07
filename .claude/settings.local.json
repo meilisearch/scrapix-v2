@@ -218,7 +218,10 @@
       "Read(//tmp/**)",
       "Bash(git subtree:*)",
       "Bash(node:*)",
-      "Bash(cargo doc --document-private-items -p clickhouse)"
+      "Bash(cargo doc --document-private-items -p clickhouse)",
+      "Bash(npx next:*)",
+      "Bash(npm run:*)",
+      "Bash(git:*)"
     ]
   },
   "enabledMcpjsonServers": [

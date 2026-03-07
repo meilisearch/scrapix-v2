@@ -2119,16 +2119,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hdrhistogram"
-version = "7.5.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "765c9198f173dd59ce26ff9f95ef0aafd0a0fe01fb9d72841bc5066a4c06511d"
-dependencies = [
- "byteorder",
- "num-traits",
-]
-
-[[package]]
 name = "heck"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4527,7 +4517,6 @@ dependencies = [
 name = "scrapix-ai"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-openai",
  "async-trait",
  "chrono",
@@ -4567,16 +4556,13 @@ dependencies = [
  "scrapix-parser",
  "scrapix-queue",
  "scrapix-storage",
- "scrapix-telemetry",
  "serde",
  "serde_json",
  "sha2",
  "sqlx",
- "thiserror 1.0.69",
  "time",
  "tokio",
  "tokio-stream",
- "tower 0.5.2",
  "tower-http",
  "tracing",
  "tracing-subscriber",
@@ -4594,7 +4580,6 @@ dependencies = [
  "scrapix-core",
  "scrapix-frontier",
  "scrapix-parser",
- "tokio",
 ]
 
 [[package]]
@@ -4605,7 +4590,6 @@ dependencies = [
  "chrono",
  "clap",
  "colored",
- "console",
  "futures",
  "indicatif",
  "reqwest",
@@ -4630,12 +4614,9 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
- "glob",
- "regex",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
- "tokio",
  "url",
  "uuid",
  "validator",
@@ -4647,17 +4628,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "base64 0.22.1",
- "bytes",
  "chromiumoxide",
  "chrono",
  "fantoccini",
  "flate2",
  "futures",
  "hickory-resolver",
- "hyper 1.8.1",
  "parking_lot",
- "percent-encoding",
  "quick-xml 0.37.5",
  "reqwest",
  "robotstxt",
@@ -4670,34 +4647,26 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
- "uuid",
 ]
 
 [[package]]
 name = "scrapix-extractor"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "async-trait",
  "chrono",
- "glob",
  "regex",
  "scraper",
  "scrapix-core",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
- "tokio",
  "tracing",
- "url",
 ]
 
 [[package]]
 name = "scrapix-frontier"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "async-trait",
  "bloomfilter",
  "chrono",
  "criterion",
@@ -4708,14 +4677,10 @@ dependencies = [
  "rocksdb",
  "scrapix-core",
  "serde",
- "serde_json",
  "sha2",
  "siphasher",
- "thiserror 1.0.69",
- "tokio",
  "tracing",
  "url",
- "uuid",
 ]
 
 [[package]]
@@ -4729,9 +4694,6 @@ dependencies = [
  "scrapix-core",
  "scrapix-frontier",
  "scrapix-queue",
- "scrapix-telemetry",
- "serde",
- "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -4742,21 +4704,15 @@ dependencies = [
 name = "scrapix-parser"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "chrono",
  "criterion",
  "ego-tree",
  "html2md",
- "html5ever 0.29.1",
- "rand 0.8.5",
  "regex",
  "scraper",
  "scrapix-core",
- "serde",
  "serde_json",
- "thiserror 1.0.69",
- "tokio",
  "tracing",
  "url",
  "whatlang",
@@ -4766,7 +4722,6 @@ dependencies = [
 name = "scrapix-queue"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-channel 2.5.0",
  "async-trait",
  "chrono",
@@ -4775,7 +4730,6 @@ dependencies = [
  "scrapix-core",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
  "tokio",
  "tokio-stream",
  "tracing",
@@ -4787,7 +4741,6 @@ dependencies = [
 name = "scrapix-storage"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "bytes",
  "chrono",
@@ -4818,9 +4771,7 @@ dependencies = [
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
- "scrapix-core",
  "serde",
- "serde_json",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
@@ -4831,24 +4782,18 @@ dependencies = [
 name = "scrapix-tests"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "chrono",
- "futures",
  "parking_lot",
  "scrapix-core",
  "scrapix-crawler",
  "scrapix-extractor",
  "scrapix-frontier",
  "scrapix-parser",
- "scrapix-queue",
- "scrapix-storage",
- "serde",
  "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
  "url",
- "uuid",
  "wiremock",
 ]
 
@@ -4867,8 +4812,6 @@ dependencies = [
  "scrapix-parser",
  "scrapix-queue",
  "scrapix-storage",
- "scrapix-telemetry",
- "serde",
  "serde_json",
  "sha2",
  "tokio",
@@ -4891,8 +4834,6 @@ dependencies = [
  "scrapix-frontier",
  "scrapix-queue",
  "scrapix-storage",
- "scrapix-telemetry",
- "serde",
  "serde_json",
  "tokio",
  "tracing",
@@ -5953,13 +5894,9 @@ checksum = "d039ad9159c98b70ecfd540b2573b97f7f52c3e8d9f8ad57a24b916a536975f9"
 dependencies = [
  "futures-core",
  "futures-util",
- "hdrhistogram",
- "indexmap 2.12.1",
  "pin-project-lite",
- "slab",
  "sync_wrapper",
  "tokio",
- "tokio-util",
  "tower-layer",
  "tower-service",
  "tracing",

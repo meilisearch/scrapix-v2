@@ -37,6 +37,5 @@ url = { workspace = true }
 # Pretty output
 colored = "2.1"
 indicatif = "0.17"
-console = "0.15"
 tabled = "0.15"
 urlencoding = "2.1"

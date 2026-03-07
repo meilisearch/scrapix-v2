@@ -9,12 +9,7 @@ license.workspace = true
 [dependencies]
 scrapix-core = { path = "../scrapix-core" }
 
-tokio = { workspace = true }
-async-trait = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
-thiserror = { workspace = true }
-anyhow = { workspace = true }
 url = { workspace = true }
 
 # Bloom filter for deduplication
@@ -31,7 +26,6 @@ redis = { workspace = true, optional = true }
 
 # Utilities
 chrono = { workspace = true }
-uuid = { workspace = true }
 parking_lot = { workspace = true }
 sha2 = { workspace = true }
 siphasher = { workspace = true }

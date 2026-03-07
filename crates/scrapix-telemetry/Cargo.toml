@@ -7,11 +7,8 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-scrapix-core = { path = "../scrapix-core" }
-
 tokio = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 # Tracing

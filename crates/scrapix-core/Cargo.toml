@@ -27,8 +27,3 @@ anyhow = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 url = { workspace = true }
-glob = { workspace = true }
-regex = { workspace = true }
-
-[dev-dependencies]
-tokio = { workspace = true }

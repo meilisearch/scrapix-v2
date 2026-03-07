@@ -21,11 +21,9 @@ scrapix-frontier = { path = "../../crates/scrapix-frontier" }
 scrapix-parser = { path = "../../crates/scrapix-parser" }
 scrapix-storage = { path = "../../crates/scrapix-storage" }
 scrapix-queue = { path = "../../crates/scrapix-queue" }
-scrapix-telemetry = { path = "../../crates/scrapix-telemetry" }
 scrapix-ai = { path = "../../crates/scrapix-ai" }
 
 tokio = { workspace = true }
-serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
