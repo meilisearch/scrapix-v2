@@ -114,10 +114,10 @@ export interface CrawlState {
 
 export const defaultCrawlState: CrawlState = {
   index_uid: "",
-  max_depth: "3",
-  max_pages: "100",
+  max_depth: "",
+  max_pages: "1000000",
   crawler_type: "http",
-  sitemap_enabled: false,
+  sitemap_enabled: true,
   sitemap_urls: "",
   respect_robots: true,
   allowed_domains: "",
@@ -534,46 +534,17 @@ export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
   return (
     <Tabs defaultValue="general" className="h-full flex flex-col">
       <TabsList className="w-full">
-        {["General", "Features", "Patterns", "Advanced"].map((tab) => (
+        {["General", "Advanced"].map((tab) => (
           <TabsTrigger key={tab} value={tab.toLowerCase()} className="text-xs">
             {tab}
           </TabsTrigger>
         ))}
       </TabsList>
 
-      {/* ── General ── */}
+      {/* ── General (merged General + Features + Patterns) ── */}
       <TabsContent value="general" className="flex-1 pt-2">
         <ScrollArea className="h-full">
           <div className="space-y-4 pr-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="index-uid" className="text-sm font-medium">
-                Index UID
-              </Label>
-              <Input
-                id="index-uid"
-                placeholder="my-crawl-index (auto-generated if empty)"
-                value={state.index_uid}
-                onChange={(e) => set("index_uid", e.target.value)}
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <NumericInput
-                id="max-depth"
-                label="Max Depth"
-                value={state.max_depth}
-                onChange={(v) => set("max_depth", v)}
-                min="1"
-              />
-              <NumericInput
-                id="max-pages"
-                label="Max Pages"
-                value={state.max_pages}
-                onChange={(v) => set("max_pages", v)}
-                min="1"
-              />
-            </div>
-
             <div className="space-y-1.5">
               <Label className="text-xs text-muted-foreground uppercase tracking-wide">
                 Crawler Type
@@ -640,14 +611,14 @@ export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
               checked={state.respect_robots}
               onCheckedChange={(v) => set("respect_robots", v)}
             />
-          </div>
-        </ScrollArea>
-      </TabsContent>
 
-      {/* ── Patterns ── */}
-      <TabsContent value="patterns" className="flex-1 pt-2">
-        <ScrollArea className="h-full">
-          <div className="space-y-5 pr-3">
+            {/* ── Patterns ── */}
+            <div className="space-y-1 pt-2">
+              <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
+                URL Patterns
+              </p>
+            </div>
+
             <PatternList
               label="Allowed Domains"
               description="Auto-inferred from start URLs if empty."
@@ -679,14 +650,14 @@ export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
               value={state.index_only_patterns}
               onChange={(v) => set("index_only_patterns", v)}
             />
-          </div>
-        </ScrollArea>
-      </TabsContent>
 
-      {/* ── Features ── */}
-      <TabsContent value="features" className="flex-1 pt-2">
-        <ScrollArea className="h-full">
-          <div className="space-y-4 pr-3">
+            {/* ── Features ── */}
+            <div className="space-y-1 pt-2">
+              <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
+                Features
+              </p>
+            </div>
+
             <SwitchRow
               id="feat-metadata"
               label="Metadata extraction"
@@ -795,12 +766,37 @@ export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
         </ScrollArea>
       </TabsContent>
 
-      {/* ── Advanced (merged Performance + old Advanced) ── */}
+      {/* ── Advanced ── */}
       <TabsContent value="advanced" className="flex-1 pt-2">
         <ScrollArea className="h-full">
           <div className="space-y-5 pr-3">
-            {/* Concurrency */}
+            {/* Crawl Limits */}
             <div className="space-y-1">
+              <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
+                Crawl Limits
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <NumericInput
+                id="max-depth"
+                label="Max Depth"
+                value={state.max_depth}
+                onChange={(v) => set("max_depth", v)}
+                placeholder="Unlimited"
+                min="0"
+              />
+              <NumericInput
+                id="max-pages"
+                label="Max Pages"
+                value={state.max_pages}
+                onChange={(v) => set("max_pages", v)}
+                min="1"
+              />
+            </div>
+
+            {/* Concurrency */}
+            <div className="space-y-1 pt-2">
               <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
                 Concurrency
               </p>
@@ -958,6 +954,19 @@ export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
               <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
                 Meilisearch
               </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="index-uid" className="text-sm font-medium">
+                Index UID
+              </Label>
+              <Input
+                id="index-uid"
+                placeholder="Auto-generated from URL"
+                value={state.index_uid}
+                onChange={(e) => set("index_uid", e.target.value)}
+                className="font-mono text-xs"
+              />
             </div>
 
             <MeilisearchEngineSelector state={state} onChange={onChange} />

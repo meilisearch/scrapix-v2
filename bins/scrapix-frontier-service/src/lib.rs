@@ -148,6 +148,8 @@ struct JobFrontier {
     meilisearch_url: Option<String>,
     meilisearch_api_key: Option<String>,
     features: Option<FeaturesConfig>,
+    max_depth: Option<u32>,
+    max_pages: Option<u64>,
 }
 
 impl JobFrontier {
@@ -161,6 +163,8 @@ impl JobFrontier {
         meilisearch_url: Option<String>,
         meilisearch_api_key: Option<String>,
         features: Option<FeaturesConfig>,
+        max_depth: Option<u32>,
+        max_pages: Option<u64>,
     ) -> Self {
         Self {
             job_id: job_id.to_string(),
@@ -175,11 +179,30 @@ impl JobFrontier {
             meilisearch_url,
             meilisearch_api_key,
             features,
+            max_depth,
+            max_pages,
         }
     }
 
     fn try_add(&self, url: CrawlUrl) -> bool {
         self.urls_received.fetch_add(1, Ordering::Relaxed);
+
+        // Enforce max_depth: reject URLs deeper than the limit
+        if let Some(max_depth) = self.max_depth {
+            if url.depth > max_depth {
+                self.urls_deduplicated.fetch_add(1, Ordering::Relaxed);
+                return false;
+            }
+        }
+
+        // Enforce max_pages: stop accepting URLs once the limit is reached
+        if let Some(max_pages) = self.max_pages {
+            let total = self.urls_dispatched.load(Ordering::Relaxed) + self.queue.len() as u64;
+            if total >= max_pages {
+                self.urls_deduplicated.fetch_add(1, Ordering::Relaxed);
+                return false;
+            }
+        }
 
         if self.dedup.check_and_mark(&url.url) {
             self.urls_deduplicated.fetch_add(1, Ordering::Relaxed);
@@ -285,6 +308,8 @@ struct ReadyUrl {
     meilisearch_url: Option<String>,
     meilisearch_api_key: Option<String>,
     features: Option<FeaturesConfig>,
+    max_depth: Option<u32>,
+    max_pages: Option<u64>,
 }
 
 struct FrontierService {
@@ -571,6 +596,8 @@ impl FrontierService {
         meilisearch_url: Option<String>,
         meilisearch_api_key: Option<String>,
         features: Option<FeaturesConfig>,
+        max_depth: Option<u32>,
+        max_pages: Option<u64>,
     ) -> Arc<JobFrontier> {
         {
             let jobs = self.jobs.read();
@@ -582,7 +609,7 @@ impl FrontierService {
         let mut jobs = self.jobs.write();
         jobs.entry(job_id.to_string())
             .or_insert_with(|| {
-                info!(job_id = %job_id, index_uid = %index_uid, "Creating new job frontier");
+                info!(job_id = %job_id, index_uid = %index_uid, max_depth = ?max_depth, max_pages = ?max_pages, "Creating new job frontier");
                 self.metrics.active_jobs.fetch_add(1, Ordering::Relaxed);
                 Arc::new(JobFrontier::new(
                     job_id,
@@ -593,6 +620,8 @@ impl FrontierService {
                     meilisearch_url,
                     meilisearch_api_key,
                     features,
+                    max_depth,
+                    max_pages,
                 ))
             })
             .clone()
@@ -748,6 +777,8 @@ impl FrontierService {
                     msg.meilisearch_url.clone(),
                     msg.meilisearch_api_key.clone(),
                     msg.features.clone(),
+                    msg.max_depth,
+                    msg.max_pages,
                 );
 
                 if job.try_add(url.clone()) {
@@ -802,6 +833,8 @@ impl FrontierService {
                                 meilisearch_url: job.meilisearch_url.clone(),
                                 meilisearch_api_key: job.meilisearch_api_key.clone(),
                                 features: job.features.clone(),
+                                max_depth: job.max_depth,
+                                max_pages: job.max_pages,
                             };
 
                             if dispatch_tx.send(ready).await.is_err() {
@@ -846,7 +879,8 @@ impl FrontierService {
                             UrlMessage::new(ready.url, &ready.job_id, &ready.index_uid)
                         }
                         .with_meilisearch(ready.meilisearch_url, ready.meilisearch_api_key)
-                        .with_features(ready.features);
+                        .with_features(ready.features)
+                        .with_limits(ready.max_depth, ready.max_pages);
 
                         match producer
                             .send(

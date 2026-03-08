@@ -1080,12 +1080,14 @@ impl CrawlerWorker {
         );
 
         // Extract URLs from the page using patterns from the message if available
+        // Use per-job max_depth from message if available, otherwise fall back to global CLI arg
+        let effective_max_depth = msg.max_depth.unwrap_or(self.extractor.config().max_depth);
         let discovered_urls = if let Some(ref patterns) = msg.url_patterns {
             // Create extractor with patterns from job config
             // If allowed_domains is set, use strict domain filtering
             let extractor_config = ExtractorConfig {
                 patterns: Some(patterns.clone()),
-                max_depth: self.concurrency as u32, // Use existing max_depth
+                max_depth: effective_max_depth,
                 follow_external: false,
                 follow_subdomains: patterns.allowed_domains.is_empty(), // Disable if whitelist is set
                 extract_from_data_attrs: false,
@@ -1094,8 +1096,16 @@ impl CrawlerWorker {
             let extractor = UrlExtractor::new(extractor_config);
             extractor.extract(&page, url.depth)
         } else {
-            // Use default extractor without patterns
-            self.extractor.extract(&page, url.depth)
+            // If message has per-job max_depth, create a temporary extractor with it
+            if msg.max_depth.is_some() {
+                let mut config = self.extractor.config().clone();
+                config.max_depth = effective_max_depth;
+                let extractor = UrlExtractor::new(config);
+                extractor.extract(&page, url.depth)
+            } else {
+                // Use default extractor without patterns
+                self.extractor.extract(&page, url.depth)
+            }
         };
         let discovered_count = discovered_urls.len();
 
@@ -1195,6 +1205,9 @@ impl CrawlerWorker {
             url_msg.meilisearch_api_key = msg.meilisearch_api_key.clone();
             // Propagate per-job feature config
             url_msg.features = msg.features.clone();
+            // Propagate per-job crawl limits
+            url_msg.max_depth = msg.max_depth;
+            url_msg.max_pages = msg.max_pages;
 
             self.producer
                 .send(

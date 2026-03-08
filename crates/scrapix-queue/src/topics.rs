@@ -54,6 +54,12 @@ pub struct UrlMessage {
     /// Per-job feature configuration (overrides worker defaults)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub features: Option<FeaturesConfig>,
+    /// Per-job max crawl depth (None = unlimited)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_depth: Option<u32>,
+    /// Per-job max pages to crawl (None = unlimited)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_pages: Option<u64>,
 }
 
 impl UrlMessage {
@@ -69,6 +75,8 @@ impl UrlMessage {
             meilisearch_url: None,
             meilisearch_api_key: None,
             features: None,
+            max_depth: None,
+            max_pages: None,
         }
     }
 
@@ -90,6 +98,8 @@ impl UrlMessage {
             meilisearch_url: None,
             meilisearch_api_key: None,
             features: None,
+            max_depth: None,
+            max_pages: None,
         }
     }
 
@@ -111,6 +121,8 @@ impl UrlMessage {
             meilisearch_url: None,
             meilisearch_api_key: None,
             features: None,
+            max_depth: None,
+            max_pages: None,
         }
     }
 
@@ -130,6 +142,13 @@ impl UrlMessage {
     /// Set per-job feature configuration (builder pattern)
     pub fn with_features(mut self, features: Option<FeaturesConfig>) -> Self {
         self.features = features;
+        self
+    }
+
+    /// Set per-job crawl limits (builder pattern)
+    pub fn with_limits(mut self, max_depth: Option<u32>, max_pages: Option<u64>) -> Self {
+        self.max_depth = max_depth;
+        self.max_pages = max_pages;
         self
     }
 

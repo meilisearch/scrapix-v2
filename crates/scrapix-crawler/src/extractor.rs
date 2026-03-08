@@ -47,6 +47,11 @@ pub struct UrlExtractor {
 }
 
 impl UrlExtractor {
+    /// Get the extractor configuration
+    pub fn config(&self) -> &ExtractorConfig {
+        &self.config
+    }
+
     /// Create a new URL extractor
     pub fn new(config: ExtractorConfig) -> Self {
         // Selector for anchor tags with href
