@@ -215,6 +215,9 @@ export interface MapLink {
   url: string;
   title?: string;
   description?: string;
+  lastmod?: string;
+  priority?: number;
+  changefreq?: string;
 }
 
 export interface MapResult {

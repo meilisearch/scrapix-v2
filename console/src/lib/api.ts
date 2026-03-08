@@ -130,6 +130,11 @@ export interface MapOptions {
   depth?: number;
   search?: string;
   sitemap?: boolean;
+  get_title?: boolean;
+  get_description?: boolean;
+  get_lastmod?: boolean;
+  get_priority?: boolean;
+  get_changefreq?: boolean;
 }
 
 export async function submitMap(opts: MapOptions): Promise<MapResult> {

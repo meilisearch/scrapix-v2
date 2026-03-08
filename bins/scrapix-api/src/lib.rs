@@ -2010,8 +2010,8 @@ struct MapRequest {
     #[serde(default = "default_map_limit")]
     limit: usize,
 
-    /// How many levels deep to follow links (default: 2)
-    #[serde(default = "default_map_depth")]
+    /// How many levels deep to follow links beyond sitemap (default: 0, max: 5)
+    #[serde(default)]
     depth: u32,
 
     /// Filter results to URLs matching this search term
@@ -2021,14 +2021,51 @@ struct MapRequest {
     /// Whether to use sitemaps for discovery (default: true)
     #[serde(default = "default_true_bool")]
     sitemap: bool,
+
+    /// Fetch <title> from each page's HTML head (default: true)
+    #[serde(default = "default_true_bool")]
+    get_title: bool,
+
+    /// Fetch <meta description> from each page's HTML head (default: true)
+    #[serde(default = "default_true_bool")]
+    get_description: bool,
+
+    /// Include lastmod from sitemap data (default: true)
+    #[serde(default = "default_true_bool")]
+    get_lastmod: bool,
+
+    /// Include priority from sitemap data (default: true)
+    #[serde(default = "default_true_bool")]
+    get_priority: bool,
+
+    /// Include changefreq from sitemap data (default: true)
+    #[serde(default = "default_true_bool")]
+    get_changefreq: bool,
 }
 
 fn default_map_limit() -> usize {
     5000
 }
 
-fn default_map_depth() -> u32 {
-    2
+/// Non-page file extensions to exclude from map results
+fn is_non_page_url(url: &str) -> bool {
+    let path = url.split('?').next().unwrap_or(url);
+    let path = path.split('#').next().unwrap_or(path);
+    if let Some(dot_pos) = path.rfind('.') {
+        let ext = &path[dot_pos..];
+        matches!(
+            ext.to_ascii_lowercase().as_str(),
+            ".png" | ".jpg" | ".jpeg" | ".gif" | ".svg" | ".webp" | ".ico" | ".bmp" | ".tiff"
+            | ".pdf" | ".doc" | ".docx" | ".xls" | ".xlsx" | ".ppt" | ".pptx" | ".odt" | ".ods"
+            | ".mp4" | ".mp3" | ".avi" | ".mov" | ".wmv" | ".flv" | ".webm" | ".mkv" | ".wav" | ".ogg"
+            | ".zip" | ".tar" | ".gz" | ".rar" | ".7z" | ".bz2" | ".xz"
+            | ".css" | ".js" | ".mjs" | ".map"
+            | ".woff" | ".woff2" | ".ttf" | ".eot" | ".otf"
+            | ".xml" | ".rss" | ".atom" | ".json" | ".jsonld"
+        )
+    } else {
+        false
+    }
 }
 
 /// A discovered link with optional metadata
@@ -2039,6 +2076,12 @@ struct MapLink {
     title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lastmod: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    priority: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    changefreq: Option<String>,
 }
 
 /// Response for POST /map
@@ -2152,13 +2195,14 @@ async fn map_fetch_page(
     })
 }
 
-/// Map a website: BFS-crawl to discover URLs with title + description
+/// Map a website: sitemap-first discovery with optional BFS deep crawl
 ///
 /// Discovers URLs via:
-/// 1. Sitemap parsing (robots.txt → sitemap.xml)
-/// 2. Concurrent BFS link crawling up to `depth` levels
+/// 1. Sitemap parsing (robots.txt → sitemap.xml → sitemap indexes)
+/// 2. Optional BFS link crawling when `depth > 0`
 ///
-/// Each fetched page yields its `<title>`, `<meta description>`, and outgoing links.
+/// Each URL can be enriched with title, description (from HTML head) and
+/// lastmod, priority, changefreq (from sitemap data) depending on `get_*` flags.
 async fn map_url(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
@@ -2191,6 +2235,7 @@ async fn map_url(
 
     let limit = request.limit.min(10_000);
     let max_depth = request.depth.min(5);
+    let needs_html_fetch = request.get_title || request.get_description;
 
     info!(url = %request.url, limit, depth = max_depth, "Mapping website URLs");
 
@@ -2200,75 +2245,106 @@ async fn map_url(
     let mut visited = HashSet::new();
     let mut results: Vec<MapLink> = Vec::new();
 
-    // Seed the initial URL
-    visited.insert(request.url.clone());
+    // Map from URL → sitemap metadata for enrichment
+    let mut sitemap_meta: HashMap<String, (Option<String>, Option<f32>, Option<String>)> =
+        HashMap::new();
 
-    // The base URL is used to restrict crawling to the same domain
     let base_url = parsed_url.clone();
-
+    let base_domain = base_url.host_str().unwrap_or("").to_string();
     let semaphore = Arc::new(tokio::sync::Semaphore::new(50));
     let fetcher = state.fetcher.clone();
 
-    // 1. Start sitemap discovery concurrently with the first BFS fetch
-    let mut sitemap_handle = if request.sitemap {
-        let url = request.url.clone();
-        Some(tokio::spawn(async move {
-            let sitemap_parser = SitemapParser::with_defaults();
-            sitemap_parser.discover_all_urls(&url).await.ok()
-        }))
-    } else {
-        None
-    };
-
-    // 2. BFS crawl with concurrent fetching
-    let mut frontier: Vec<String> = vec![request.url.clone()];
-
-    // Total timeout for BFS traversal to prevent unbounded crawling
+    // Total timeout
     let map_deadline = std::time::Instant::now() + Duration::from_secs(60);
 
-    for current_depth in 0..=max_depth {
-        if frontier.is_empty() || results.len() >= limit {
-            break;
-        }
+    // ── Step 1: Sitemap discovery (blocking, primary source) ──────────────
 
-        // Enforce total timeout
-        if std::time::Instant::now() > map_deadline {
-            warn!(url = %request.url, "Map operation timed out after 60s");
-            break;
-        }
-
-        // After depth 0, merge sitemap results into the frontier
-        if current_depth == 1 {
-            if let Some(handle) = sitemap_handle.take() {
-                if let Ok(Some(sitemap_urls)) = handle.await {
-                    debug!(count = sitemap_urls.len(), "Discovered URLs from sitemaps");
-                    let base_domain = base_url.host_str().unwrap_or("");
-                    for su in sitemap_urls {
-                        if let Ok(su_parsed) = url::Url::parse(&su.loc) {
-                            if su_parsed.host_str().unwrap_or("") == base_domain
-                                && visited.insert(su.loc.clone())
-                            {
-                                frontier.push(su.loc);
-                            }
+    if request.sitemap {
+        let sitemap_parser = SitemapParser::with_defaults();
+        match sitemap_parser.discover_all_urls(&request.url).await {
+            Ok(sitemap_urls) => {
+                debug!(count = sitemap_urls.len(), "Discovered URLs from sitemaps");
+                for su in sitemap_urls {
+                    if visited.len() >= limit {
+                        break;
+                    }
+                    // Filter non-page URLs
+                    if is_non_page_url(&su.loc) {
+                        continue;
+                    }
+                    // Only same-domain URLs
+                    if let Ok(su_parsed) = url::Url::parse(&su.loc) {
+                        if su_parsed.host_str().unwrap_or("") != base_domain {
+                            continue;
                         }
+                    } else {
+                        continue;
+                    }
+                    if visited.insert(su.loc.clone()) {
+                        // Store sitemap metadata for later enrichment
+                        let lastmod = if request.get_lastmod {
+                            su.lastmod.map(|dt| dt.to_rfc3339())
+                        } else {
+                            None
+                        };
+                        let priority = if request.get_priority {
+                            su.priority
+                        } else {
+                            None
+                        };
+                        let changefreq = if request.get_changefreq {
+                            su.changefreq.map(|cf| format!("{:?}", cf).to_lowercase())
+                        } else {
+                            None
+                        };
+                        sitemap_meta
+                            .insert(su.loc.clone(), (lastmod.clone(), priority, changefreq.clone()));
+                        results.push(MapLink {
+                            url: su.loc,
+                            title: None,
+                            description: None,
+                            lastmod,
+                            priority,
+                            changefreq,
+                        });
                     }
                 }
             }
+            Err(e) => {
+                warn!(error = %e, "Sitemap discovery failed, falling back to BFS only");
+            }
         }
+    }
 
-        // Cap frontier size to avoid runaway crawls
-        let budget = limit.saturating_sub(results.len());
-        frontier.truncate(budget);
+    // If no sitemap results (or sitemap disabled), seed with the input URL
+    if results.is_empty() {
+        visited.insert(request.url.clone());
+        results.push(MapLink {
+            url: request.url.clone(),
+            title: None,
+            description: None,
+            lastmod: None,
+            priority: None,
+            changefreq: None,
+        });
+    }
 
-        debug!(
-            depth = current_depth,
-            frontier_size = frontier.len(),
-            "BFS depth level"
-        );
+    // ── Step 2: Enrich sitemap URLs with HTML metadata (title/description) ──
 
-        // Spawn concurrent fetch tasks and collect via FuturesUnordered
-        let mut in_flight: FuturesUnordered<_> = frontier
-            .drain(..)
+    if needs_html_fetch && !results.is_empty() {
+        let urls_to_fetch: Vec<String> = results
+            .iter()
+            .take(limit)
+            .map(|r| r.url.clone())
+            .collect();
+
+        debug!(count = urls_to_fetch.len(), "Fetching HTML metadata for sitemap URLs");
+
+        let get_title = request.get_title;
+        let get_description = request.get_description;
+
+        let mut in_flight: FuturesUnordered<_> = urls_to_fetch
+            .into_iter()
             .map(|url| {
                 let semaphore = semaphore.clone();
                 let fetcher = fetcher.clone();
@@ -2280,60 +2356,162 @@ async fn map_url(
             })
             .collect();
 
-        // Process results as they arrive (fastest first)
-        let mut next_frontier: Vec<String> = Vec::new();
-
+        // Build a lookup from fetch results
+        let mut meta_map: HashMap<String, (Option<String>, Option<String>)> = HashMap::new();
         while let Some(task_result) = in_flight.next().await {
+            if std::time::Instant::now() > map_deadline {
+                warn!("Map metadata fetch timed out");
+                break;
+            }
             if let Ok(Some(fetch_result)) = task_result {
-                results.push(MapLink {
-                    url: fetch_result.url,
-                    title: fetch_result.title,
-                    description: fetch_result.description,
-                });
+                let title = if get_title { fetch_result.title } else { None };
+                let desc = if get_description {
+                    fetch_result.description
+                } else {
+                    None
+                };
+                meta_map.insert(fetch_result.url, (title, desc));
+            }
+        }
 
-                if current_depth < max_depth {
+        // Merge metadata into results
+        for link in &mut results {
+            if let Some((title, description)) = meta_map.remove(&link.url) {
+                link.title = title;
+                link.description = description;
+            }
+        }
+    }
+
+    // ── Step 3: BFS deep crawl (only if depth > 0) ───────────────────────
+
+    if max_depth > 0 {
+        // Build frontier from all currently known URLs
+        let mut frontier: Vec<String> = results.iter().map(|r| r.url.clone()).collect();
+
+        for current_depth in 1..=max_depth {
+            if frontier.is_empty() || results.len() >= limit {
+                break;
+            }
+            if std::time::Instant::now() > map_deadline {
+                warn!(url = %request.url, "Map operation timed out during BFS");
+                break;
+            }
+
+            let budget = limit.saturating_sub(results.len());
+            frontier.truncate(budget);
+
+            debug!(
+                depth = current_depth,
+                frontier_size = frontier.len(),
+                "BFS depth level"
+            );
+
+            // Fetch all frontier pages to extract child links
+            let mut in_flight: FuturesUnordered<_> = frontier
+                .drain(..)
+                .map(|url| {
+                    let semaphore = semaphore.clone();
+                    let fetcher = fetcher.clone();
+                    let base_url = base_url.clone();
+                    tokio::spawn(async move {
+                        let _permit = semaphore.acquire().await.ok()?;
+                        map_fetch_page(fetcher, url, base_url).await
+                    })
+                })
+                .collect();
+
+            let mut next_frontier: Vec<String> = Vec::new();
+
+            while let Some(task_result) = in_flight.next().await {
+                if let Ok(Some(fetch_result)) = task_result {
+                    // Extract child links for next BFS level
                     for (child_url, _anchor) in fetch_result.child_links {
+                        if is_non_page_url(&child_url) {
+                            continue;
+                        }
                         if visited.len() < limit && visited.insert(child_url.clone()) {
+                            let title = if request.get_title {
+                                None // will be fetched if we crawl this URL
+                            } else {
+                                None
+                            };
+                            let description = if request.get_description {
+                                None
+                            } else {
+                                None
+                            };
+                            results.push(MapLink {
+                                url: child_url.clone(),
+                                title,
+                                description,
+                                lastmod: None,
+                                priority: None,
+                                changefreq: None,
+                            });
                             next_frontier.push(child_url);
+                        }
+                    }
+                }
+
+                if results.len() >= limit {
+                    break;
+                }
+            }
+
+            // Enrich newly discovered URLs with HTML metadata
+            if needs_html_fetch && !next_frontier.is_empty() {
+                let get_title = request.get_title;
+                let get_description = request.get_description;
+
+                let mut enrich_flight: FuturesUnordered<_> = next_frontier
+                    .iter()
+                    .cloned()
+                    .map(|url| {
+                        let semaphore = semaphore.clone();
+                        let fetcher = fetcher.clone();
+                        let base_url = base_url.clone();
+                        tokio::spawn(async move {
+                            let _permit = semaphore.acquire().await.ok()?;
+                            map_fetch_page(fetcher, url, base_url).await
+                        })
+                    })
+                    .collect();
+
+                let mut meta_map: HashMap<String, (Option<String>, Option<String>)> =
+                    HashMap::new();
+                while let Some(task_result) = enrich_flight.next().await {
+                    if std::time::Instant::now() > map_deadline {
+                        break;
+                    }
+                    if let Ok(Some(fr)) = task_result {
+                        let title = if get_title { fr.title } else { None };
+                        let desc = if get_description {
+                            fr.description
+                        } else {
+                            None
+                        };
+                        meta_map.insert(fr.url, (title, desc));
+                    }
+                }
+                for link in &mut results {
+                    if link.title.is_none() && link.description.is_none() {
+                        if let Some((title, description)) = meta_map.remove(&link.url) {
+                            link.title = title;
+                            link.description = description;
                         }
                     }
                 }
             }
 
-            if results.len() >= limit {
-                break;
-            }
-        }
-
-        frontier = next_frontier;
-    }
-
-    // 3. If sitemap wasn't consumed yet (e.g. max_depth=0), collect remaining URLs
-    if let Some(handle) = sitemap_handle {
-        if let Ok(Some(sitemap_urls)) = handle.await {
-            let base_domain = base_url.host_str().unwrap_or("");
-            for su in sitemap_urls {
-                if results.len() >= limit {
-                    break;
-                }
-                if let Ok(su_parsed) = url::Url::parse(&su.loc) {
-                    if su_parsed.host_str().unwrap_or("") == base_domain
-                        && !visited.contains(&su.loc)
-                    {
-                        results.push(MapLink {
-                            url: su.loc,
-                            title: None,
-                            description: None,
-                        });
-                    }
-                }
-            }
+            frontier = next_frontier;
         }
     }
 
     let mut links = results;
 
-    // 4. Apply search filter if provided
+    // ── Step 4: Apply search filter if provided ──────────────────────────
+
     if let Some(ref search) = request.search {
         let search_lower = search.to_lowercase();
         links.retain(|link| {

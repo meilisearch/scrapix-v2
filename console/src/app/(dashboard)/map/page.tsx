@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import {
   Table,
   TableBody,
@@ -43,16 +44,25 @@ const MAP_EXAMPLE = `curl -X POST https://scrapix.meilisearch.dev/map \\
   -H "Authorization: Bearer YOUR_API_KEY" \\
   -d '{
     "url": "https://example.com",
-    "depth": 2,
+    "depth": 0,
     "limit": 5000,
-    "search": "blog"
+    "get_title": true,
+    "get_description": true,
+    "get_lastmod": true,
+    "get_priority": true,
+    "get_changefreq": true
   }'`;
 
 export default function MapPage() {
   const [url, setUrl] = useState("https://scrapix.meilisearch.dev");
-  const [depth, setDepth] = useState("2");
+  const [depth, setDepth] = useState("0");
   const [limit, setLimit] = useState("5000");
   const [search, setSearch] = useState("");
+  const [getTitle, setGetTitle] = useState(true);
+  const [getDescription, setGetDescription] = useState(true);
+  const [getLastmod, setGetLastmod] = useState(true);
+  const [getPriority, setGetPriority] = useState(true);
+  const [getChangefreq, setGetChangefreq] = useState(true);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<MapResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -76,9 +86,14 @@ export default function MapPage() {
     try {
       const data = await submitMap({
         url,
-        depth: parseInt(depth) || 2,
+        depth: parseInt(depth) || 0,
         limit: parseInt(limit) || 5000,
         search: search.trim() || undefined,
+        get_title: getTitle,
+        get_description: getDescription,
+        get_lastmod: getLastmod,
+        get_priority: getPriority,
+        get_changefreq: getChangefreq,
       });
       setResult(data);
       const newRuns = saveRun({
@@ -99,7 +114,7 @@ export default function MapPage() {
     }
 
     setLoading(false);
-  }, [url, depth, limit, search]);
+  }, [url, depth, limit, search, getTitle, getDescription, getLastmod, getPriority, getChangefreq]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") handleMap();
@@ -127,10 +142,10 @@ export default function MapPage() {
   };
 
   const exportCsv = () => {
-    const header = "url,title,description";
+    const header = "url,title,description,lastmod,priority,changefreq";
     const rows = filteredLinks.map(
       (l) =>
-        `"${l.url}","${(l.title ?? "").replace(/"/g, '""')}","${(l.description ?? "").replace(/"/g, '""')}"`
+        `"${l.url}","${(l.title ?? "").replace(/"/g, '""')}","${(l.description ?? "").replace(/"/g, '""')}","${l.lastmod ?? ""}","${l.priority ?? ""}","${l.changefreq ?? ""}"`
     );
     const csv = [header, ...rows].join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
@@ -213,6 +228,30 @@ export default function MapPage() {
                   onKeyDown={handleKeyDown}
                   className="text-sm"
                 />
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-4 items-center">
+              <span className="text-xs text-muted-foreground font-medium">Include:</span>
+              <div className="flex items-center gap-1.5">
+                <Switch id="get-title" checked={getTitle} onCheckedChange={setGetTitle} />
+                <Label htmlFor="get-title" className="text-xs cursor-pointer">Title</Label>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Switch id="get-description" checked={getDescription} onCheckedChange={setGetDescription} />
+                <Label htmlFor="get-description" className="text-xs cursor-pointer">Description</Label>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Switch id="get-lastmod" checked={getLastmod} onCheckedChange={setGetLastmod} />
+                <Label htmlFor="get-lastmod" className="text-xs cursor-pointer">Last Modified</Label>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Switch id="get-priority" checked={getPriority} onCheckedChange={setGetPriority} />
+                <Label htmlFor="get-priority" className="text-xs cursor-pointer">Priority</Label>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Switch id="get-changefreq" checked={getChangefreq} onCheckedChange={setGetChangefreq} />
+                <Label htmlFor="get-changefreq" className="text-xs cursor-pointer">Change Freq</Label>
               </div>
             </div>
           </div>
@@ -312,19 +351,30 @@ export default function MapPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="w-[40%]">URL</TableHead>
-                      <TableHead className="w-[25%]">Title</TableHead>
-                      <TableHead>Description</TableHead>
+                      <TableHead className="min-w-[250px]">URL</TableHead>
+                      {getTitle && <TableHead>Title</TableHead>}
+                      {getDescription && <TableHead>Description</TableHead>}
+                      {getLastmod && <TableHead className="w-[120px]">Last Modified</TableHead>}
+                      {getPriority && <TableHead className="w-[80px]">Priority</TableHead>}
+                      {getChangefreq && <TableHead className="w-[100px]">Freq</TableHead>}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {filteredLinks.map((link, i) => (
-                      <MapRow key={i} link={link} />
+                      <MapRow
+                        key={i}
+                        link={link}
+                        showTitle={getTitle}
+                        showDescription={getDescription}
+                        showLastmod={getLastmod}
+                        showPriority={getPriority}
+                        showChangefreq={getChangefreq}
+                      />
                     ))}
                     {filteredLinks.length === 0 && (
                       <TableRow>
                         <TableCell
-                          colSpan={3}
+                          colSpan={1 + (getTitle ? 1 : 0) + (getDescription ? 1 : 0) + (getLastmod ? 1 : 0) + (getPriority ? 1 : 0) + (getChangefreq ? 1 : 0)}
                           className="text-center text-muted-foreground py-8"
                         >
                           No links match your filter.
@@ -355,7 +405,23 @@ export default function MapPage() {
   );
 }
 
-function MapRow({ link }: { link: MapLink }) {
+function MapRow({
+  link,
+  showTitle,
+  showDescription,
+  showLastmod,
+  showPriority,
+  showChangefreq,
+}: {
+  link: MapLink;
+  showTitle: boolean;
+  showDescription: boolean;
+  showLastmod: boolean;
+  showPriority: boolean;
+  showChangefreq: boolean;
+}) {
+  const dash = <span className="text-muted-foreground italic">--</span>;
+
   return (
     <TableRow className="group">
       <TableCell className="font-mono text-xs max-w-0">
@@ -379,20 +445,35 @@ function MapRow({ link }: { link: MapLink }) {
           </a>
         </div>
       </TableCell>
-      <TableCell className="text-sm max-w-0">
-        <span className="truncate block" title={link.title}>
-          {link.title ?? (
-            <span className="text-muted-foreground italic">--</span>
-          )}
-        </span>
-      </TableCell>
-      <TableCell className="text-xs text-muted-foreground max-w-0">
-        <span className="truncate block" title={link.description}>
-          {link.description ?? (
-            <span className="italic">--</span>
-          )}
-        </span>
-      </TableCell>
+      {showTitle && (
+        <TableCell className="text-sm max-w-0">
+          <span className="truncate block" title={link.title}>
+            {link.title ?? dash}
+          </span>
+        </TableCell>
+      )}
+      {showDescription && (
+        <TableCell className="text-xs text-muted-foreground max-w-0">
+          <span className="truncate block" title={link.description}>
+            {link.description ?? dash}
+          </span>
+        </TableCell>
+      )}
+      {showLastmod && (
+        <TableCell className="text-xs text-muted-foreground">
+          {link.lastmod ? new Date(link.lastmod).toLocaleDateString() : dash}
+        </TableCell>
+      )}
+      {showPriority && (
+        <TableCell className="text-xs text-muted-foreground text-center">
+          {link.priority != null ? link.priority.toFixed(1) : dash}
+        </TableCell>
+      )}
+      {showChangefreq && (
+        <TableCell className="text-xs text-muted-foreground">
+          {link.changefreq ?? dash}
+        </TableCell>
+      )}
     </TableRow>
   );
 }
