@@ -47,15 +47,15 @@ const TIME_RANGES = [
   { label: "90d", hours: 2160, days: 90 },
 ] as const;
 
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 B";
+function formatBytes(bytes: number | undefined | null): string {
+  if (!bytes) return "0 B";
   const units = ["B", "KB", "MB", "GB", "TB"];
   const i = Math.floor(Math.log(bytes) / Math.log(1024));
   return `${(bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0)} ${units[i]}`;
 }
 
-function formatNumber(n: number): string {
-  return n.toLocaleString();
+function formatNumber(n: number | undefined | null): string {
+  return (n ?? 0).toLocaleString();
 }
 
 function formatHour(hour: string): string {
