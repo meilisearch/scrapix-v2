@@ -44,6 +44,17 @@ import {
 } from "@/lib/api";
 import { formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
+import {
+  CrawlOptions,
+  type CrawlState,
+  defaultCrawlState,
+} from "../../playground/crawl-options";
+import {
+  crawlStateToConfig,
+  configToCrawlState,
+  getStartUrls,
+} from "@/lib/crawl-config-utils";
+import { CronBuilder } from "@/components/cron-builder";
 
 export default function ConfigDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -53,13 +64,13 @@ export default function ConfigDetailPage() {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [configJson, setConfigJson] = useState("");
+  const [startUrls, setStartUrls] = useState("");
+  const [crawlState, setCrawlState] = useState<CrawlState>(defaultCrawlState);
   const [cronExpression, setCronExpression] = useState("");
   const [cronEnabled, setCronEnabled] = useState(false);
   const [saving, setSaving] = useState(false);
   const [triggerLoading, setTriggerLoading] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
-  const [jsonError, setJsonError] = useState<string | null>(null);
 
   const {
     data: config,
@@ -75,29 +86,33 @@ export default function ConfigDetailPage() {
     if (!config) return;
     setName(config.name);
     setDescription(config.description ?? "");
-    setConfigJson(JSON.stringify(config.config, null, 2));
+    const configObj = config.config as Record<string, unknown>;
+    setStartUrls(getStartUrls(configObj).join("\n"));
+    setCrawlState(configToCrawlState(configObj));
     setCronExpression(config.cron_expression ?? "");
     setCronEnabled(config.cron_enabled);
-    setJsonError(null);
     setEditing(true);
   };
 
   const handleSave = async () => {
-    let parsed;
-    try {
-      parsed = JSON.parse(configJson);
-    } catch {
-      setJsonError("Invalid JSON");
+    const urls = startUrls
+      .split("\n")
+      .map((u) => u.trim())
+      .filter((u) => u);
+
+    if (urls.length === 0) {
+      toast.error("At least one start URL is required");
       return;
     }
-    setJsonError(null);
+
+    const configPayload = crawlStateToConfig(crawlState, urls);
 
     setSaving(true);
     try {
       await updateConfig(id, {
         name: name.trim(),
         description: description.trim() || null,
-        config: parsed,
+        config: configPayload,
         cron_expression: cronExpression.trim() || null,
         cron_enabled: cronEnabled,
       });
@@ -296,40 +311,39 @@ export default function ConfigDetailPage() {
             <CardTitle>Edit Config</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="edit-name">Name</Label>
-              <Input
-                id="edit-name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-name">Name</Label>
+                <Input
+                  id="edit-name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-desc">Description</Label>
+                <Input
+                  id="edit-desc"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="Optional description"
+                />
+              </div>
             </div>
 
             <div className="space-y-1.5">
-              <Label htmlFor="edit-desc">Description</Label>
-              <Input
-                id="edit-desc"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="Optional description"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="edit-config">Crawl Config (JSON)</Label>
+              <Label htmlFor="edit-start-urls">Start URLs</Label>
               <Textarea
-                id="edit-config"
-                value={configJson}
-                onChange={(e) => {
-                  setConfigJson(e.target.value);
-                  setJsonError(null);
-                }}
-                rows={12}
+                id="edit-start-urls"
+                placeholder="https://example.com"
+                value={startUrls}
+                onChange={(e) => setStartUrls(e.target.value)}
+                rows={2}
                 className="font-mono text-xs"
               />
-              {jsonError && (
-                <p className="text-xs text-destructive">{jsonError}</p>
-              )}
+              <p className="text-xs text-muted-foreground">
+                One URL per line
+              </p>
             </div>
 
             <div className="space-y-3 rounded-lg border p-3">
@@ -352,20 +366,15 @@ export default function ConfigDetailPage() {
                 />
               </div>
               {cronEnabled && (
-                <div className="space-y-1.5">
-                  <Label htmlFor="edit-cron-expr">Cron Expression</Label>
-                  <Input
-                    id="edit-cron-expr"
-                    placeholder="0 2 * * * (daily at 2am)"
-                    value={cronExpression}
-                    onChange={(e) => setCronExpression(e.target.value)}
-                    className="font-mono text-sm"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Standard cron format: minute hour day month weekday
-                  </p>
-                </div>
+                <CronBuilder
+                  value={cronExpression}
+                  onChange={setCronExpression}
+                />
               )}
+            </div>
+
+            <div className="rounded-lg border p-3">
+              <CrawlOptions state={crawlState} onChange={setCrawlState} />
             </div>
 
             <div className="flex gap-2 pt-2">

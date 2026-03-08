@@ -32,6 +32,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Trash2,
   ExternalLink,
@@ -60,6 +61,13 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import {
+  CrawlOptions,
+  type CrawlState,
+  defaultCrawlState,
+} from "../playground/crawl-options";
+import { crawlStateToConfig } from "@/lib/crawl-config-utils";
+import { CronBuilder } from "@/components/cron-builder";
 
 export default function ConfigsPage() {
   const queryClient = useQueryClient();
@@ -385,22 +393,16 @@ function CreateConfigDialog({
 }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [configJson, setConfigJson] = useState(
-    JSON.stringify(
-      {
-        start_urls: ["https://example.com"],
-        index_uid: "my-crawl",
-        max_depth: 3,
-        max_pages: 100,
-      },
-      null,
-      2
-    )
-  );
+  const [startUrls, setStartUrls] = useState("https://example.com");
+  const [crawlState, setCrawlState] = useState<CrawlState>({
+    ...defaultCrawlState,
+    index_uid: "my-crawl",
+    max_pages: "100",
+    max_depth: "3",
+  });
   const [cronExpression, setCronExpression] = useState("");
   const [cronEnabled, setCronEnabled] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [jsonError, setJsonError] = useState<string | null>(null);
 
   const handleSubmit = async () => {
     if (!name.trim()) {
@@ -408,21 +410,24 @@ function CreateConfigDialog({
       return;
     }
 
-    let parsed;
-    try {
-      parsed = JSON.parse(configJson);
-    } catch {
-      setJsonError("Invalid JSON");
+    const urls = startUrls
+      .split("\n")
+      .map((u) => u.trim())
+      .filter((u) => u);
+
+    if (urls.length === 0) {
+      toast.error("At least one start URL is required");
       return;
     }
-    setJsonError(null);
+
+    const config = crawlStateToConfig(crawlState, urls);
 
     setSubmitting(true);
     try {
       await createConfig({
         name: name.trim(),
         description: description.trim() || undefined,
-        config: parsed,
+        config,
         cron_expression: cronExpression.trim() || undefined,
         cron_enabled: cronEnabled,
       });
@@ -432,6 +437,13 @@ function CreateConfigDialog({
       // Reset
       setName("");
       setDescription("");
+      setStartUrls("https://example.com");
+      setCrawlState({
+        ...defaultCrawlState,
+        index_uid: "my-crawl",
+        max_pages: "100",
+        max_depth: "3",
+      });
       setCronExpression("");
       setCronEnabled(false);
     } catch (err) {
@@ -445,7 +457,7 @@ function CreateConfigDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Settings2 className="h-5 w-5" />
@@ -457,77 +469,75 @@ function CreateConfigDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="config-name">Name</Label>
-            <Input
-              id="config-name"
-              placeholder="My daily docs crawl"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="config-desc">Description (optional)</Label>
-            <Input
-              id="config-desc"
-              placeholder="Crawls the docs site nightly"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="config-json">Crawl Config (JSON)</Label>
-            <Textarea
-              id="config-json"
-              value={configJson}
-              onChange={(e) => {
-                setConfigJson(e.target.value);
-                setJsonError(null);
-              }}
-              rows={8}
-              className="font-mono text-xs"
-            />
-            {jsonError && (
-              <p className="text-xs text-destructive">{jsonError}</p>
-            )}
-          </div>
-
-          <div className="space-y-3 rounded-lg border p-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <Label htmlFor="cron-toggle" className="text-sm font-medium">
-                  Cron Schedule
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  Automatically trigger this crawl on a schedule
-                </p>
-              </div>
-              <Switch
-                id="cron-toggle"
-                checked={cronEnabled}
-                onCheckedChange={setCronEnabled}
-              />
-            </div>
-            {cronEnabled && (
+        <ScrollArea className="flex-1 -mx-6 px-6">
+          <div className="space-y-4 pb-2">
+            <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label htmlFor="cron-expr">Cron Expression</Label>
+                <Label htmlFor="config-name">Name</Label>
                 <Input
-                  id="cron-expr"
-                  placeholder="0 2 * * * (daily at 2am)"
-                  value={cronExpression}
-                  onChange={(e) => setCronExpression(e.target.value)}
-                  className="font-mono text-sm"
+                  id="config-name"
+                  placeholder="My daily docs crawl"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
                 />
-                <p className="text-xs text-muted-foreground">
-                  Standard cron format: minute hour day month weekday
-                </p>
               </div>
-            )}
+              <div className="space-y-1.5">
+                <Label htmlFor="config-desc">Description</Label>
+                <Input
+                  id="config-desc"
+                  placeholder="Crawls the docs site nightly"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="start-urls">Start URLs</Label>
+              <Textarea
+                id="start-urls"
+                placeholder="https://example.com"
+                value={startUrls}
+                onChange={(e) => setStartUrls(e.target.value)}
+                rows={2}
+                className="font-mono text-xs"
+              />
+              <p className="text-xs text-muted-foreground">
+                One URL per line
+              </p>
+            </div>
+
+            {/* Cron Schedule */}
+            <div className="space-y-3 rounded-lg border p-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label htmlFor="cron-toggle" className="text-sm font-medium">
+                    Cron Schedule
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Automatically trigger this crawl on a schedule
+                  </p>
+                </div>
+                <Switch
+                  id="cron-toggle"
+                  checked={cronEnabled}
+                  onCheckedChange={setCronEnabled}
+                />
+              </div>
+              {cronEnabled && (
+                <CronBuilder
+                  value={cronExpression}
+                  onChange={setCronExpression}
+                />
+              )}
+            </div>
+
+            {/* Crawl Options */}
+            <div className="rounded-lg border p-3">
+              <CrawlOptions state={crawlState} onChange={setCrawlState} />
+            </div>
           </div>
-        </div>
+        </ScrollArea>
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>

@@ -8,6 +8,7 @@ import { UrlBar } from "../playground/url-bar";
 import { CrawlOptions, type CrawlState, defaultCrawlState } from "../playground/crawl-options";
 import { ResultPanel } from "../playground/result-panel";
 import { HistoryPanel, loadRuns, saveRun, type RunEntry } from "../playground/recent-runs";
+import { crawlStateToConfig } from "@/lib/crawl-config-utils";
 
 export default function CrawlPage() {
   const [url, setUrl] = useState("https://scrapix.meilisearch.dev");
@@ -36,148 +37,11 @@ export default function CrawlPage() {
       .map((u) => u.trim())
       .filter((u) => u);
 
-    const indexUid =
-      crawlState.index_uid.trim() || `playground-${Date.now()}`;
-
     setLoading(true);
     setCrawlResult(null);
     setError(null);
 
-    const lines = (s: string) =>
-      s.split("\n").map((l) => l.trim()).filter((l) => l);
-
-    const optInt = (s: string) => {
-      const n = parseInt(s);
-      return isNaN(n) ? undefined : n;
-    };
-
-    const optFloat = (s: string) => {
-      const n = parseFloat(s);
-      return isNaN(n) ? undefined : n;
-    };
-
-    const optJson = (s: string) => {
-      if (!s.trim()) return undefined;
-      try {
-        return JSON.parse(s);
-      } catch {
-        return undefined;
-      }
-    };
-
-    const config: Record<string, unknown> = {
-      start_urls: urls,
-      index_uid: indexUid,
-      crawler_type: crawlState.crawler_type,
-      max_depth: optInt(crawlState.max_depth),
-      max_pages: optInt(crawlState.max_pages),
-    };
-
-    const ms: Record<string, unknown> = {
-      url: crawlState.meilisearch_url,
-      api_key: crawlState.meilisearch_api_key,
-    };
-    if (crawlState.meilisearch_primary_key.trim())
-      ms.primary_key = crawlState.meilisearch_primary_key;
-    const batchSize = optInt(crawlState.meilisearch_batch_size);
-    if (batchSize && batchSize !== 1000) ms.batch_size = batchSize;
-    if (crawlState.meilisearch_keep_settings) ms.keep_settings = true;
-    config.meilisearch = ms;
-
-    const domains = lines(crawlState.allowed_domains);
-    if (domains.length > 0) config.allowed_domains = domains;
-
-    const incl = lines(crawlState.include_patterns);
-    const excl = lines(crawlState.exclude_patterns);
-    const indexOnly = lines(crawlState.index_only_patterns);
-    if (incl.length > 0 || excl.length > 0 || indexOnly.length > 0) {
-      const patterns: Record<string, string[]> = {};
-      if (incl.length > 0) patterns.include = incl;
-      if (excl.length > 0) patterns.exclude = excl;
-      if (indexOnly.length > 0) patterns.index_only = indexOnly;
-      config.url_patterns = patterns;
-    }
-
-    if (crawlState.sitemap_enabled) {
-      const sitemapUrls = lines(crawlState.sitemap_urls);
-      config.sitemap = {
-        enabled: true,
-        ...(sitemapUrls.length > 0 ? { urls: sitemapUrls } : {}),
-      };
-    }
-
-    const maxConcurrent = optInt(crawlState.max_concurrent_requests);
-    const browserPool = optInt(crawlState.browser_pool_size);
-    const dnsConcurrency = optInt(crawlState.dns_concurrency);
-    if (
-      (maxConcurrent && maxConcurrent !== 50) ||
-      (browserPool && browserPool !== 5) ||
-      (dnsConcurrency && dnsConcurrency !== 100)
-    ) {
-      config.concurrency = {
-        ...(maxConcurrent ? { max_concurrent_requests: maxConcurrent } : {}),
-        ...(browserPool ? { browser_pool_size: browserPool } : {}),
-        ...(dnsConcurrency ? { dns_concurrency: dnsConcurrency } : {}),
-      };
-    }
-
-    const rateLimit: Record<string, unknown> = {
-      respect_robots_txt: crawlState.respect_robots,
-    };
-    const rps = optFloat(crawlState.requests_per_second);
-    const rpm = optInt(crawlState.requests_per_minute);
-    const domainDelay = optInt(crawlState.per_domain_delay_ms);
-    const crawlDelay = optInt(crawlState.default_crawl_delay_ms);
-    if (rps) rateLimit.requests_per_second = rps;
-    if (rpm) rateLimit.requests_per_minute = rpm;
-    if (domainDelay && domainDelay !== 100)
-      rateLimit.per_domain_delay_ms = domainDelay;
-    if (crawlDelay && crawlDelay !== 1000)
-      rateLimit.default_crawl_delay_ms = crawlDelay;
-    config.rate_limit = rateLimit;
-
-    const features: Record<string, unknown> = {};
-    if (!crawlState.feat_metadata) features.metadata = { enabled: false };
-    if (!crawlState.feat_markdown) features.markdown = { enabled: false };
-    if (crawlState.feat_block_split) features.block_split = { enabled: true };
-    if (crawlState.feat_schema) {
-      const schema: Record<string, unknown> = { enabled: true };
-      const types = crawlState.schema_only_types
-        .split(",")
-        .map((t) => t.trim())
-        .filter((t) => t);
-      if (types.length > 0) schema.only_types = types;
-      schema.convert_dates = crawlState.schema_convert_dates;
-      features.schema = schema;
-    }
-    if (crawlState.feat_custom_selectors) {
-      const selectors = optJson(crawlState.custom_selectors);
-      if (selectors) {
-        features.custom_selectors = { enabled: true, selectors };
-      }
-    }
-    if (crawlState.feat_ai_extraction) {
-      features.ai_extraction = {
-        enabled: true,
-        prompt: crawlState.ai_extraction_prompt,
-      };
-    }
-    if (crawlState.feat_ai_summary) features.ai_summary = { enabled: true };
-    if (Object.keys(features).length > 0) config.features = features;
-
-    const headers = optJson(crawlState.headers);
-    if (headers) config.headers = headers;
-
-    const uas = lines(crawlState.user_agents);
-    if (uas.length > 0) config.user_agents = uas;
-
-    const proxyUrls = lines(crawlState.proxy_urls);
-    if (proxyUrls.length > 0) {
-      config.proxy = {
-        urls: proxyUrls,
-        rotation: crawlState.proxy_rotation,
-      };
-    }
+    const config = crawlStateToConfig(crawlState, urls);
 
     try {
       const data = await createCrawl(config);
