@@ -35,6 +35,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Legend,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -250,6 +251,14 @@ export default function UsagePage() {
     : "Requests, successes, and failures per hour";
   const bwSubtitle = useDaily ? "Data transferred per day" : "Data transferred per hour";
 
+  // --- Chart colors ---
+  const colors = {
+    success: "#22c55e",    // green-500
+    failure: "#ef4444",    // red-500
+    bandwidth: "#3b82f6",  // blue-500
+    domains: "#8b5cf6",    // violet-500
+  };
+
   // --- Shared tooltip style ---
   const tooltipStyle = {
     backgroundColor: "hsl(var(--card))",
@@ -350,6 +359,16 @@ export default function UsagePage() {
           ) : (
             <ResponsiveContainer width="100%" height={300}>
               <AreaChart data={chartData}>
+                <defs>
+                  <linearGradient id="gradSuccess" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={colors.success} stopOpacity={0.4} />
+                    <stop offset="95%" stopColor={colors.success} stopOpacity={0.05} />
+                  </linearGradient>
+                  <linearGradient id="gradFailure" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={colors.failure} stopOpacity={0.4} />
+                    <stop offset="95%" stopColor={colors.failure} stopOpacity={0.05} />
+                  </linearGradient>
+                </defs>
                 <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                 <XAxis
                   dataKey="label"
@@ -359,22 +378,23 @@ export default function UsagePage() {
                 />
                 <YAxis tick={{ fontSize: 12 }} className="text-muted-foreground" />
                 <Tooltip contentStyle={tooltipStyle} />
+                <Legend />
                 <Area
                   type="monotone"
                   dataKey="successes"
                   stackId="1"
-                  stroke="hsl(var(--chart-2))"
-                  fill="hsl(var(--chart-2))"
-                  fillOpacity={0.4}
+                  stroke={colors.success}
+                  fill="url(#gradSuccess)"
+                  strokeWidth={2}
                   name="Successes"
                 />
                 <Area
                   type="monotone"
                   dataKey="failures"
                   stackId="1"
-                  stroke="hsl(var(--chart-5))"
-                  fill="hsl(var(--chart-5))"
-                  fillOpacity={0.4}
+                  stroke={colors.failure}
+                  fill="url(#gradFailure)"
+                  strokeWidth={2}
                   name="Failures"
                 />
               </AreaChart>
@@ -396,6 +416,12 @@ export default function UsagePage() {
             ) : (
               <ResponsiveContainer width="100%" height={250}>
                 <AreaChart data={chartData}>
+                  <defs>
+                    <linearGradient id="gradBandwidth" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={colors.bandwidth} stopOpacity={0.4} />
+                      <stop offset="95%" stopColor={colors.bandwidth} stopOpacity={0.05} />
+                    </linearGradient>
+                  </defs>
                   <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                   <XAxis
                     dataKey="label"
@@ -415,9 +441,9 @@ export default function UsagePage() {
                   <Area
                     type="monotone"
                     dataKey="total_bytes"
-                    stroke="hsl(var(--chart-1))"
-                    fill="hsl(var(--chart-1))"
-                    fillOpacity={0.3}
+                    stroke={colors.bandwidth}
+                    fill="url(#gradBandwidth)"
+                    strokeWidth={2}
                     name="Bandwidth"
                   />
                 </AreaChart>
@@ -447,7 +473,7 @@ export default function UsagePage() {
                   <Tooltip contentStyle={tooltipStyle} />
                   <Bar
                     dataKey="total_requests"
-                    fill="hsl(var(--chart-3))"
+                    fill={colors.domains}
                     radius={[0, 4, 4, 0]}
                     name="Requests"
                   />
