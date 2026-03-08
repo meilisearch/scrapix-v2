@@ -439,6 +439,110 @@ async fn pipe_hourly_stats(
 }
 
 // ============================================================================
+// Pipe: daily_stats
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct DailyStatsParams {
+    #[serde(default = "default_days")]
+    days: u32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DailyStatsRow {
+    pub date: String,
+    pub requests: u64,
+    pub successes: u64,
+    pub failures: u64,
+    pub success_rate: f64,
+    pub avg_duration_ms: f64,
+    pub total_bytes: u64,
+}
+
+async fn pipe_daily_stats(
+    State(state): State<Arc<AnalyticsState>>,
+    Query(params): Query<DailyStatsParams>,
+) -> Result<Json<AnalyticsResponse<DailyStatsRow>>, (StatusCode, Json<AnalyticsError>)> {
+    let start = Instant::now();
+
+    let stats = state
+        .storage
+        .get_daily_stats(params.days)
+        .await
+        .map_err(|e| {
+            error!("daily_stats query failed: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(AnalyticsError {
+                    error: e.to_string(),
+                    code: "QUERY_ERROR".to_string(),
+                }),
+            )
+        })?;
+
+    let data: Vec<DailyStatsRow> = stats
+        .into_iter()
+        .map(|s| {
+            let success_rate = if s.requests > 0 {
+                s.successes as f64 / s.requests as f64 * 100.0
+            } else {
+                0.0
+            };
+            DailyStatsRow {
+                date: s.date.to_string(),
+                requests: s.requests,
+                successes: s.successes,
+                failures: s.failures,
+                success_rate,
+                avg_duration_ms: s.avg_duration_ms,
+                total_bytes: s.total_bytes,
+            }
+        })
+        .collect();
+
+    let rows = data.len();
+    Ok(Json(AnalyticsResponse {
+        meta: vec![
+            ColumnMeta {
+                name: "date".into(),
+                col_type: "Date".into(),
+            },
+            ColumnMeta {
+                name: "requests".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "successes".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "failures".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "success_rate".into(),
+                col_type: "Float64".into(),
+            },
+            ColumnMeta {
+                name: "avg_duration_ms".into(),
+                col_type: "Float64".into(),
+            },
+            ColumnMeta {
+                name: "total_bytes".into(),
+                col_type: "UInt64".into(),
+            },
+        ],
+        data,
+        rows,
+        statistics: QueryStats {
+            elapsed: start.elapsed().as_secs_f64(),
+            rows_read: rows,
+            bytes_read: 0,
+        },
+    }))
+}
+
+// ============================================================================
 // Pipe: error_distribution
 // ============================================================================
 
@@ -1292,6 +1396,17 @@ async fn list_pipes() -> Json<Vec<PipeInfo>> {
             endpoint: "/analytics/v0/pipes/hourly_stats.json".into(),
         },
         PipeInfo {
+            name: "daily_stats".into(),
+            description: "Daily crawl statistics".into(),
+            parameters: vec![ParamInfo {
+                name: "days".into(),
+                param_type: "integer".into(),
+                required: false,
+                default: Some("30".into()),
+            }],
+            endpoint: "/analytics/v0/pipes/daily_stats.json".into(),
+        },
+        PipeInfo {
             name: "error_distribution".into(),
             description: "Error breakdown by status code".into(),
             parameters: vec![ParamInfo {
@@ -1433,6 +1548,7 @@ pub fn create_analytics_router(state: Arc<AnalyticsState>) -> Router {
         .route("/pipes/top_domains.json", get(pipe_top_domains))
         .route("/pipes/domain_stats.json", get(pipe_domain_stats))
         .route("/pipes/hourly_stats.json", get(pipe_hourly_stats))
+        .route("/pipes/daily_stats.json", get(pipe_daily_stats))
         .route(
             "/pipes/error_distribution.json",
             get(pipe_error_distribution),

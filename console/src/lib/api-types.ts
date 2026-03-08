@@ -245,6 +245,16 @@ export interface HourlyStatsRow {
   total_bytes: number;
 }
 
+export interface DailyStatsRow {
+  date: string;
+  requests: number;
+  successes: number;
+  failures: number;
+  success_rate: number;
+  avg_duration_ms: number;
+  total_bytes: number;
+}
+
 export interface KpisRow {
   total_crawls: number;
   total_bytes: number;

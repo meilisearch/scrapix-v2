@@ -23,6 +23,7 @@ import { Globe, HardDrive, Sparkles, Monitor } from "lucide-react";
 import {
   fetchKpis,
   fetchHourlyStats,
+  fetchDailyStats,
   fetchTopDomains,
   fetchAccountUsage,
   fetchDailyUsage,
@@ -40,12 +41,20 @@ import {
   YAxis,
 } from "recharts";
 
+// ---------------------------------------------------------------------------
+// Config
+// ---------------------------------------------------------------------------
+
 const TIME_RANGES = [
-  { label: "24h", hours: 24, days: 1 },
-  { label: "7d", hours: 168, days: 7 },
-  { label: "30d", hours: 720, days: 30 },
-  { label: "90d", hours: 2160, days: 90 },
-] as const;
+  { label: "24h", hours: 24, days: 1, granularity: "hourly" as const },
+  { label: "7d", hours: 168, days: 7, granularity: "hourly" as const },
+  { label: "30d", hours: 720, days: 30, granularity: "daily" as const },
+  { label: "90d", hours: 2160, days: 90, granularity: "daily" as const },
+];
+
+// ---------------------------------------------------------------------------
+// Formatters
+// ---------------------------------------------------------------------------
 
 function formatBytes(bytes: number | undefined | null): string {
   if (!bytes) return "0 B";
@@ -67,13 +76,32 @@ function formatHour(hour: string): string {
   }
 }
 
-/** Fill missing hours with zero-valued entries so the chart has a continuous timeline. */
+function formatDate(date: string): string {
+  try {
+    const d = new Date(date + "T00:00:00");
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  } catch {
+    return date;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Gap-filling helpers
+// ---------------------------------------------------------------------------
+
+interface ChartPoint {
+  label: string;
+  requests: number;
+  successes: number;
+  failures: number;
+  total_bytes: number;
+}
+
 function fillHourlyGaps(
-  data: { hour: string; requests: number; successes: number; failures: number; success_rate: number; avg_duration_ms: number; total_bytes: number }[],
+  data: { hour: string; requests: number; successes: number; failures: number; total_bytes: number }[],
   hours: number,
-): typeof data {
+): ChartPoint[] {
   const now = new Date();
-  // Round down to current hour
   now.setMinutes(0, 0, 0);
   const byKey = new Map(data.map((d) => {
     const k = new Date(d.hour);
@@ -81,28 +109,50 @@ function fillHourlyGaps(
     return [k.getTime(), d];
   }));
 
-  const result: typeof data = [];
+  const result: ChartPoint[] = [];
   for (let i = hours - 1; i >= 0; i--) {
     const t = new Date(now.getTime() - i * 3600_000);
     const existing = byKey.get(t.getTime());
-    result.push(existing ?? {
-      hour: t.toISOString(),
-      requests: 0,
-      successes: 0,
-      failures: 0,
-      success_rate: 0,
-      avg_duration_ms: 0,
-      total_bytes: 0,
+    result.push({
+      label: formatHour(t.toISOString()),
+      requests: existing?.requests ?? 0,
+      successes: existing?.successes ?? 0,
+      failures: existing?.failures ?? 0,
+      total_bytes: existing?.total_bytes ?? 0,
     });
   }
   return result;
 }
 
-/** Fill missing days with zero-valued entries for the daily breakdown table. */
-function fillDailyGaps(
+function fillDailyChartGaps(
+  data: { date: string; requests: number; successes: number; failures: number; total_bytes: number }[],
+  days: number,
+): ChartPoint[] {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  const byKey = new Map(data.map((d) => [d.date, d]));
+
+  const result: ChartPoint[] = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const t = new Date(now.getTime() - i * 86400_000);
+    const key = t.toISOString().slice(0, 10);
+    const existing = byKey.get(key);
+    result.push({
+      label: formatDate(key),
+      requests: existing?.requests ?? 0,
+      successes: existing?.successes ?? 0,
+      failures: existing?.failures ?? 0,
+      total_bytes: existing?.total_bytes ?? 0,
+    });
+  }
+  return result;
+}
+
+/** Fill missing days for billing table. */
+function fillBillingDailyGaps(
   data: { date: string; requests: number; bytes: number; js_renders: number; ai_prompt_tokens: number; ai_completion_tokens: number }[],
   days: number,
-): typeof data {
+) {
   const now = new Date();
   now.setHours(0, 0, 0, 0);
   const byKey = new Map(data.map((d) => [d.date, d]));
@@ -111,8 +161,7 @@ function fillDailyGaps(
   for (let i = days - 1; i >= 0; i--) {
     const t = new Date(now.getTime() - i * 86400_000);
     const key = t.toISOString().slice(0, 10);
-    const existing = byKey.get(key);
-    result.push(existing ?? {
+    result.push(byKey.get(key) ?? {
       date: key,
       requests: 0,
       bytes: 0,
@@ -124,13 +173,19 @@ function fillDailyGaps(
   return result;
 }
 
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+
 export default function UsagePage() {
   const [rangeIdx, setRangeIdx] = useState(0);
   const range = TIME_RANGES[rangeIdx];
+  const useDaily = range.granularity === "daily";
 
   const { data: user } = useMe();
-
   const accountId = user?.account?.id;
+
+  // --- Queries ---
 
   const { data: kpis, isLoading: kpisLoading } = useQuery({
     queryKey: ["analytics", "kpis", range.hours],
@@ -141,6 +196,14 @@ export default function UsagePage() {
   const { data: hourly, isLoading: hourlyLoading } = useQuery({
     queryKey: ["analytics", "hourly", range.hours],
     queryFn: () => fetchHourlyStats(range.hours),
+    enabled: !useDaily,
+    refetchInterval: 30_000,
+  });
+
+  const { data: daily, isLoading: dailyLoading } = useQuery({
+    queryKey: ["analytics", "daily", range.days],
+    queryFn: () => fetchDailyStats(range.days),
+    enabled: useDaily,
     refetchInterval: 30_000,
   });
 
@@ -157,14 +220,15 @@ export default function UsagePage() {
     refetchInterval: 30_000,
   });
 
-  const { data: dailyUsage, isLoading: dailyLoading } = useQuery({
-    queryKey: ["analytics", "dailyUsage", accountId, range.days],
+  const { data: billingDaily, isLoading: billingDailyLoading } = useQuery({
+    queryKey: ["analytics", "billingDaily", accountId, range.days],
     queryFn: () => fetchDailyUsage(accountId!, range.days),
     enabled: !!accountId,
     refetchInterval: 30_000,
   });
 
-  // Use account-specific data when available, fall back to global KPIs
+  // --- Derived data ---
+
   const usage = accountUsage?.data?.[0];
   const kpi = kpis?.data?.[0];
 
@@ -173,14 +237,26 @@ export default function UsagePage() {
   const aiTokens = (usage?.ai_prompt_tokens ?? 0) + (usage?.ai_completion_tokens ?? 0);
   const jsRenders = usage?.js_renders ?? 0;
 
-  const hourlyData = fillHourlyGaps(hourly?.data ?? [], range.hours).map((row) => ({
-    ...row,
-    hour: formatHour(row.hour),
-  }));
+  const chartLoading = useDaily ? dailyLoading : hourlyLoading;
+  const chartData: ChartPoint[] = useDaily
+    ? fillDailyChartGaps(daily?.data ?? [], range.days)
+    : fillHourlyGaps(hourly?.data ?? [], range.hours);
 
   const domainData = topDomains?.data?.slice(0, 10) ?? [];
+  const billingData = fillBillingDailyGaps(billingDaily?.data ?? [], range.days);
 
-  const dailyData = fillDailyGaps(dailyUsage?.data ?? [], range.days);
+  const chartSubtitle = useDaily
+    ? "Requests, successes, and failures per day"
+    : "Requests, successes, and failures per hour";
+  const bwSubtitle = useDaily ? "Data transferred per day" : "Data transferred per hour";
+
+  // --- Shared tooltip style ---
+  const tooltipStyle = {
+    backgroundColor: "hsl(var(--card))",
+    border: "1px solid hsl(var(--border))",
+    borderRadius: "var(--radius)",
+    fontSize: 12,
+  };
 
   return (
     <div className="space-y-6">
@@ -224,7 +300,7 @@ export default function UsagePage() {
           <>
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Pages Crawled</CardTitle>
+                <CardTitle className="text-sm font-medium">Total Requests</CardTitle>
                 <Globe className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
@@ -262,34 +338,27 @@ export default function UsagePage() {
         )}
       </div>
 
-      {/* Crawl Activity Chart */}
+      {/* Activity Chart */}
       <Card>
         <CardHeader>
-          <CardTitle>Crawl Activity</CardTitle>
-          <CardDescription>Requests, successes, and failures over time</CardDescription>
+          <CardTitle>Activity</CardTitle>
+          <CardDescription>{chartSubtitle}</CardDescription>
         </CardHeader>
         <CardContent>
-          {hourlyLoading ? (
+          {chartLoading ? (
             <Skeleton className="h-[300px] w-full" />
           ) : (
             <ResponsiveContainer width="100%" height={300}>
-              <AreaChart data={hourlyData}>
+              <AreaChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                 <XAxis
-                  dataKey="hour"
+                  dataKey="label"
                   tick={{ fontSize: 12 }}
                   className="text-muted-foreground"
                   interval="preserveStartEnd"
                 />
                 <YAxis tick={{ fontSize: 12 }} className="text-muted-foreground" />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: "hsl(var(--card))",
-                    border: "1px solid hsl(var(--border))",
-                    borderRadius: "var(--radius)",
-                    fontSize: 12,
-                  }}
-                />
+                <Tooltip contentStyle={tooltipStyle} />
                 <Area
                   type="monotone"
                   dataKey="successes"
@@ -314,22 +383,22 @@ export default function UsagePage() {
         </CardContent>
       </Card>
 
-      {/* Bandwidth + Top Domains side-by-side */}
+      {/* Bandwidth + Top Domains */}
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle>Bandwidth Over Time</CardTitle>
-            <CardDescription>Data transferred per hour</CardDescription>
+            <CardDescription>{bwSubtitle}</CardDescription>
           </CardHeader>
           <CardContent>
-            {hourlyLoading ? (
+            {chartLoading ? (
               <Skeleton className="h-[250px] w-full" />
             ) : (
               <ResponsiveContainer width="100%" height={250}>
-                <AreaChart data={hourlyData}>
+                <AreaChart data={chartData}>
                   <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                   <XAxis
-                    dataKey="hour"
+                    dataKey="label"
                     tick={{ fontSize: 12 }}
                     className="text-muted-foreground"
                     interval="preserveStartEnd"
@@ -340,12 +409,7 @@ export default function UsagePage() {
                     tickFormatter={(v: number) => formatBytes(v)}
                   />
                   <Tooltip
-                    contentStyle={{
-                      backgroundColor: "hsl(var(--card))",
-                      border: "1px solid hsl(var(--border))",
-                      borderRadius: "var(--radius)",
-                      fontSize: 12,
-                    }}
+                    contentStyle={tooltipStyle}
                     formatter={(value: number) => [formatBytes(value), "Bandwidth"]}
                   />
                   <Area
@@ -380,14 +444,7 @@ export default function UsagePage() {
                     className="text-muted-foreground"
                     width={120}
                   />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: "hsl(var(--card))",
-                      border: "1px solid hsl(var(--border))",
-                      borderRadius: "var(--radius)",
-                      fontSize: 12,
-                    }}
-                  />
+                  <Tooltip contentStyle={tooltipStyle} />
                   <Bar
                     dataKey="total_requests"
                     fill="hsl(var(--chart-3))"
@@ -413,13 +470,13 @@ export default function UsagePage() {
             <CardDescription>Per-day usage for billing</CardDescription>
           </CardHeader>
           <CardContent>
-            {dailyLoading ? (
+            {billingDailyLoading ? (
               <div className="space-y-2">
                 {Array.from({ length: 5 }).map((_, i) => (
                   <Skeleton key={i} className="h-8 w-full" />
                 ))}
               </div>
-            ) : dailyData.length > 0 ? (
+            ) : (
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -431,7 +488,7 @@ export default function UsagePage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {dailyData.map((row) => (
+                  {billingData.map((row) => (
                     <TableRow key={row.date}>
                       <TableCell className="font-medium">{row.date}</TableCell>
                       <TableCell className="text-right">{formatNumber(row.requests)}</TableCell>
@@ -442,10 +499,6 @@ export default function UsagePage() {
                   ))}
                 </TableBody>
               </Table>
-            ) : (
-              <p className="text-sm text-muted-foreground py-8 text-center">
-                No daily usage data for this period
-              </p>
             )}
           </CardContent>
         </Card>

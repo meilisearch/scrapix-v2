@@ -17,6 +17,7 @@ import type {
   MapResult,
   AnalyticsResponse,
   HourlyStatsRow,
+  DailyStatsRow,
   KpisRow,
   AccountUsageRow,
   DailyUsageRow,
@@ -240,6 +241,10 @@ export async function fetchKpis(hours: number = 24): Promise<AnalyticsResponse<K
 
 export async function fetchHourlyStats(hours: number = 24): Promise<AnalyticsResponse<HourlyStatsRow>> {
   return request(`/analytics/v0/pipes/hourly_stats.json?hours=${hours}`);
+}
+
+export async function fetchDailyStats(days: number = 30): Promise<AnalyticsResponse<DailyStatsRow>> {
+  return request(`/analytics/v0/pipes/daily_stats.json?days=${days}`);
 }
 
 export async function fetchAccountUsage(accountId: string, hours: number = 24): Promise<AnalyticsResponse<AccountUsageRow>> {

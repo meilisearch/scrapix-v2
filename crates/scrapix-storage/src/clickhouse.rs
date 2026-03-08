@@ -327,6 +327,18 @@ pub struct HourlyStats {
     pub total_bytes: u64,
 }
 
+/// Daily statistics (from request_events).
+#[derive(Debug, Clone, Serialize, Deserialize, Row)]
+pub struct DailyStats {
+    #[serde(with = "clickhouse::serde::time::date")]
+    pub date: time::Date,
+    pub requests: u64,
+    pub successes: u64,
+    pub failures: u64,
+    pub avg_duration_ms: f64,
+    pub total_bytes: u64,
+}
+
 /// Account usage statistics for billing.
 #[derive(Debug, Clone, Serialize, Deserialize, Row)]
 pub struct AccountUsageStats {
@@ -664,6 +676,33 @@ impl ClickHouseStorage {
             ))
             .bind(hours)
             .fetch_all::<HourlyStats>()
+            .await?;
+        Ok(stats)
+    }
+
+    #[instrument(skip(self))]
+    pub async fn get_daily_stats(&self, days: u32) -> Result<Vec<DailyStats>, ClickHouseError> {
+        let table = self.table_name("request_events");
+        let stats = self
+            .client
+            .query(&format!(
+                r#"
+                SELECT
+                    toDate(timestamp) as date,
+                    count() as requests,
+                    countIf(status_code >= 200 AND status_code < 400) as successes,
+                    countIf(status_code >= 400 OR error != '') as failures,
+                    avg(duration_ms) as avg_duration_ms,
+                    sum(content_length) as total_bytes
+                FROM {}
+                WHERE timestamp >= now() - INTERVAL ? DAY
+                GROUP BY date
+                ORDER BY date
+                "#,
+                table
+            ))
+            .bind(days)
+            .fetch_all::<DailyStats>()
             .await?;
         Ok(stats)
     }
