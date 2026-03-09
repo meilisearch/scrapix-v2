@@ -22,6 +22,7 @@ import {
   Sun,
   Zap,
 } from "lucide-react";
+import { FeedbackDialog } from "@/components/dashboard/feedback-dialog";
 import { logout } from "@/lib/auth";
 import { useMe } from "@/lib/hooks";
 import { useRouter } from "next/navigation";
@@ -161,6 +162,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       </nav>
       <Separator className="glitch-separator" />
       <div className="p-3 space-y-1">
+        <FeedbackDialog onNavigate={onNavigate} />
         {mounted && (
           <Button
             variant="ghost"
