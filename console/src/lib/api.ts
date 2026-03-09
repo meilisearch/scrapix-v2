@@ -22,6 +22,9 @@ import type {
   AccountUsageRow,
   DailyUsageRow,
   TopDomainRow,
+  BillingInfo,
+  TransactionsListResponse,
+  TopupResponse,
 } from "./api-types";
 
 // API calls go through Next.js rewrites (/api/scrapix/* → backend) to avoid CORS.
@@ -293,4 +296,44 @@ export async function revokeApiKey(id: string): Promise<void> {
   await request(`/account/api-keys/${encodeURIComponent(id)}`, {
     method: "PATCH",
   });
+}
+
+// ============================================================================
+// Billing
+// ============================================================================
+
+export async function fetchBilling(): Promise<BillingInfo> {
+  return request("/account/billing");
+}
+
+export async function topupCredits(amount: number): Promise<TopupResponse> {
+  return request("/account/billing/topup", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ amount }),
+  });
+}
+
+export async function updateAutoTopup(config: {
+  enabled: boolean;
+  amount?: number;
+  threshold?: number;
+}): Promise<void> {
+  await request("/account/billing/auto-topup", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(config),
+  });
+}
+
+export async function updateSpendLimit(monthly_spend_limit: number | null): Promise<void> {
+  await request("/account/billing/spend-limit", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ monthly_spend_limit }),
+  });
+}
+
+export async function fetchTransactions(limit: number = 50, offset: number = 0): Promise<TransactionsListResponse> {
+  return request(`/account/billing/transactions?limit=${limit}&offset=${offset}`);
 }

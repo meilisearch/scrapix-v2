@@ -228,6 +228,40 @@ export interface MapResult {
 }
 
 // ============================================================================
+// Billing
+// ============================================================================
+
+export interface BillingInfo {
+  tier: string;
+  stripe_customer_id: string | null;
+  credits_balance: number;
+  auto_topup_enabled: boolean;
+  auto_topup_amount: number;
+  auto_topup_threshold: number;
+  monthly_spend_limit: number | null;
+}
+
+export interface Transaction {
+  id: string;
+  type: string;
+  amount: number;
+  balance_after: number;
+  description: string | null;
+  created_at: string;
+}
+
+export interface TransactionsListResponse {
+  transactions: Transaction[];
+  total: number;
+}
+
+export interface TopupResponse {
+  credits_balance: number;
+  transaction_id: string;
+  message: string;
+}
+
+// ============================================================================
 // Analytics (Tinybird-style responses)
 // ============================================================================
 

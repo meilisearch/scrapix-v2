@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { getMe } from "./auth";
-import { fetchApiKeys, fetchServiceHealth } from "./api";
+import { fetchApiKeys, fetchServiceHealth, fetchBilling, fetchTransactions } from "./api";
 
 export function useMe() {
   return useQuery({
@@ -23,5 +23,19 @@ export function useServiceHealth() {
     queryKey: ["service-health"],
     queryFn: fetchServiceHealth,
     refetchInterval: 10_000,
+  });
+}
+
+export function useBilling() {
+  return useQuery({
+    queryKey: ["billing"],
+    queryFn: fetchBilling,
+  });
+}
+
+export function useTransactions(limit: number = 50, offset: number = 0) {
+  return useQuery({
+    queryKey: ["transactions", limit, offset],
+    queryFn: () => fetchTransactions(limit, offset),
   });
 }

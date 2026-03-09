@@ -29,6 +29,11 @@ CREATE TABLE IF NOT EXISTS accounts (
     tier TEXT NOT NULL DEFAULT 'free' CHECK (tier IN ('free', 'starter', 'pro', 'enterprise')),
     active BOOLEAN NOT NULL DEFAULT true,
     stripe_customer_id TEXT,
+    credits_balance BIGINT NOT NULL DEFAULT 100,
+    auto_topup_enabled BOOLEAN NOT NULL DEFAULT false,
+    auto_topup_amount BIGINT NOT NULL DEFAULT 5000,
+    auto_topup_threshold BIGINT NOT NULL DEFAULT 500,
+    monthly_spend_limit BIGINT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -212,5 +217,49 @@ DO $$ BEGIN
         CREATE TRIGGER trg_meilisearch_engines_updated_at
             BEFORE UPDATE ON meilisearch_engines
             FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+    END IF;
+END $$;
+
+-- ============================================================================
+-- Transactions (credit operations log)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS transactions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id UUID NOT NULL REFERENCES accounts (id) ON DELETE CASCADE,
+    type TEXT NOT NULL CHECK (type IN (
+        'initial_deposit', 'manual_topup', 'auto_topup',
+        'usage_deduction', 'refund', 'adjustment'
+    )),
+    amount BIGINT NOT NULL,
+    balance_after BIGINT NOT NULL,
+    description TEXT,
+    metadata JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_transactions_account_id ON transactions (account_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_created_at ON transactions (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_transactions_account_created ON transactions (account_id, created_at DESC);
+
+-- ============================================================================
+-- Idempotent migrations for existing databases
+-- ============================================================================
+
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'accounts' AND column_name = 'credits_balance') THEN
+        ALTER TABLE accounts ADD COLUMN credits_balance BIGINT NOT NULL DEFAULT 100;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'accounts' AND column_name = 'auto_topup_enabled') THEN
+        ALTER TABLE accounts ADD COLUMN auto_topup_enabled BOOLEAN NOT NULL DEFAULT false;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'accounts' AND column_name = 'auto_topup_amount') THEN
+        ALTER TABLE accounts ADD COLUMN auto_topup_amount BIGINT NOT NULL DEFAULT 5000;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'accounts' AND column_name = 'auto_topup_threshold') THEN
+        ALTER TABLE accounts ADD COLUMN auto_topup_threshold BIGINT NOT NULL DEFAULT 500;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'accounts' AND column_name = 'monthly_spend_limit') THEN
+        ALTER TABLE accounts ADD COLUMN monthly_spend_limit BIGINT;
     END IF;
 END $$;

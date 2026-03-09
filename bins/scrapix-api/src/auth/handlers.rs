@@ -47,6 +47,7 @@ struct AccountResponse {
     tier: String,
     active: bool,
     role: String,
+    credits_balance: i64,
 }
 
 #[derive(Deserialize)]
@@ -86,11 +87,57 @@ struct CreatedApiKeyResponse {
 struct BillingResponse {
     tier: String,
     stripe_customer_id: Option<String>,
+    credits_balance: i64,
+    auto_topup_enabled: bool,
+    auto_topup_amount: i64,
+    auto_topup_threshold: i64,
+    monthly_spend_limit: Option<i64>,
 }
 
 #[derive(Deserialize)]
 pub struct UpdateBillingRequest {
     tier: String,
+}
+
+#[derive(Deserialize)]
+pub struct TopupRequest {
+    amount: i64,
+}
+
+#[derive(Deserialize)]
+pub struct AutoTopupRequest {
+    enabled: bool,
+    amount: Option<i64>,
+    threshold: Option<i64>,
+}
+
+#[derive(Deserialize)]
+pub struct SpendLimitRequest {
+    monthly_spend_limit: Option<i64>,
+}
+
+#[derive(Serialize)]
+struct TransactionResponse {
+    id: String,
+    #[serde(rename = "type")]
+    tx_type: String,
+    amount: i64,
+    balance_after: i64,
+    description: Option<String>,
+    created_at: String,
+}
+
+#[derive(Serialize)]
+struct TransactionsListResponse {
+    transactions: Vec<TransactionResponse>,
+    total: i64,
+}
+
+#[derive(Serialize)]
+struct TopupResponse {
+    credits_balance: i64,
+    transaction_id: String,
+    message: String,
 }
 
 #[derive(Serialize)]
@@ -246,6 +293,22 @@ async fn signup(
             )
         })?;
 
+    // Log the initial credit deposit transaction
+    sqlx::query(
+        "INSERT INTO transactions (account_id, type, amount, balance_after, description) \
+         VALUES ($1, 'initial_deposit', 100, 100, 'Welcome credit deposit')",
+    )
+    .bind(account_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|_| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to log initial deposit",
+            "internal_error",
+        )
+    })?;
+
     tx.commit().await.map_err(|_| {
         err(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -278,6 +341,7 @@ async fn signup(
                 tier: "free".to_string(),
                 active: true,
                 role: "owner".to_string(),
+                credits_balance: 100,
             }),
         }),
     ))
@@ -323,7 +387,7 @@ async fn login(
 
     // Get account
     let account = sqlx::query(
-        "SELECT a.id, a.name, a.tier, a.active, m.role \
+        "SELECT a.id, a.name, a.tier, a.active, a.credits_balance, m.role \
          FROM account_members m JOIN accounts a ON a.id = m.account_id \
          WHERE m.user_id = $1 LIMIT 1",
     )
@@ -338,6 +402,7 @@ async fn login(
         tier: r.get("tier"),
         active: r.get("active"),
         role: r.get("role"),
+        credits_balance: r.get("credits_balance"),
     });
 
     let token = jwt::encode_jwt(&user_id, &email, &state.jwt_secret).map_err(|_| {
@@ -395,7 +460,7 @@ async fn get_me(
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "User not found", "not_found"))?;
 
     let account = sqlx::query(
-        "SELECT a.id, a.name, a.tier, a.active, m.role \
+        "SELECT a.id, a.name, a.tier, a.active, a.credits_balance, m.role \
          FROM account_members m JOIN accounts a ON a.id = m.account_id \
          WHERE m.user_id = $1 LIMIT 1",
     )
@@ -410,6 +475,7 @@ async fn get_me(
         tier: r.get("tier"),
         active: r.get("active"),
         role: r.get("role"),
+        credits_balance: r.get("credits_balance"),
     });
 
     Ok(Json(UserResponse {
@@ -449,7 +515,7 @@ async fn get_account(
     Extension(user): Extension<AuthenticatedUser>,
 ) -> Result<Json<AccountResponse>, ApiError> {
     let row = sqlx::query(
-        "SELECT a.id, a.name, a.tier, a.active, m.role \
+        "SELECT a.id, a.name, a.tier, a.active, a.credits_balance, m.role \
          FROM account_members m JOIN accounts a ON a.id = m.account_id \
          WHERE m.user_id = $1 LIMIT 1",
     )
@@ -471,6 +537,7 @@ async fn get_account(
         tier: row.get("tier"),
         active: row.get("active"),
         role: row.get("role"),
+        credits_balance: row.get("credits_balance"),
     }))
 }
 
@@ -653,22 +720,31 @@ async fn get_billing(
         .await
         .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
 
-    let row = sqlx::query("SELECT tier, stripe_customer_id FROM accounts WHERE id = $1")
-        .bind(account_id)
-        .fetch_optional(&state.pool)
-        .await
-        .map_err(|_| {
-            err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Database error",
-                "internal_error",
-            )
-        })?
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
+    let row = sqlx::query(
+        "SELECT tier, stripe_customer_id, credits_balance, \
+         auto_topup_enabled, auto_topup_amount, auto_topup_threshold, monthly_spend_limit \
+         FROM accounts WHERE id = $1",
+    )
+    .bind(account_id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|_| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Database error",
+            "internal_error",
+        )
+    })?
+    .ok_or_else(|| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
 
     Ok(Json(BillingResponse {
         tier: row.get("tier"),
         stripe_customer_id: row.get("stripe_customer_id"),
+        credits_balance: row.get("credits_balance"),
+        auto_topup_enabled: row.get("auto_topup_enabled"),
+        auto_topup_amount: row.get("auto_topup_amount"),
+        auto_topup_threshold: row.get("auto_topup_threshold"),
+        monthly_spend_limit: row.get("monthly_spend_limit"),
     }))
 }
 
@@ -709,6 +785,263 @@ async fn update_billing(
 }
 
 // ============================================================================
+// Billing: top-up, auto top-up, spend limit, transactions
+// ============================================================================
+
+async fn topup_credits(
+    State(state): State<Arc<AuthState>>,
+    Extension(user): Extension<AuthenticatedUser>,
+    Json(req): Json<TopupRequest>,
+) -> Result<Json<TopupResponse>, ApiError> {
+    if req.amount <= 0 {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "Amount must be positive",
+            "validation_error",
+        ));
+    }
+
+    let account_id = get_user_account_id(&state.pool, user.user_id)
+        .await
+        .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
+
+    // Check monthly spend limit
+    check_spend_limit(&state.pool, account_id, req.amount).await?;
+
+    let mut tx = state.pool.begin().await.map_err(|_| {
+        err(StatusCode::INTERNAL_SERVER_ERROR, "Database error", "internal_error")
+    })?;
+
+    let new_balance: i64 = sqlx::query_scalar(
+        "UPDATE accounts SET credits_balance = credits_balance + $1 WHERE id = $2 RETURNING credits_balance",
+    )
+    .bind(req.amount)
+    .bind(account_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|_| {
+        err(StatusCode::INTERNAL_SERVER_ERROR, "Failed to update balance", "internal_error")
+    })?;
+
+    let tx_id: uuid::Uuid = sqlx::query_scalar(
+        "INSERT INTO transactions (account_id, type, amount, balance_after, description) \
+         VALUES ($1, 'manual_topup', $2, $3, 'Manual credit top-up') RETURNING id",
+    )
+    .bind(account_id)
+    .bind(req.amount)
+    .bind(new_balance)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|_| {
+        err(StatusCode::INTERNAL_SERVER_ERROR, "Failed to log transaction", "internal_error")
+    })?;
+
+    tx.commit().await.map_err(|_| {
+        err(StatusCode::INTERNAL_SERVER_ERROR, "Database error", "internal_error")
+    })?;
+
+    info!(account_id = %account_id, amount = req.amount, new_balance, "Manual credit top-up");
+
+    Ok(Json(TopupResponse {
+        credits_balance: new_balance,
+        transaction_id: tx_id.to_string(),
+        message: format!("Added {} credits", req.amount),
+    }))
+}
+
+async fn update_auto_topup(
+    State(state): State<Arc<AuthState>>,
+    Extension(user): Extension<AuthenticatedUser>,
+    Json(req): Json<AutoTopupRequest>,
+) -> Result<Json<MessageResponse>, ApiError> {
+    let account_id = get_user_account_id(&state.pool, user.user_id)
+        .await
+        .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
+
+    if req.enabled {
+        let amount = req.amount.unwrap_or(5000);
+        let threshold = req.threshold.unwrap_or(500);
+        if amount <= 0 || threshold < 0 {
+            return Err(err(
+                StatusCode::BAD_REQUEST,
+                "Amount must be positive and threshold non-negative",
+                "validation_error",
+            ));
+        }
+        sqlx::query(
+            "UPDATE accounts SET auto_topup_enabled = true, auto_topup_amount = $1, auto_topup_threshold = $2 WHERE id = $3",
+        )
+        .bind(amount)
+        .bind(threshold)
+        .bind(account_id)
+        .execute(&state.pool)
+        .await
+        .map_err(|_| {
+            err(StatusCode::INTERNAL_SERVER_ERROR, "Failed to update", "internal_error")
+        })?;
+    } else {
+        sqlx::query("UPDATE accounts SET auto_topup_enabled = false WHERE id = $1")
+            .bind(account_id)
+            .execute(&state.pool)
+            .await
+            .map_err(|_| {
+                err(StatusCode::INTERNAL_SERVER_ERROR, "Failed to update", "internal_error")
+            })?;
+    }
+
+    Ok(Json(MessageResponse {
+        message: if req.enabled { "Auto top-up enabled".to_string() } else { "Auto top-up disabled".to_string() },
+    }))
+}
+
+async fn update_spend_limit(
+    State(state): State<Arc<AuthState>>,
+    Extension(user): Extension<AuthenticatedUser>,
+    Json(req): Json<SpendLimitRequest>,
+) -> Result<Json<MessageResponse>, ApiError> {
+    if let Some(limit) = req.monthly_spend_limit {
+        if limit <= 0 {
+            return Err(err(
+                StatusCode::BAD_REQUEST,
+                "Spend limit must be positive",
+                "validation_error",
+            ));
+        }
+    }
+
+    let account_id = get_user_account_id(&state.pool, user.user_id)
+        .await
+        .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
+
+    sqlx::query("UPDATE accounts SET monthly_spend_limit = $1 WHERE id = $2")
+        .bind(req.monthly_spend_limit)
+        .bind(account_id)
+        .execute(&state.pool)
+        .await
+        .map_err(|_| {
+            err(StatusCode::INTERNAL_SERVER_ERROR, "Failed to update", "internal_error")
+        })?;
+
+    Ok(Json(MessageResponse {
+        message: match req.monthly_spend_limit {
+            Some(limit) => format!("Monthly spend limit set to {}", limit),
+            None => "Monthly spend limit removed".to_string(),
+        },
+    }))
+}
+
+async fn list_transactions(
+    State(state): State<Arc<AuthState>>,
+    Extension(user): Extension<AuthenticatedUser>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<TransactionsListResponse>, ApiError> {
+    let account_id = get_user_account_id(&state.pool, user.user_id)
+        .await
+        .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
+
+    let limit: i64 = params
+        .get("limit")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(50)
+        .min(200);
+    let offset: i64 = params
+        .get("offset")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+
+    let total: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM transactions WHERE account_id = $1",
+    )
+    .bind(account_id)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|_| {
+        err(StatusCode::INTERNAL_SERVER_ERROR, "Database error", "internal_error")
+    })?;
+
+    let rows = sqlx::query(
+        "SELECT id, type, amount, balance_after, description, created_at \
+         FROM transactions WHERE account_id = $1 \
+         ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+    )
+    .bind(account_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|_| {
+        err(StatusCode::INTERNAL_SERVER_ERROR, "Database error", "internal_error")
+    })?;
+
+    let transactions: Vec<TransactionResponse> = rows
+        .iter()
+        .map(|r| TransactionResponse {
+            id: r.get::<uuid::Uuid, _>("id").to_string(),
+            tx_type: r.get("type"),
+            amount: r.get("amount"),
+            balance_after: r.get("balance_after"),
+            description: r.get("description"),
+            created_at: r
+                .get::<chrono::DateTime<chrono::Utc>, _>("created_at")
+                .to_rfc3339(),
+        })
+        .collect();
+
+    Ok(Json(TransactionsListResponse {
+        transactions,
+        total,
+    }))
+}
+
+/// Check if a top-up would exceed the monthly spend limit
+async fn check_spend_limit(
+    pool: &sqlx::PgPool,
+    account_id: uuid::Uuid,
+    amount: i64,
+) -> Result<(), ApiError> {
+    let row = sqlx::query(
+        "SELECT monthly_spend_limit FROM accounts WHERE id = $1",
+    )
+    .bind(account_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| {
+        err(StatusCode::INTERNAL_SERVER_ERROR, "Database error", "internal_error")
+    })?
+    .ok_or_else(|| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
+
+    let limit: Option<i64> = row.get("monthly_spend_limit");
+    if let Some(limit) = limit {
+        // Sum all top-ups this calendar month
+        let spent: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(SUM(amount), 0) FROM transactions \
+             WHERE account_id = $1 \
+             AND type IN ('manual_topup', 'auto_topup') \
+             AND created_at >= date_trunc('month', now())",
+        )
+        .bind(account_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|_| {
+            err(StatusCode::INTERNAL_SERVER_ERROR, "Database error", "internal_error")
+        })?;
+
+        if spent + amount > limit {
+            return Err(err(
+                StatusCode::FORBIDDEN,
+                &format!(
+                    "Monthly spend limit reached ({} of {} used this month)",
+                    spent, limit
+                ),
+                "spend_limit_exceeded",
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+// ============================================================================
 // Router constructors
 // ============================================================================
 
@@ -729,6 +1062,10 @@ pub fn session_routes(state: Arc<AuthState>) -> Router {
         .route("/account/api-keys", get(list_api_keys).post(create_api_key))
         .route("/account/api-keys/{id}", patch(revoke_api_key))
         .route("/account/billing", get(get_billing).patch(update_billing))
+        .route("/account/billing/topup", post(topup_credits))
+        .route("/account/billing/auto-topup", patch(update_auto_topup))
+        .route("/account/billing/spend-limit", patch(update_spend_limit))
+        .route("/account/billing/transactions", get(list_transactions))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             super::validate_session,
