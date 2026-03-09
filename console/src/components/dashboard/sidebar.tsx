@@ -21,6 +21,7 @@ import {
   Moon,
   Sun,
   Zap,
+  Coins,
 } from "lucide-react";
 import { FeedbackDialog } from "@/components/dashboard/feedback-dialog";
 import { logout } from "@/lib/auth";
@@ -162,6 +163,19 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       </nav>
       <Separator className="glitch-separator" />
       <div className="p-3 space-y-1">
+        <Link
+          href="/billing"
+          onClick={onNavigate}
+          className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors hover:bg-muted"
+        >
+          <Coins className="h-4 w-4 text-primary" />
+          <span className="font-medium">
+            {user?.account?.credits_balance != null
+              ? Number(user.account.credits_balance).toLocaleString()
+              : "0"}
+          </span>
+          <span className="text-muted-foreground">credits</span>
+        </Link>
         <FeedbackDialog onNavigate={onNavigate} />
         {mounted && (
           <Button

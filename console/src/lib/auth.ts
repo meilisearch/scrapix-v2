@@ -10,6 +10,7 @@ export interface AuthUser {
     tier: string;
     active: boolean;
     role: string;
+    credits_balance: number;
   } | null;
 }
 

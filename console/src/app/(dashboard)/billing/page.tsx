@@ -47,8 +47,8 @@ export default function BillingPage() {
         <CardContent>
           <div className="flex items-baseline gap-2">
             <span className="text-4xl font-bold">
-              {(user?.account as Record<string, unknown>)?.credits_balance != null
-                ? Number((user?.account as Record<string, unknown>).credits_balance).toLocaleString()
+              {user?.account?.credits_balance != null
+                ? Number(user.account.credits_balance).toLocaleString()
                 : "0"}
             </span>
             <span className="text-muted-foreground">credits remaining</span>
