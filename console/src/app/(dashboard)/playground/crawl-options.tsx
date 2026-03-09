@@ -542,9 +542,9 @@ export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
       </TabsList>
 
       {/* ── General (merged General + Features + Patterns) ── */}
-      <TabsContent value="general" className="flex-1 pt-2">
+      <TabsContent value="general" className="flex-1 pt-3">
         <ScrollArea className="h-full">
-          <div className="space-y-4 pr-3">
+          <div className="space-y-5 pr-3">
             <div className="space-y-1.5">
               <Label className="text-xs text-muted-foreground uppercase tracking-wide">
                 Crawler Type
@@ -613,7 +613,7 @@ export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
             />
 
             {/* ── Patterns ── */}
-            <div className="space-y-1 pt-2">
+            <div className="space-y-1 pt-3 border-t">
               <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
                 URL Patterns
               </p>
@@ -652,7 +652,7 @@ export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
             />
 
             {/* ── Features ── */}
-            <div className="space-y-1 pt-2">
+            <div className="space-y-1 pt-3 border-t">
               <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
                 Features
               </p>
@@ -761,13 +761,12 @@ export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
               checked={state.feat_ai_summary}
               onCheckedChange={(v) => set("feat_ai_summary", v)}
             />
-
           </div>
         </ScrollArea>
       </TabsContent>
 
       {/* ── Advanced ── */}
-      <TabsContent value="advanced" className="flex-1 pt-2">
+      <TabsContent value="advanced" className="flex-1 pt-3">
         <ScrollArea className="h-full">
           <div className="space-y-5 pr-3">
             {/* Crawl Limits */}
@@ -796,7 +795,7 @@ export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
             </div>
 
             {/* Concurrency */}
-            <div className="space-y-1 pt-2">
+            <div className="space-y-1 pt-3 border-t">
               <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
                 Concurrency
               </p>
@@ -828,7 +827,7 @@ export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
             />
 
             {/* Rate Limiting */}
-            <div className="space-y-1 pt-2">
+            <div className="space-y-1 pt-3 border-t">
               <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
                 Rate Limiting
               </p>
@@ -871,7 +870,7 @@ export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
             </div>
 
             {/* HTTP */}
-            <div className="space-y-1 pt-2">
+            <div className="space-y-1 pt-3 border-t">
               <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
                 HTTP
               </p>
@@ -895,7 +894,7 @@ export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
             />
 
             {/* Proxy */}
-            <div className="space-y-1 pt-2">
+            <div className="space-y-1 pt-3 border-t">
               <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
                 Proxy
               </p>
@@ -950,7 +949,7 @@ export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
             )}
 
             {/* Meilisearch */}
-            <div className="space-y-1 pt-2">
+            <div className="space-y-1 pt-3 border-t">
               <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
                 Meilisearch
               </p>

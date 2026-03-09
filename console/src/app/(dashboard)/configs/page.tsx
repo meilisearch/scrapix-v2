@@ -429,7 +429,7 @@ function CreateConfigDialog({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="sm:max-w-lg w-full flex flex-col">
+      <SheetContent side="right" className="sm:max-w-xl w-full flex flex-col">
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2">
             <Settings2 className="h-5 w-5" />
@@ -441,9 +441,9 @@ function CreateConfigDialog({
           </SheetDescription>
         </SheetHeader>
 
-        <ScrollArea className="flex-1 -mx-4 px-4">
-          <div className="space-y-4 pb-2">
-            <div className="space-y-1.5">
+        <ScrollArea className="flex-1 -mx-6 px-6">
+          <div className="space-y-6 pb-4">
+            <div className="space-y-2">
               <Label htmlFor="config-name">Name</Label>
               <Input
                 id="config-name"
@@ -452,7 +452,7 @@ function CreateConfigDialog({
                 onChange={(e) => setName(e.target.value)}
               />
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <Label htmlFor="config-desc">Description</Label>
               <Input
                 id="config-desc"
@@ -462,7 +462,7 @@ function CreateConfigDialog({
               />
             </div>
 
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <Label htmlFor="start-urls">Start URLs</Label>
               <Textarea
                 id="start-urls"
@@ -478,7 +478,7 @@ function CreateConfigDialog({
             </div>
 
             {/* Cron Schedule */}
-            <div className="space-y-3 rounded-lg border p-3">
+            <div className="space-y-3 rounded-lg border p-4">
               <div className="flex items-center justify-between">
                 <div>
                   <Label htmlFor="cron-toggle" className="text-sm font-medium">
@@ -503,7 +503,7 @@ function CreateConfigDialog({
             </div>
 
             {/* Crawl Options */}
-            <div className="rounded-lg border p-3">
+            <div className="rounded-lg border p-4">
               <CrawlOptions state={crawlState} onChange={setCrawlState} />
             </div>
           </div>
