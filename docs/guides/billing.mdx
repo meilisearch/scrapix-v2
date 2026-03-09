@@ -99,6 +99,83 @@ curl -X PATCH http://localhost:8080/account/billing \
 
 Valid tier values: `free`, `starter`, `pro`, `enterprise`.
 
+## Credit Consumption
+
+Every API action consumes credits from your account balance. The cost depends on the endpoint and the features you enable.
+
+### `/scrape`
+
+| Component | Credits |
+|-----------|---------|
+| Base (per request) | 1 minimum |
+| Each feature format: `markdown`, `links`, `metadata`, `screenshot`, `schema`, `blocks` | +1 each |
+| AI summary | +5 |
+| AI extraction | +5 |
+
+Base formats (`html`, `rawHtml`, `content`) are free — they don't add to the cost.
+
+**Examples:**
+
+| Request | Credits |
+|---------|---------|
+| `formats: ["html"]` | 1 |
+| `formats: ["markdown", "metadata"]` | 2 |
+| `formats: ["markdown", "metadata", "links", "schema"]` | 4 |
+| `formats: ["markdown"]` + AI summary | 6 |
+| `formats: ["markdown", "metadata"]` + AI summary + AI extraction | 12 |
+
+### `/map`
+
+Flat **2 credits** per call, regardless of the number of URLs discovered.
+
+### `/crawl`
+
+Credits are deducted at job completion based on the number of pages crawled and the job configuration.
+
+**Per-page base cost:**
+
+| Crawler type | Base cost per page |
+|-------------|-------------------|
+| `http` (default) | 1 |
+| `browser` (JS rendering) | 2 |
+
+**Per-page feature cost (additive):**
+
+| Feature | Additional cost per page |
+|---------|------------------------|
+| `metadata` | +1 |
+| `markdown` | +1 |
+| `block_split` | +1 |
+| `schema` | +1 |
+| `custom_selectors` | +1 |
+| `ai_extraction` | +5 |
+| `ai_summary` | +5 |
+
+**Formula:** `total = pages_crawled × (base + feature_costs)`
+
+**Examples:**
+
+| Configuration | Cost per page | 100 pages |
+|--------------|--------------|-----------|
+| HTTP, no features | 1 | 100 |
+| HTTP + metadata + markdown | 3 | 300 |
+| Browser + metadata + markdown | 4 | 400 |
+| HTTP + AI summary | 6 | 600 |
+| Browser + all features + AI summary + AI extraction | 17 | 1,700 |
+
+### Insufficient Credits
+
+If your account doesn't have enough credits, requests return a `402` error:
+
+```json
+{
+  "error": "Insufficient credits: 5 available, 10 required",
+  "code": "insufficient_credits"
+}
+```
+
+For `/scrape` and `/map`, credits are checked before the operation starts. For `/crawl`, a minimum of 1 credit is required to start; the full deduction happens at job completion.
+
 ## Usage Tracking
 
 When ClickHouse is configured, usage metrics are tracked per account:
