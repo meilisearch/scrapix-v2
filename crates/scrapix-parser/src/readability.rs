@@ -55,6 +55,7 @@ impl Default for ReadabilityConfig {
             min_paragraph_length: 25,
             min_text_density: 0.3,
             remove_tags: vec![
+                "head".to_string(),
                 "script".to_string(),
                 "style".to_string(),
                 "noscript".to_string(),
@@ -308,6 +309,42 @@ fn extract_text_recursive(
     }
 }
 
+/// Recursively collect raw text from an element, skipping unwanted tags and negative classes.
+/// Unlike `extract_text_recursive`, this doesn't structure the output — it just gathers
+/// all visible text for the last-resort fallback.
+fn collect_filtered_text(
+    element: &ElementRef,
+    skip_tags: &[&str],
+    config: &ReadabilityConfig,
+    parts: &mut Vec<String>,
+) {
+    let tag_name = element.value().name();
+
+    if skip_tags.contains(&tag_name) {
+        return;
+    }
+
+    if let Some(class) = element.value().attr("class") {
+        let class_lower = class.to_lowercase();
+        for neg in &config.negative_classes {
+            if class_lower.contains(neg) {
+                return;
+            }
+        }
+    }
+
+    for child in element.children() {
+        if let Some(child_element) = ElementRef::wrap(child) {
+            collect_filtered_text(&child_element, skip_tags, config, parts);
+        } else if let Some(text) = child.value().as_text() {
+            let t = text.trim();
+            if !t.is_empty() {
+                parts.push(t.to_string());
+            }
+        }
+    }
+}
+
 /// Extract content from body as fallback
 fn extract_body_content(document: &Html, config: &ReadabilityConfig) -> String {
     let mut paragraphs = Vec::new();
@@ -326,13 +363,75 @@ fn extract_body_content(document: &Html, config: &ReadabilityConfig) -> String {
         );
     }
 
-    // If we got nothing, just extract all text
+    // If structured extraction found nothing, do a raw text walk on <body>
+    // but still skip unwanted tags (script, footer, nav, etc.)
     if paragraphs.is_empty() {
-        let all_text = document.root_element().text().collect::<Vec<_>>().join(" ");
-        return all_text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let body = match document.select(body_selector()).next() {
+            Some(b) => b,
+            None => return String::new(),
+        };
+        let skip_tags: Vec<&str> = config.remove_tags.iter().map(|s| s.as_str()).collect();
+        let mut raw_parts = Vec::new();
+        collect_filtered_text(&body, &skip_tags, config, &mut raw_parts);
+        let cleaned = raw_parts.join(" ");
+        let cleaned = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+        if cleaned.is_empty() || is_garbage_content(&cleaned) {
+            return String::new();
+        }
+        return cleaned;
     }
 
-    paragraphs.join("\n\n")
+    let result = paragraphs.join("\n\n");
+    // Final quality check: if the extracted content looks like serialized data, discard it
+    if is_garbage_content(&result) {
+        return String::new();
+    }
+    result
+}
+
+/// Detect if extracted content is serialized framework data (not human-readable content).
+///
+/// This catches Next.js RSC payloads (`self.__next_f`), webpack chunks, and similar
+/// JavaScript framework serialization artifacts that occasionally slip through
+/// as text content.
+fn is_garbage_content(text: &str) -> bool {
+    if text.is_empty() {
+        return false;
+    }
+
+    // Check for Next.js RSC payload patterns
+    let garbage_markers = [
+        "self.__next_f",
+        "__next_f.push",
+        "self.__next_data",
+        "$Sreact.",
+        "\"$undefined\"",
+        "static/chunks/",
+    ];
+
+    let marker_count = garbage_markers
+        .iter()
+        .filter(|marker| text.contains(*marker))
+        .count();
+
+    // If 2+ markers are found, it's almost certainly RSC garbage
+    if marker_count >= 2 {
+        return true;
+    }
+
+    // Heuristic: if the text has a very high ratio of escaped characters and JSON-like
+    // syntax, it's likely serialized data rather than human-readable content.
+    // Count backslash-escaped sequences and JSON structural characters.
+    let total_chars = text.len();
+    if total_chars > 500 {
+        let escape_count = text.matches("\\\"").count() + text.matches("\\\\").count();
+        let escape_ratio = (escape_count as f64) / (total_chars as f64);
+        if escape_ratio > 0.02 {
+            return true;
+        }
+    }
+
+    false
 }
 
 #[cfg(test)]
@@ -398,6 +497,43 @@ mod tests {
         assert!(
             content.contains("fn main()"),
             "Expected 'fn main()' in content: {}",
+            content
+        );
+    }
+
+    #[test]
+    fn test_garbage_detection_nextjs_rsc() {
+        assert!(is_garbage_content(
+            r#"self.__next_f.push([1,"0:{\"P\":null}"])"#
+        ));
+        assert!(is_garbage_content(
+            r#"(self.__next_f=self.__next_f||[]).push([0]) self.__next_f.push([1,"$Sreact.fragment"])"#
+        ));
+    }
+
+    #[test]
+    fn test_garbage_detection_normal_content() {
+        assert!(!is_garbage_content(
+            "This is a normal paragraph about Meilisearch search engine."
+        ));
+        assert!(!is_garbage_content(""));
+    }
+
+    #[test]
+    fn test_nextjs_rsc_page_returns_empty() {
+        let html = r#"
+            <html>
+            <body>
+                <script>(self.__next_f=self.__next_f||[]).push([0])</script>
+                <script>self.__next_f.push([1,"$Sreact.fragment"])</script>
+            </body>
+            </html>
+        "#;
+        let content = extract_content(html);
+        // Script tags are removed, so if there's no other content, result should be empty
+        assert!(
+            content.is_empty() || !content.contains("__next_f"),
+            "RSC payload should not appear in content: {}",
             content
         );
     }
