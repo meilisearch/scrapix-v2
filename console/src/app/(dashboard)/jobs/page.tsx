@@ -6,8 +6,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Card,
   CardContent,
-  CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
@@ -42,7 +40,6 @@ import {
   Trash2,
   ExternalLink,
   AlertCircle,
-  RefreshCw,
   Search,
   Plus,
 } from "lucide-react";
@@ -106,18 +103,12 @@ export default function JobsPage() {
   const {
     data: jobs = [],
     isLoading,
-    isFetching,
     error,
-    dataUpdatedAt,
   } = useQuery({
     queryKey: ["jobs"],
     queryFn: fetchJobs,
     refetchInterval: 5_000,
   });
-
-  const handleManualRefresh = () => {
-    queryClient.invalidateQueries({ queryKey: ["jobs"] });
-  };
 
   const countByStatus = useMemo(() => {
     const counts: Record<string, number> = {
@@ -188,12 +179,28 @@ export default function JobsPage() {
             View and manage your crawl jobs
           </p>
         </div>
-        <Button asChild>
-          <Link href="/playground">
-            <Plus className="h-4 w-4 mr-2" />
-            New Crawl
-          </Link>
-        </Button>
+        <div className="flex items-center gap-3">
+          {!isLoading && jobs.length > 0 && (
+            <div className="relative">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search jobs..."
+                value={search}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  setPage(0);
+                }}
+                className="pl-9 h-9 w-[200px]"
+              />
+            </div>
+          )}
+          <Button asChild>
+            <Link href="/playground">
+              <Plus className="h-4 w-4 mr-2" />
+              New Crawl
+            </Link>
+          </Button>
+        </div>
       </div>
 
       {error && (
@@ -207,77 +214,37 @@ export default function JobsPage() {
       )}
 
       <Card>
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <CardTitle>Crawl Jobs</CardTitle>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              {dataUpdatedAt > 0 && (
-                <span>
-                  Updated{" "}
-                  {formatDistanceToNow(new Date(dataUpdatedAt), {
-                    addSuffix: true,
-                  })}
-                </span>
-              )}
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7"
-                onClick={handleManualRefresh}
-                disabled={isFetching}
-              >
-                <RefreshCw
-                  className={cn("h-3.5 w-3.5", isFetching && "animate-spin")}
-                />
-              </Button>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="pt-6 space-y-4">
           {!isLoading && jobs.length > 0 && (
-            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-              <Tabs
-                value={statusFilter}
-                onValueChange={(v) => {
-                  setStatusFilter(v as StatusTab);
-                  setPage(0);
-                }}
-              >
-                <TabsList>
-                  {STATUS_TABS.map((tab) => {
-                    const count = countByStatus[tab] ?? 0;
-                    if (tab !== "all" && count === 0) return null;
-                    return (
-                      <TabsTrigger
-                        key={tab}
-                        value={tab}
-                        className="capitalize gap-1.5"
+            <Tabs
+              value={statusFilter}
+              onValueChange={(v) => {
+                setStatusFilter(v as StatusTab);
+                setPage(0);
+              }}
+            >
+              <TabsList>
+                {STATUS_TABS.map((tab) => {
+                  const count = countByStatus[tab] ?? 0;
+                  if (tab !== "all" && count === 0) return null;
+                  return (
+                    <TabsTrigger
+                      key={tab}
+                      value={tab}
+                      className="capitalize gap-1.5"
+                    >
+                      {tab}
+                      <Badge
+                        variant="outline"
+                        className="ml-1 h-5 min-w-5 px-1 text-[10px]"
                       >
-                        {tab}
-                        <Badge
-                          variant="outline"
-                          className="ml-1 h-5 min-w-5 px-1 text-[10px]"
-                        >
-                          {count}
-                        </Badge>
-                      </TabsTrigger>
-                    );
-                  })}
-                </TabsList>
-              </Tabs>
-              <div className="relative sm:ml-auto">
-                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search jobs..."
-                  value={search}
-                  onChange={(e) => {
-                    setSearch(e.target.value);
-                    setPage(0);
-                  }}
-                  className="pl-9 h-9 w-full sm:w-[200px]"
-                />
-              </div>
-            </div>
+                        {count}
+                      </Badge>
+                    </TabsTrigger>
+                  );
+                })}
+              </TabsList>
+            </Tabs>
           )}
 
           {isLoading ? (
