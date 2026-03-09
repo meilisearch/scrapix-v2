@@ -6,8 +6,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Card,
   CardContent,
-  CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
@@ -26,6 +24,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,7 +43,6 @@ import {
   Trash2,
   ExternalLink,
   AlertCircle,
-  RefreshCw,
   Search,
   Plus,
   Play,
@@ -79,18 +84,12 @@ export default function ConfigsPage() {
   const {
     data: configs = [],
     isLoading,
-    isFetching,
     error,
-    dataUpdatedAt,
   } = useQuery({
     queryKey: ["configs"],
     queryFn: fetchConfigs,
     refetchInterval: 30_000,
   });
-
-  const handleManualRefresh = () => {
-    queryClient.invalidateQueries({ queryKey: ["configs"] });
-  };
 
   const filteredConfigs = useMemo(() => {
     if (!search.trim()) return configs;
@@ -146,10 +145,23 @@ export default function ConfigsPage() {
             Saved crawl configurations with optional cron scheduling
           </p>
         </div>
-        <Button onClick={() => setShowCreate(true)}>
-          <Plus className="h-4 w-4 mr-2" />
-          New Config
-        </Button>
+        <div className="flex items-center gap-3">
+          {!isLoading && configs.length > 0 && (
+            <div className="relative">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search configs..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pl-9 h-9 w-[200px]"
+              />
+            </div>
+          )}
+          <Button onClick={() => setShowCreate(true)}>
+            <Plus className="h-4 w-4 mr-2" />
+            New Config
+          </Button>
+        </div>
       </div>
 
       {error && (
@@ -163,47 +175,7 @@ export default function ConfigsPage() {
       )}
 
       <Card>
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <CardTitle>Saved Configs</CardTitle>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              {dataUpdatedAt > 0 && (
-                <span>
-                  Updated{" "}
-                  {formatDistanceToNow(new Date(dataUpdatedAt), {
-                    addSuffix: true,
-                  })}
-                </span>
-              )}
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7"
-                onClick={handleManualRefresh}
-                disabled={isFetching}
-              >
-                <RefreshCw
-                  className={cn(
-                    "h-3.5 w-3.5",
-                    isFetching && "animate-spin"
-                  )}
-                />
-              </Button>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {!isLoading && configs.length > 0 && (
-            <div className="relative sm:ml-auto sm:w-fit">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search configs..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-9 h-9 w-full sm:w-[200px]"
-              />
-            </div>
-          )}
+        <CardContent className="pt-6 space-y-4">
 
           {isLoading ? (
             <TableSkeleton />
@@ -456,40 +428,38 @@ function CreateConfigDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="right" className="sm:max-w-lg w-full flex flex-col">
+        <SheetHeader>
+          <SheetTitle className="flex items-center gap-2">
             <Settings2 className="h-5 w-5" />
             New Crawl Config
-          </DialogTitle>
-          <DialogDescription>
+          </SheetTitle>
+          <SheetDescription>
             Save a crawl configuration for reuse. Optionally add a cron schedule
             to trigger it automatically.
-          </DialogDescription>
-        </DialogHeader>
+          </SheetDescription>
+        </SheetHeader>
 
-        <ScrollArea className="flex-1 -mx-6 px-6">
+        <ScrollArea className="flex-1 -mx-4 px-4">
           <div className="space-y-4 pb-2">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="config-name">Name</Label>
-                <Input
-                  id="config-name"
-                  placeholder="My daily docs crawl"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="config-desc">Description</Label>
-                <Input
-                  id="config-desc"
-                  placeholder="Crawls the docs site nightly"
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                />
-              </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="config-name">Name</Label>
+              <Input
+                id="config-name"
+                placeholder="My daily docs crawl"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="config-desc">Description</Label>
+              <Input
+                id="config-desc"
+                placeholder="Crawls the docs site nightly"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+              />
             </div>
 
             <div className="space-y-1.5">
@@ -539,15 +509,15 @@ function CreateConfigDialog({
           </div>
         </ScrollArea>
 
-        <DialogFooter>
+        <SheetFooter className="flex-row justify-end gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
           <Button onClick={handleSubmit} disabled={submitting}>
             {submitting ? "Creating..." : "Create Config"}
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
   );
 }

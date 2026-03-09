@@ -5,8 +5,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Card,
   CardContent,
-  CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
@@ -25,6 +23,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -39,7 +45,6 @@ import {
 import {
   Trash2,
   AlertCircle,
-  RefreshCw,
   Search,
   Plus,
   Star,
@@ -80,18 +85,12 @@ export default function EnginesPage() {
   const {
     data: engines = [],
     isLoading,
-    isFetching,
     error,
-    dataUpdatedAt,
   } = useQuery({
     queryKey: ["engines"],
     queryFn: fetchEngines,
     refetchInterval: 30_000,
   });
-
-  const handleManualRefresh = () => {
-    queryClient.invalidateQueries({ queryKey: ["engines"] });
-  };
 
   const filteredEngines = useMemo(() => {
     if (!search.trim()) return engines;
@@ -135,10 +134,23 @@ export default function EnginesPage() {
             Saved Meilisearch instances for crawl indexing
           </p>
         </div>
-        <Button onClick={() => setShowCreate(true)}>
-          <Plus className="h-4 w-4 mr-2" />
-          Add Engine
-        </Button>
+        <div className="flex items-center gap-3">
+          {!isLoading && engines.length > 0 && (
+            <div className="relative">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search engines..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pl-9 h-9 w-[200px]"
+              />
+            </div>
+          )}
+          <Button onClick={() => setShowCreate(true)}>
+            <Plus className="h-4 w-4 mr-2" />
+            Add Engine
+          </Button>
+        </div>
       </div>
 
       {error && (
@@ -152,47 +164,7 @@ export default function EnginesPage() {
       )}
 
       <Card>
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <CardTitle>Meilisearch Engines</CardTitle>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              {dataUpdatedAt > 0 && (
-                <span>
-                  Updated{" "}
-                  {formatDistanceToNow(new Date(dataUpdatedAt), {
-                    addSuffix: true,
-                  })}
-                </span>
-              )}
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7"
-                onClick={handleManualRefresh}
-                disabled={isFetching}
-              >
-                <RefreshCw
-                  className={cn(
-                    "h-3.5 w-3.5",
-                    isFetching && "animate-spin"
-                  )}
-                />
-              </Button>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {!isLoading && engines.length > 0 && (
-            <div className="relative sm:ml-auto sm:w-fit">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search engines..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-9 h-9 w-full sm:w-[200px]"
-              />
-            </div>
-          )}
+        <CardContent className="pt-6 space-y-4">
 
           {isLoading ? (
             <TableSkeleton
@@ -532,21 +504,21 @@ function EngineFormDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="right" className="sm:max-w-md w-full flex flex-col">
+        <SheetHeader>
+          <SheetTitle className="flex items-center gap-2">
             <Database className="h-5 w-5" />
             {isEdit ? "Edit Engine" : "Add Engine"}
-          </DialogTitle>
-          <DialogDescription>
+          </SheetTitle>
+          <SheetDescription>
             {isEdit
               ? "Update the Meilisearch engine connection details."
               : "Save a Meilisearch instance for reuse in crawl configurations."}
-          </DialogDescription>
-        </DialogHeader>
+          </SheetDescription>
+        </SheetHeader>
 
-        <div className="space-y-4">
+        <div className="flex-1 space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="engine-name">Name</Label>
             <Input
@@ -598,7 +570,7 @@ function EngineFormDialog({
           )}
         </div>
 
-        <DialogFooter>
+        <SheetFooter className="flex-row justify-end gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
@@ -611,8 +583,8 @@ function EngineFormDialog({
                 ? "Save Changes"
                 : "Add Engine"}
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
   );
 }
