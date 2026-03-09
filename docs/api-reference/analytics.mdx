@@ -30,10 +30,15 @@ List all available analytics pipes.
     {"name": "top_domains", "description": "Top domains by request count"},
     {"name": "domain_stats", "description": "Stats for a specific domain"},
     {"name": "hourly_stats", "description": "Hourly crawl statistics"},
+    {"name": "daily_stats", "description": "Daily crawl statistics"},
     {"name": "error_distribution", "description": "Error breakdown by status code"},
     {"name": "job_stats", "description": "Statistics for a specific job"},
+    {"name": "job_timeline", "description": "Detailed event timeline for a job"},
+    {"name": "job_event_summary", "description": "Event counts grouped by type for a job"},
     {"name": "kpis", "description": "Key performance indicators"},
-    {"name": "ai_usage", "description": "AI enrichment usage statistics"}
+    {"name": "ai_usage", "description": "AI enrichment usage statistics"},
+    {"name": "account_usage", "description": "Account usage metrics for billing"},
+    {"name": "account_daily_usage", "description": "Daily usage breakdown per account"}
   ]
 }
 ```
@@ -167,6 +172,78 @@ curl "http://localhost:8080/analytics/v0/pipes/ai_usage.json?hours=24"
 ```
 
 **Data fields:** `account_id`, `total_requests`, `total_tokens`, `summary_requests`, `extraction_requests`
+
+### daily_stats.json
+
+Crawl activity broken down by day.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `hours` | integer | `720` | Time window (default 30 days) |
+
+```bash
+curl "http://localhost:8080/analytics/v0/pipes/daily_stats.json?hours=720"
+```
+
+**Data fields:** `date`, `requests`, `successes`, `failures`, `success_rate`, `avg_response_time_ms`, `total_bytes`
+
+### job_timeline.json
+
+Detailed event timeline for a specific crawl job.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `job_id` | string | Yes | Job ID |
+
+```bash
+curl "http://localhost:8080/analytics/v0/pipes/job_timeline.json?job_id=550e8400-..."
+```
+
+**Data fields:** `timestamp`, `event_type`, `url`, `status_code`, `duration_ms`, `content_length`
+
+### job_event_summary.json
+
+Aggregated event counts for a specific job, grouped by event type.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `job_id` | string | Yes | Job ID |
+
+```bash
+curl "http://localhost:8080/analytics/v0/pipes/job_event_summary.json?job_id=550e8400-..."
+```
+
+**Data fields:** `event_type`, `count`, `percentage`
+
+### account_usage.json
+
+Usage metrics for a specific account (for billing purposes).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `account_id` | string | Yes | Account ID |
+| `hours` | integer | No (720) | Time window |
+
+```bash
+curl "http://localhost:8080/analytics/v0/pipes/account_usage.json?account_id=acct_123&hours=720"
+```
+
+**Data fields:** `account_id`, `total_pages`, `total_bytes`, `js_rendered_pages`, `total_jobs`
+
+### account_daily_usage.json
+
+Daily usage breakdown for an account.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `account_id` | string | Yes | Account ID |
+| `hours` | integer | No (720) | Time window |
+
+```bash
+curl "http://localhost:8080/analytics/v0/pipes/account_daily_usage.json?account_id=acct_123&hours=720"
+```
+
+**Data fields:** `date`, `pages`, `bytes`, `js_rendered_pages`, `jobs`
 
 ---
 

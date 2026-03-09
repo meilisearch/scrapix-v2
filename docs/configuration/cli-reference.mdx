@@ -82,7 +82,20 @@ scrapix crawl -p config.json
 
 # Inline JSON
 scrapix crawl -c '{"start_urls":["https://example.com"],"index_uid":"test","meilisearch":{"url":"http://localhost:7700","api_key":"masterKey"}}'
+
+# Synchronous crawl (wait for completion)
+scrapix crawl -p config.json --sync
+
+# Follow events after job starts
+scrapix crawl -p config.json --follow
 ```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-p, --path` | — | Path to config JSON file |
+| `-c, --config` | — | Inline JSON config string |
+| `--sync` | `false` | Wait for crawl to complete before returning |
+| `--follow` | `false` | Stream SSE events after job starts |
 
 ### `scrapix local`
 
@@ -98,7 +111,16 @@ Check the status of a crawl job.
 
 ```bash
 scrapix status <job_id>
+
+# Watch mode — poll status continuously
+scrapix status <job_id> --watch --interval 2
 ```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--watch, -w` | `false` | Continuously poll and display status |
+| `--interval` | `5` | Polling interval in seconds (with `--watch`) |
+| `-o, --output` | `text` | Output format (`text` or `json`) |
 
 ### `scrapix jobs`
 
@@ -106,7 +128,15 @@ List recent crawl jobs.
 
 ```bash
 scrapix jobs
+scrapix jobs --limit 10 --offset 20
+scrapix jobs -o json
 ```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--limit` | `50` | Maximum number of jobs to return |
+| `--offset` | `0` | Number of jobs to skip |
+| `-o, --output` | `text` | Output format (`text` or `json`) |
 
 ### `scrapix cancel`
 

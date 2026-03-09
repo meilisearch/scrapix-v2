@@ -14,6 +14,7 @@ All Scrapix services are configured through environment variables. When running 
 | `HOST` | `0.0.0.0` | API server bind address |
 | `PORT` | `8080` | API server port |
 | `ENABLE_CORS` | `true` | Enable CORS headers |
+| `CORS_ORIGINS` | — | Comma-separated allowed CORS origins (optional, allows all when empty) |
 | `API_KEY` | — | API authentication key (optional) |
 | `JWT_SECRET` | `dev-jwt-secret-change-in-production` | JWT signing secret |
 | `DATABASE_URL` | — | PostgreSQL URL for auth (optional) |
@@ -156,6 +157,7 @@ Setting `CLICKHOUSE_URL` automatically enables the analytics API at `/analytics/
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `AI_PROVIDER` | `openai` | AI provider (`openai`, `anthropic`, etc.) |
 | `OPENAI_API_KEY` | — | OpenAI API key |
 | `ENABLE_SUMMARY` | `false` | Enable AI summarization |
 | `SUMMARY_MODEL` | `gpt-5-nano` | Model for summaries |

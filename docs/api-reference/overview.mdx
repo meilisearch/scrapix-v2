@@ -74,6 +74,7 @@ All responses return JSON. Successful responses return the data directly. Errors
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/scrape` | [Scrape a single URL](/api-reference/scrape) |
+| `POST` | `/map` | [Discover URLs on a website](/api-reference/map) |
 | `POST` | `/crawl` | [Create async crawl job](/api-reference/crawl#create-crawl) |
 | `POST` | `/crawl/sync` | [Create sync crawl job](/api-reference/crawl#create-sync-crawl) |
 | `GET` | `/jobs` | [List all jobs](/api-reference/jobs#list-jobs) |
@@ -102,6 +103,19 @@ All responses return JSON. Successful responses return the data directly. Errors
 | `POST` | `/account/api-keys` | [Create API key](/api-reference/authentication#create-api-key) |
 | `PATCH` | `/account/api-keys/{id}` | [Revoke API key](/api-reference/authentication#revoke-api-key) |
 | `GET` | `/account/billing` | [Get billing info](/api-reference/authentication#get-billing) |
+| `PATCH` | `/account/billing` | [Update billing info](/api-reference/authentication#update-billing) |
+
+### Engines (When DATABASE_URL Set)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/engines` | [Create engine](/api-reference/engines#post-engines) |
+| `GET` | `/engines` | [List engines](/api-reference/engines#get-engines) |
+| `GET` | `/engines/{id}` | [Get engine](/api-reference/engines#get-enginesid) |
+| `PATCH` | `/engines/{id}` | [Update engine](/api-reference/engines#patch-enginesid) |
+| `DELETE` | `/engines/{id}` | [Delete engine](/api-reference/engines#delete-enginesid) |
+| `POST` | `/engines/{id}/default` | [Set default engine](/api-reference/engines#post-enginesiddefault) |
+| `GET` | `/engines/{id}/indexes` | [List engine indexes](/api-reference/engines#get-enginesidindexes) |
 
 ### Analytics (When CLICKHOUSE_URL Set)
 

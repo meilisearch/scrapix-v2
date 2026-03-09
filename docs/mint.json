@@ -75,9 +75,11 @@
       "pages": [
         "api-reference/overview",
         "api-reference/scrape",
+        "api-reference/map",
         "api-reference/crawl",
         "api-reference/jobs",
         "api-reference/configs",
+        "api-reference/engines",
         "api-reference/authentication",
         "api-reference/diagnostics",
         "api-reference/analytics",

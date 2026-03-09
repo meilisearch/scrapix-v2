@@ -1,0 +1,118 @@
+---
+title: Map
+description: Discover all URLs on a website with optional metadata
+---
+
+# Map
+
+The map endpoint discovers all URLs on a website using a sitemap-first strategy, with optional metadata fetching. It returns a structured list of URLs without crawling or indexing any content.
+
+## POST /map
+
+Discover URLs on a website. Scrapix first attempts to find and parse the site's sitemap(s), then optionally crawls to discover additional URLs up to the specified depth.
+
+### Request Body
+
+```json
+{
+  "url": "https://docs.example.com",
+  "limit": 5000,
+  "depth": 0,
+  "search": "guide",
+  "sitemap": true,
+  "fetch_titles": true,
+  "fetch_descriptions": true
+}
+```
+
+### Parameters
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `url` | string | **required** | Base URL to discover URLs from |
+| `limit` | integer | `5000` | Maximum number of URLs to return |
+| `depth` | integer | `0` | Link-following depth (`0` = sitemap only, no crawling) |
+| `search` | string | — | Filter URLs containing this substring |
+| `sitemap` | boolean | `true` | Whether to discover and parse sitemaps |
+| `fetch_titles` | boolean | `false` | Fetch page titles for each discovered URL |
+| `fetch_descriptions` | boolean | `false` | Fetch meta descriptions for each discovered URL |
+
+### Response
+
+```json
+{
+  "urls": [
+    {
+      "url": "https://docs.example.com/getting-started",
+      "title": "Getting Started",
+      "description": "Learn how to set up and configure the product",
+      "last_modified": "2024-01-10T00:00:00Z",
+      "changefreq": "weekly",
+      "priority": 0.8
+    },
+    {
+      "url": "https://docs.example.com/api-reference",
+      "title": "API Reference",
+      "description": null,
+      "last_modified": null,
+      "changefreq": null,
+      "priority": null
+    }
+  ],
+  "total": 247,
+  "source": "sitemap"
+}
+```
+
+### Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `urls` | array | List of discovered URL objects |
+| `urls[].url` | string | The discovered URL |
+| `urls[].title` | string | Page title (only if `fetch_titles` is `true`) |
+| `urls[].description` | string | Meta description (only if `fetch_descriptions` is `true`) |
+| `urls[].last_modified` | string | Last modification date from sitemap |
+| `urls[].changefreq` | string | Change frequency from sitemap |
+| `urls[].priority` | float | Priority from sitemap (0.0 - 1.0) |
+| `total` | integer | Total number of URLs returned |
+| `source` | string | How URLs were discovered (`sitemap`, `crawl`, or `mixed`) |
+
+### Use Cases
+
+- **Pre-crawl planning** — discover URLs before starting a full crawl
+- **Sitemap validation** — verify which URLs are listed in sitemaps
+- **Content inventory** — list all pages on a site with titles and descriptions
+- **Selective crawling** — use the `search` filter to find specific sections, then crawl only those
+
+### Example
+
+```bash
+# Discover all URLs from sitemaps
+curl -X POST http://localhost:8080/map \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://docs.example.com"}'
+
+# Discover with metadata
+curl -X POST http://localhost:8080/map \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://docs.example.com",
+    "fetch_titles": true,
+    "fetch_descriptions": true,
+    "limit": 100
+  }'
+
+# Filter URLs containing "guide"
+curl -X POST http://localhost:8080/map \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://docs.example.com",
+    "search": "guide",
+    "fetch_titles": true
+  }'
+```
+
+<Tip>
+  Set `depth: 0` (the default) to only use sitemaps — this is fast and doesn't make HTTP requests to individual pages (unless `fetch_titles` or `fetch_descriptions` is enabled). Increase `depth` to discover URLs not listed in sitemaps.
+</Tip>
