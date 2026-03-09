@@ -205,6 +205,11 @@ impl UrlExtractor {
         // Normalize the URL
         let normalized = self.normalize_url(&resolved)?;
 
+        // Filter non-page URLs (images, PDFs, CSS, JS, fonts, etc.)
+        if is_non_page_url(&normalized) {
+            return None;
+        }
+
         // Check if already seen
         if seen.contains(&normalized) {
             return None;
@@ -355,6 +360,37 @@ impl UrlExtractor {
             // Exact match
             url == pattern
         }
+    }
+}
+
+/// Check if a URL points to a non-page resource (image, PDF, CSS, JS, font, etc.)
+///
+/// Returns `true` if the URL's path ends with a known non-page file extension.
+/// This is used to filter out URLs that won't yield useful crawlable content.
+pub fn is_non_page_url(url: &str) -> bool {
+    let path = url.split('?').next().unwrap_or(url);
+    let path = path.split('#').next().unwrap_or(path);
+    if let Some(dot_pos) = path.rfind('.') {
+        let ext = &path[dot_pos..];
+        matches!(
+            ext.to_ascii_lowercase().as_str(),
+            // Images
+            ".png" | ".jpg" | ".jpeg" | ".gif" | ".svg" | ".webp" | ".ico" | ".bmp" | ".tiff"
+            // Documents
+            | ".pdf" | ".doc" | ".docx" | ".xls" | ".xlsx" | ".ppt" | ".pptx" | ".odt" | ".ods"
+            // Media
+            | ".mp4" | ".mp3" | ".avi" | ".mov" | ".wmv" | ".flv" | ".webm" | ".mkv" | ".wav" | ".ogg"
+            // Archives
+            | ".zip" | ".tar" | ".gz" | ".rar" | ".7z" | ".bz2" | ".xz"
+            // Code/Assets
+            | ".css" | ".js" | ".mjs" | ".map"
+            // Fonts
+            | ".woff" | ".woff2" | ".ttf" | ".eot" | ".otf"
+            // Data
+            | ".xml" | ".rss" | ".atom" | ".json" | ".jsonld"
+        )
+    } else {
+        false
     }
 }
 
@@ -605,5 +641,67 @@ mod tests {
             "https://example.com/blog/page",
             "https://example.com/docs/**"
         ));
+    }
+
+    #[test]
+    fn test_is_non_page_url() {
+        // Images
+        assert!(is_non_page_url("https://example.com/image.png"));
+        assert!(is_non_page_url("https://example.com/photo.jpg"));
+        assert!(is_non_page_url("https://example.com/icon.svg"));
+
+        // Documents
+        assert!(is_non_page_url("https://example.com/report.pdf"));
+        assert!(is_non_page_url("https://example.com/doc.xlsx"));
+
+        // Media
+        assert!(is_non_page_url("https://example.com/video.mp4"));
+
+        // Assets
+        assert!(is_non_page_url("https://example.com/style.css"));
+        assert!(is_non_page_url("https://example.com/app.js"));
+        assert!(is_non_page_url("https://example.com/font.woff2"));
+
+        // Data
+        assert!(is_non_page_url("https://example.com/feed.xml"));
+        assert!(is_non_page_url("https://example.com/data.json"));
+
+        // Archives
+        assert!(is_non_page_url("https://example.com/archive.zip"));
+
+        // Normal pages should NOT be filtered
+        assert!(!is_non_page_url("https://example.com/page"));
+        assert!(!is_non_page_url("https://example.com/about.html"));
+        assert!(!is_non_page_url("https://example.com/docs/intro"));
+        assert!(!is_non_page_url("https://example.com/"));
+
+        // Query params shouldn't affect the check
+        assert!(is_non_page_url("https://example.com/image.png?w=100"));
+        assert!(!is_non_page_url("https://example.com/page?format=json"));
+
+        // Case insensitive
+        assert!(is_non_page_url("https://example.com/IMAGE.PNG"));
+        assert!(is_non_page_url("https://example.com/style.CSS"));
+    }
+
+    #[test]
+    fn test_extractor_filters_non_page_urls() {
+        let extractor = UrlExtractor::with_defaults();
+        let page = make_page(
+            "https://example.com",
+            r#"<html><body>
+                <a href="https://example.com/page1">Page</a>
+                <a href="https://example.com/image.png">Image</a>
+                <a href="https://example.com/style.css">CSS</a>
+                <a href="https://example.com/app.js">JS</a>
+                <a href="https://example.com/doc.pdf">PDF</a>
+                <a href="https://example.com/page2">Page 2</a>
+            </body></html>"#,
+        );
+
+        let urls = extractor.extract_urls(&page);
+        assert_eq!(urls.len(), 2);
+        assert!(urls.contains(&"https://example.com/page1".to_string()));
+        assert!(urls.contains(&"https://example.com/page2".to_string()));
     }
 }

@@ -792,17 +792,19 @@ impl CrawlerWorker {
         };
 
         // Get sitemap URLs from robots.txt (via persistent cache)
-        let sitemap_urls = match self.robots_cache.get_sitemaps(domain).await {
+        let mut sitemap_urls = match self.robots_cache.get_sitemaps(domain).await {
             Ok(urls) => urls,
             Err(e) => {
                 debug!(domain, error = %e, "Failed to get sitemaps from robots.txt");
-                return Ok(0);
+                vec![]
             }
         };
 
+        // If robots.txt had no Sitemap: directives, try the default /sitemap.xml location
         if sitemap_urls.is_empty() {
-            debug!(domain, "No sitemaps found in robots.txt");
-            return Ok(0);
+            let default_sitemap = format!("https://{}/sitemap.xml", domain);
+            debug!(domain, url = %default_sitemap, "No sitemaps in robots.txt, trying default /sitemap.xml");
+            sitemap_urls.push(default_sitemap);
         }
 
         info!(
@@ -830,6 +832,11 @@ impl CrawlerWorker {
                 .take(self.max_sitemap_urls - discovered_count);
 
             for sitemap_entry in urls_to_publish {
+                // Filter non-page URLs (images, PDFs, CSS, JS, fonts, etc.)
+                if scrapix_crawler::is_non_page_url(&sitemap_entry.loc) {
+                    continue;
+                }
+
                 // Filter sitemap URLs using allowed_domains whitelist first (strictest check)
                 if let Some(ref patterns) = url_patterns {
                     if !patterns.allowed_domains.is_empty() {

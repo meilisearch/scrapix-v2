@@ -75,7 +75,9 @@ use tracing::{debug, error, info, warn};
 
 use scrapix_ai::{AiClient, AiService, FieldDefinition as AiFieldDefinition, SchemaBuilder};
 use scrapix_core::{CrawlConfig, CrawlUrl, JobState, JobStatus};
-use scrapix_crawler::{HttpFetcher, HttpFetcherBuilder, RobotsCache, RobotsConfig, SitemapParser};
+use scrapix_crawler::{
+    is_non_page_url, HttpFetcher, HttpFetcherBuilder, RobotsCache, RobotsConfig, SitemapParser,
+};
 use scrapix_extractor::{
     ContentBlock, ExtractedMetadata, ExtractedSchema, Extractor, SelectorDefinition,
     SelectorExtractor,
@@ -2112,27 +2114,6 @@ struct MapRequest {
 
 fn default_map_limit() -> usize {
     5000
-}
-
-/// Non-page file extensions to exclude from map results
-fn is_non_page_url(url: &str) -> bool {
-    let path = url.split('?').next().unwrap_or(url);
-    let path = path.split('#').next().unwrap_or(path);
-    if let Some(dot_pos) = path.rfind('.') {
-        let ext = &path[dot_pos..];
-        matches!(
-            ext.to_ascii_lowercase().as_str(),
-            ".png" | ".jpg" | ".jpeg" | ".gif" | ".svg" | ".webp" | ".ico" | ".bmp" | ".tiff"
-            | ".pdf" | ".doc" | ".docx" | ".xls" | ".xlsx" | ".ppt" | ".pptx" | ".odt" | ".ods"
-            | ".mp4" | ".mp3" | ".avi" | ".mov" | ".wmv" | ".flv" | ".webm" | ".mkv" | ".wav" | ".ogg"
-            | ".zip" | ".tar" | ".gz" | ".rar" | ".7z" | ".bz2" | ".xz"
-            | ".css" | ".js" | ".mjs" | ".map"
-            | ".woff" | ".woff2" | ".ttf" | ".eot" | ".otf"
-            | ".xml" | ".rss" | ".atom" | ".json" | ".jsonld"
-        )
-    } else {
-        false
-    }
 }
 
 /// A discovered link with optional metadata
