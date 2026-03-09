@@ -178,25 +178,90 @@ export default function BillingPage() {
       <Card>
         <CardHeader>
           <CardTitle>How credits work</CardTitle>
+          <CardDescription>
+            Credits are consumed per API call. Cost depends on the endpoint and features you enable.
+          </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid gap-4 sm:grid-cols-3">
-            <div className="rounded-lg border p-4 space-y-1">
-              <p className="text-sm font-medium">Page crawl</p>
-              <p className="text-2xl font-bold">1 credit</p>
-              <p className="text-xs text-muted-foreground">Per page fetched</p>
-            </div>
-            <div className="rounded-lg border p-4 space-y-1">
-              <p className="text-sm font-medium">JS rendering</p>
-              <p className="text-2xl font-bold">5 credits</p>
-              <p className="text-xs text-muted-foreground">Per page with browser</p>
-            </div>
-            <div className="rounded-lg border p-4 space-y-1">
-              <p className="text-sm font-medium">AI extraction</p>
-              <p className="text-2xl font-bold">10 credits</p>
-              <p className="text-xs text-muted-foreground">Per AI-processed page</p>
-            </div>
+        <CardContent className="space-y-6">
+          {/* /scrape */}
+          <div className="space-y-2">
+            <h4 className="text-sm font-semibold">/scrape</h4>
+            <p className="text-sm text-muted-foreground">
+              1 credit minimum per request. Base formats (<code className="text-xs bg-muted px-1 py-0.5 rounded">html</code>, <code className="text-xs bg-muted px-1 py-0.5 rounded">rawHtml</code>, <code className="text-xs bg-muted px-1 py-0.5 rounded">content</code>) are free.
+            </p>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Component</TableHead>
+                  <TableHead className="text-right">Credits</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                <TableRow>
+                  <TableCell className="text-sm">Each feature format: <code className="text-xs bg-muted px-1 py-0.5 rounded">markdown</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">links</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">metadata</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">screenshot</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">schema</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">blocks</code></TableCell>
+                  <TableCell className="text-right font-mono">+1 each</TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell className="text-sm">AI summary</TableCell>
+                  <TableCell className="text-right font-mono">+5</TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell className="text-sm">AI extraction</TableCell>
+                  <TableCell className="text-right font-mono">+5</TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
           </div>
+
+          {/* /map */}
+          <div className="space-y-2">
+            <h4 className="text-sm font-semibold">/map</h4>
+            <p className="text-sm text-muted-foreground">
+              Flat <span className="font-mono font-medium">2 credits</span> per call, regardless of the number of URLs discovered.
+            </p>
+          </div>
+
+          {/* /crawl */}
+          <div className="space-y-2">
+            <h4 className="text-sm font-semibold">/crawl</h4>
+            <p className="text-sm text-muted-foreground">
+              Credits are deducted at job completion. Cost per page depends on crawler type and enabled features.
+            </p>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Component</TableHead>
+                  <TableHead className="text-right">Credits / page</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                <TableRow>
+                  <TableCell className="text-sm">HTTP mode (base)</TableCell>
+                  <TableCell className="text-right font-mono">1</TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell className="text-sm">Browser / JS mode (base)</TableCell>
+                  <TableCell className="text-right font-mono">2</TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell className="text-sm">Each feature: <code className="text-xs bg-muted px-1 py-0.5 rounded">metadata</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">markdown</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">block_split</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">schema</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">custom_selectors</code></TableCell>
+                  <TableCell className="text-right font-mono">+1 each</TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell className="text-sm">AI extraction</TableCell>
+                  <TableCell className="text-right font-mono">+5</TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell className="text-sm">AI summary</TableCell>
+                  <TableCell className="text-right font-mono">+5</TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
+            <p className="text-xs text-muted-foreground">
+              Formula: <code className="bg-muted px-1 py-0.5 rounded">total = pages_crawled × (base + feature_costs)</code>
+            </p>
+          </div>
+
           <p className="text-sm text-muted-foreground">
             No feature restrictions. Everything is available — you only pay for what you use.
           </p>
