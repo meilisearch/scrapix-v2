@@ -74,7 +74,7 @@ use tower_http::{
 use tracing::{debug, error, info, warn};
 
 use scrapix_ai::{AiClient, AiService, FieldDefinition as AiFieldDefinition, SchemaBuilder};
-use scrapix_core::{CrawlConfig, CrawlUrl, JobState, JobStatus};
+use scrapix_core::{CrawlConfig, CrawlUrl, CrawlerType, FeaturesConfig, JobState, JobStatus};
 use scrapix_crawler::{
     is_non_page_url, HttpFetcher, HttpFetcherBuilder, RobotsCache, RobotsConfig, SitemapParser,
 };
@@ -472,11 +472,30 @@ impl AppState {
                 }
 
                 // Deduct credits for crawled pages (fire-and-forget)
+                // Cost per page depends on crawler_type and enabled features
                 if let (Some(ref pool), Some(ref acct_id)) = (&self.db_pool, account_id) {
                     if *pages_crawled > 0 {
+                        // Extract crawler_type and features from persisted job config
+                        let (crawler_type, features) = {
+                            let jobs = self.crawl.jobs.read();
+                            jobs.get(job_id)
+                                .and_then(|j| j.config.as_ref())
+                                .map(|cfg| {
+                                    let ct = cfg.get("crawler_type")
+                                        .and_then(|v| serde_json::from_value::<CrawlerType>(v.clone()).ok())
+                                        .unwrap_or_default();
+                                    let ft = cfg.get("features")
+                                        .and_then(|v| serde_json::from_value::<FeaturesConfig>(v.clone()).ok())
+                                        .unwrap_or_default();
+                                    (ct, ft)
+                                })
+                                .unwrap_or_default()
+                        };
+                        let cost_per_page = billing::crawl_credits_per_page(&crawler_type, &features);
+                        let total_pages = *pages_crawled;
+                        let credits = total_pages as i64 * cost_per_page;
                         let pool = pool.clone();
                         let acct_id = acct_id.clone();
-                        let credits = *pages_crawled as i64;
                         let job_id = job_id.to_string();
                         tokio::spawn(async move {
                             match billing::check_credits_and_deduct(
@@ -484,7 +503,7 @@ impl AppState {
                                 &acct_id,
                                 credits,
                                 "crawl",
-                                &format!("Job {} ({} pages)", job_id, credits),
+                                &format!("Job {} ({} pages × {} credits/page)", job_id, total_pages, cost_per_page),
                             )
                             .await
                             {
@@ -492,6 +511,7 @@ impl AppState {
                                     info!(
                                         account_id = %acct_id,
                                         credits_deducted = credits,
+                                        cost_per_page,
                                         new_balance,
                                         job_id = %job_id,
                                         "Crawl credits deducted"
@@ -958,7 +978,7 @@ fn default_timeout() -> u64 {
 /// Output formats for scrape
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
-enum ScrapeFormat {
+pub(crate) enum ScrapeFormat {
     Markdown,
     Html,
     RawHtml,
@@ -1341,9 +1361,14 @@ async fn scrape_url(
         debug!(account_id = %ctx.account_id, "Scrape request from account");
     }
 
+    // Compute credit cost based on requested features
+    let has_ai_summary_req = request.ai.as_ref().is_some_and(|ai| ai.summary);
+    let has_ai_extraction_req = request.ai.as_ref().is_some_and(|ai| ai.extract.is_some());
+    let scrape_cost = billing::scrape_credits(&request.formats, has_ai_summary_req, has_ai_extraction_req);
+
     // Pre-flight credit check (soft UX check; real deduction is atomic below)
     if let (Some(ref pool), Some(ref ctx)) = (&state.db_pool, &account_ctx) {
-        billing::check_credits(pool, &ctx.account_id, 1).await?;
+        billing::check_credits(pool, &ctx.account_id, scrape_cost).await?;
     }
 
     let start_time = std::time::Instant::now();
@@ -1683,14 +1708,14 @@ async fn scrape_url(
         );
     }
 
-    // Deduct 1 credit for successful scrape (atomic)
+    // Deduct credits for successful scrape (atomic)
     if let (Some(ref pool), Some(ref ctx)) = (&state.db_pool, &account_ctx) {
         if let Err(e) = billing::check_credits_and_deduct(
             pool,
             &ctx.account_id,
-            1,
+            scrape_cost,
             "scrape",
-            &final_url,
+            &format!("{} ({} credits)", final_url, scrape_cost),
         )
         .await
         {
@@ -1920,9 +1945,44 @@ pub(crate) async fn do_create_crawl(
         "Using domain whitelist for crawl"
     );
 
+    // Auto-generate include patterns from start_urls path prefixes when none specified.
+    // e.g. start_url "https://example.com/docs" -> include pattern "https://example.com/docs/*"
+    // This prevents crawling the entire site when only a subdirectory was intended.
+    let include_patterns = if config.url_patterns.include.is_empty() {
+        let mut patterns: Vec<String> = config
+            .start_urls
+            .iter()
+            .filter_map(|u| url::Url::parse(u).ok())
+            .filter(|u| u.path() != "/" && u.path() != "")
+            .map(|u| {
+                let base = format!(
+                    "{}://{}{}",
+                    u.scheme(),
+                    u.host_str().unwrap_or(""),
+                    u.path().trim_end_matches('/')
+                );
+                format!("{}/*", base)
+            })
+            .collect();
+        patterns.sort();
+        patterns.dedup();
+
+        if !patterns.is_empty() {
+            info!(
+                job_id = %job_id,
+                patterns = ?patterns,
+                "Auto-generated include patterns from start_urls path prefixes"
+            );
+        }
+
+        patterns
+    } else {
+        config.url_patterns.include.clone()
+    };
+
     // Build URL patterns with allowed_domains
     let url_patterns = scrapix_core::UrlPatterns {
-        include: config.url_patterns.include.clone(),
+        include: include_patterns,
         exclude: config.url_patterns.exclude.clone(),
         index_only: config.url_patterns.index_only.clone(),
         allowed_domains,
@@ -2260,9 +2320,9 @@ async fn map_url(
     let account_ctx =
         extract_account_context(state.db_pool.as_ref(), &account_ext, &user_ext).await;
 
-    // Pre-flight credit check
+    // Pre-flight credit check (map costs 2 credits)
     if let (Some(ref pool), Some(ref ctx)) = (&state.db_pool, &account_ctx) {
-        billing::check_credits(pool, &ctx.account_id, 1).await?;
+        billing::check_credits(pool, &ctx.account_id, billing::MAP_CREDITS).await?;
     }
 
     let start_time = std::time::Instant::now();
@@ -2635,12 +2695,12 @@ async fn map_url(
         });
     }
 
-    // Deduct 1 credit for successful map (atomic)
+    // Deduct 2 credits for successful map (atomic)
     if let (Some(ref pool), Some(ref ctx)) = (&state.db_pool, &account_ctx) {
         if let Err(e) = billing::check_credits_and_deduct(
             pool,
             &ctx.account_id,
-            1,
+            billing::MAP_CREDITS,
             "map",
             &request.url,
         )

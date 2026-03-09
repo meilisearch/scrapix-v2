@@ -6,7 +6,8 @@
 use sqlx::Row;
 use tracing::{debug, error, info, warn};
 
-use crate::ApiError;
+use crate::{ApiError, ScrapeFormat};
+use scrapix_core::{CrawlerType, FeaturesConfig};
 
 // ============================================================================
 // Public API
@@ -291,6 +292,71 @@ pub(crate) async fn check_spend_limit(
 
     Ok(())
 }
+
+// ============================================================================
+// Credit calculation
+// ============================================================================
+
+/// Compute credits for a /scrape request.
+///
+/// - Base formats (Html, RawHtml, Content) are free
+/// - Feature formats (Markdown, Links, Metadata, Screenshot, Schema, Blocks): +1 each
+/// - AI summary: +5
+/// - AI extraction: +5
+/// - Minimum: 1 credit (even if no features)
+pub(crate) fn scrape_credits(formats: &[ScrapeFormat], has_ai_summary: bool, has_ai_extraction: bool) -> i64 {
+    let feature_count = formats
+        .iter()
+        .filter(|f| matches!(f, ScrapeFormat::Markdown | ScrapeFormat::Links | ScrapeFormat::Metadata | ScrapeFormat::Screenshot | ScrapeFormat::Schema | ScrapeFormat::Blocks))
+        .count() as i64;
+
+    let ai_cost = if has_ai_summary { 5 } else { 0 } + if has_ai_extraction { 5 } else { 0 };
+
+    // At least 1 credit per scrape
+    (feature_count + ai_cost).max(1)
+}
+
+/// Compute per-page credits for a /crawl job.
+///
+/// - HTTP mode: 1 base per page
+/// - Browser (JS) mode: 2 base per page
+/// - +1 per enabled feature (metadata, markdown, block_split, schema, custom_selectors)
+/// - +5 for AI extraction
+/// - +5 for AI summary
+pub fn crawl_credits_per_page(crawler_type: &CrawlerType, features: &FeaturesConfig) -> i64 {
+    let base = match crawler_type {
+        CrawlerType::Http => 1,
+        CrawlerType::Browser => 2,
+    };
+
+    let mut feature_count: i64 = 0;
+    if features.metadata.as_ref().is_some_and(|f| f.enabled) {
+        feature_count += 1;
+    }
+    if features.markdown.as_ref().is_some_and(|f| f.enabled) {
+        feature_count += 1;
+    }
+    if features.block_split.as_ref().is_some_and(|f| f.enabled) {
+        feature_count += 1;
+    }
+    if features.schema.as_ref().is_some_and(|s| s.enabled) {
+        feature_count += 1;
+    }
+    if features.custom_selectors.as_ref().is_some_and(|s| s.enabled) {
+        feature_count += 1;
+    }
+    if features.ai_extraction.as_ref().is_some_and(|a| a.enabled) {
+        feature_count += 5;
+    }
+    if features.ai_summary.as_ref().is_some_and(|f| f.enabled) {
+        feature_count += 5;
+    }
+
+    base + feature_count
+}
+
+/// Map credits: flat 2 per call.
+pub const MAP_CREDITS: i64 = 2;
 
 // ============================================================================
 // Helpers
