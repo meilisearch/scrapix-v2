@@ -42,6 +42,7 @@ use std::time::Duration;
 
 pub mod analytics;
 pub mod auth;
+pub mod billing;
 pub mod configs;
 pub mod engines;
 pub mod jobs_db;
@@ -446,6 +447,7 @@ impl AppState {
                 self.crawl.dirty_jobs.write().insert(job_id.to_string());
             }
             CrawlEvent::JobCompleted {
+                account_id,
                 pages_crawled,
                 documents_indexed,
                 duration_secs,
@@ -465,6 +467,46 @@ impl AppState {
                     self.crawl.dirty_jobs.write().remove(job_id);
                     let pool = pool.clone();
                     tokio::spawn(async move { jobs_db::update_job_full(&pool, &snapshot).await });
+                }
+
+                // Deduct credits for crawled pages (fire-and-forget)
+                if let (Some(ref pool), Some(ref acct_id)) = (&self.db_pool, account_id) {
+                    if *pages_crawled > 0 {
+                        let pool = pool.clone();
+                        let acct_id = acct_id.clone();
+                        let credits = *pages_crawled as i64;
+                        let job_id = job_id.to_string();
+                        tokio::spawn(async move {
+                            match billing::check_credits_and_deduct(
+                                &pool,
+                                &acct_id,
+                                credits,
+                                "crawl",
+                                &format!("Job {} ({} pages)", job_id, credits),
+                            )
+                            .await
+                            {
+                                Ok(new_balance) => {
+                                    info!(
+                                        account_id = %acct_id,
+                                        credits_deducted = credits,
+                                        new_balance,
+                                        job_id = %job_id,
+                                        "Crawl credits deducted"
+                                    );
+                                }
+                                Err(e) => {
+                                    error!(
+                                        account_id = %acct_id,
+                                        credits = credits,
+                                        job_id = %job_id,
+                                        error = ?e,
+                                        "Failed to deduct crawl credits"
+                                    );
+                                }
+                            }
+                        });
+                    }
                 }
             }
             CrawlEvent::JobFailed { error, .. } => {
@@ -627,7 +669,7 @@ fn crawl_event_to_job_event(job_id: &str, event: &CrawlEvent) -> Option<ClickHou
 
 /// API error response
 #[derive(Debug, Serialize)]
-struct ApiError {
+pub(crate) struct ApiError {
     error: String,
     code: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -635,7 +677,7 @@ struct ApiError {
 }
 
 impl ApiError {
-    fn new(error: impl Into<String>, code: impl Into<String>) -> Self {
+    pub(crate) fn new(error: impl Into<String>, code: impl Into<String>) -> Self {
         Self {
             error: error.into(),
             code: code.into(),
@@ -658,6 +700,7 @@ impl IntoResponse for ApiError {
             "unauthorized" => StatusCode::UNAUTHORIZED,
             "conflict" => StatusCode::CONFLICT,
             "insufficient_credits" => StatusCode::PAYMENT_REQUIRED,
+            "spend_limit_exceeded" => StatusCode::FORBIDDEN,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
         (status, Json(self)).into_response()
@@ -1296,6 +1339,11 @@ async fn scrape_url(
         debug!(account_id = %ctx.account_id, "Scrape request from account");
     }
 
+    // Pre-flight credit check (soft UX check; real deduction is atomic below)
+    if let (Some(ref pool), Some(ref ctx)) = (&state.db_pool, &account_ctx) {
+        billing::check_credits(pool, &ctx.account_id, 1).await?;
+    }
+
     let start_time = std::time::Instant::now();
 
     // Validate URL
@@ -1633,6 +1681,21 @@ async fn scrape_url(
         );
     }
 
+    // Deduct 1 credit for successful scrape (atomic)
+    if let (Some(ref pool), Some(ref ctx)) = (&state.db_pool, &account_ctx) {
+        if let Err(e) = billing::check_credits_and_deduct(
+            pool,
+            &ctx.account_id,
+            1,
+            "scrape",
+            &final_url,
+        )
+        .await
+        {
+            warn!(account_id = %ctx.account_id, error = ?e, "Failed to deduct credit for scrape");
+        }
+    }
+
     info!(
         url = %final_url,
         status_code,
@@ -1759,7 +1822,10 @@ pub(crate) async fn do_create_crawl(
         return Err(ApiError::new("Index UID is required", "validation_error"));
     }
 
-    // Account context is used for attribution only (no tier enforcement)
+    // Pre-flight credit check (1 credit minimum to start a crawl)
+    if let (Some(ref pool), Some(ctx)) = (&state.db_pool, account_ctx) {
+        billing::check_credits(pool, &ctx.account_id, 1).await?;
+    }
 
     // Generate job ID
     let job_id = uuid::Uuid::new_v4().to_string();
@@ -2210,8 +2276,13 @@ async fn map_url(
     user_ext: Option<Extension<AuthenticatedUser>>,
     Json(request): Json<MapRequest>,
 ) -> Result<Json<MapResponse>, ApiError> {
-    let _account_ctx =
+    let account_ctx =
         extract_account_context(state.db_pool.as_ref(), &account_ext, &user_ext).await;
+
+    // Pre-flight credit check
+    if let (Some(ref pool), Some(ref ctx)) = (&state.db_pool, &account_ctx) {
+        billing::check_credits(pool, &ctx.account_id, 1).await?;
+    }
 
     let start_time = std::time::Instant::now();
 
@@ -2550,7 +2621,7 @@ async fn map_url(
 
     // Track map request in ClickHouse request_events
     if let Some(ref batcher) = state.analytics.request_batcher {
-        let account_id = _account_ctx
+        let account_id = account_ctx
             .as_ref()
             .map(|c| c.account_id.clone())
             .unwrap_or_default();
@@ -2581,6 +2652,21 @@ async fn map_url(
                 debug!(error = %e, "Failed to add map request event to ClickHouse");
             }
         });
+    }
+
+    // Deduct 1 credit for successful map (atomic)
+    if let (Some(ref pool), Some(ref ctx)) = (&state.db_pool, &account_ctx) {
+        if let Err(e) = billing::check_credits_and_deduct(
+            pool,
+            &ctx.account_id,
+            1,
+            "map",
+            &request.url,
+        )
+        .await
+        {
+            warn!(account_id = %ctx.account_id, error = ?e, "Failed to deduct credit for map");
+        }
     }
 
     Ok(Json(MapResponse {
