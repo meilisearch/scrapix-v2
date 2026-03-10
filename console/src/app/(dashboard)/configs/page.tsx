@@ -429,7 +429,7 @@ function CreateConfigDialog({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="sm:max-w-xl w-full flex flex-col">
+      <SheetContent side="right" className="sm:max-w-xl w-full flex flex-col px-6">
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2">
             <Settings2 className="h-5 w-5" />
@@ -441,8 +441,8 @@ function CreateConfigDialog({
           </SheetDescription>
         </SheetHeader>
 
-        <ScrollArea className="flex-1 -mx-6 px-6">
-          <div className="space-y-6 pb-4">
+        <ScrollArea className="flex-1 -mx-6 overflow-hidden">
+          <div className="space-y-6 px-6 pb-4">
             <div className="space-y-2">
               <Label htmlFor="config-name">Name</Label>
               <Input
