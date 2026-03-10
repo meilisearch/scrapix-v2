@@ -218,7 +218,8 @@ fn score_element(element: &ElementRef, config: &ReadabilityConfig) -> f64 {
 
     // Penalty for too many links
     let links = element.select(a_selector()).count();
-    let text_len = element.text().collect::<String>().len();
+    let skip_tags: &[&str] = &["script", "style", "noscript"];
+    let text_len = filtered_text(element, skip_tags).len();
     if text_len > 0 {
         let link_density = links as f64 / (text_len as f64 / 100.0);
         if link_density > 0.5 {
@@ -239,6 +240,30 @@ fn extract_element_content(element: &ElementRef, config: &ReadabilityConfig) -> 
     extract_text_recursive(element, &skip_tags, config, &mut parts);
 
     parts.join("\n\n")
+}
+
+/// Collect visible text from an element, skipping unwanted child tags.
+///
+/// Unlike `element.text().collect()` from the scraper crate (which grabs ALL text
+/// nodes regardless of parent tags), this function respects `skip_tags` and won't
+/// collect text inside `<script>`, `<style>`, etc.
+fn filtered_text(element: &ElementRef, skip_tags: &[&str]) -> String {
+    let mut buf = String::new();
+    filtered_text_recursive(element, skip_tags, &mut buf);
+    buf
+}
+
+fn filtered_text_recursive(element: &ElementRef, skip_tags: &[&str], buf: &mut String) {
+    for child in element.children() {
+        if let Some(child_element) = ElementRef::wrap(child) {
+            let tag = child_element.value().name();
+            if !skip_tags.contains(&tag) {
+                filtered_text_recursive(&child_element, skip_tags, buf);
+            }
+        } else if let Some(text) = child.value().as_text() {
+            buf.push_str(text);
+        }
+    }
 }
 
 /// Recursively extract text from element
@@ -268,14 +293,14 @@ fn extract_text_recursive(
     // Handle block-level elements
     match tag_name {
         "p" | "div" | "section" | "article" | "blockquote" | "li" => {
-            let text: String = element.text().collect();
+            let text = filtered_text(element, skip_tags);
             let text = text.trim();
             if text.len() >= config.min_paragraph_length {
                 parts.push(text.to_string());
             }
         }
         "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
-            let text: String = element.text().collect();
+            let text = filtered_text(element, skip_tags);
             let text = text.trim();
             if !text.is_empty() {
                 let level = tag_name.chars().last().unwrap();
@@ -285,7 +310,7 @@ fn extract_text_recursive(
         }
         "ul" | "ol" => {
             for li in element.select(li_selector()) {
-                let text: String = li.text().collect();
+                let text = filtered_text(&li, skip_tags);
                 let text = text.trim();
                 if !text.is_empty() {
                     parts.push(format!("- {}", text));
@@ -293,7 +318,7 @@ fn extract_text_recursive(
             }
         }
         "pre" | "code" => {
-            let text: String = element.text().collect();
+            let text = filtered_text(element, skip_tags);
             if !text.trim().is_empty() {
                 parts.push(format!("```\n{}\n```", text.trim()));
             }
@@ -517,6 +542,32 @@ mod tests {
             "This is a normal paragraph about Meilisearch search engine."
         ));
         assert!(!is_garbage_content(""));
+    }
+
+    #[test]
+    fn test_rsc_inside_content_container() {
+        // Regression test: script tags inside a content container were leaking
+        // through because element.text().collect() ignores tag boundaries.
+        let html = r#"
+            <html>
+            <body>
+                <main>
+                    <p>This is actual page content that should be long enough to be extracted by readability.</p>
+                    <script>(self.__next_f=self.__next_f||[]).push([0])</script>
+                    <script>self.__next_f.push([1,"$Sreact.fragment\n\"some\":\"json\""])</script>
+                    <p>Another paragraph with real content about how Meilisearch works with search.</p>
+                </main>
+            </body>
+            </html>
+        "#;
+        let content = extract_content(html);
+        assert!(
+            !content.contains("__next_f"),
+            "RSC payload should not appear in content: {}",
+            content
+        );
+        assert!(content.contains("actual page content"));
+        assert!(content.contains("Another paragraph"));
     }
 
     #[test]
