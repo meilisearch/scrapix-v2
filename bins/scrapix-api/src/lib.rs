@@ -3776,7 +3776,7 @@ pub async fn run_with_bus(
                     // Find running jobs that have been idle
                     // Also extract swap metadata for atomic index swap
                     // (job_id, pages_crawled, pages_indexed, errors, swap_temp_index, swap_target_index, swap_search_api_key, index_uid)
-                    type IdleJobInfo = (String, u64, u64, u64, Option<String>, Option<String>, Option<String>, String);
+                    type IdleJobInfo = (String, u64, u64, u64, Option<String>, Option<String>, Option<String>, String, Option<String>);
                     let idle_jobs: Vec<IdleJobInfo> = {
                         let jobs = idle_state.crawl.jobs.read();
                         let activity = idle_state.crawl.job_last_activity.read();
@@ -3797,11 +3797,12 @@ pub async fn run_with_bus(
                                 j.swap_meilisearch_url.clone(),
                                 j.swap_meilisearch_api_key.clone(),
                                 j.index_uid.clone(),
+                                j.account_id.clone(),
                             ))
                             .collect()
                     };
 
-                    for (job_id, pages_crawled, documents_indexed, errors, swap_temp, swap_url, swap_key, index_uid) in idle_jobs {
+                    for (job_id, pages_crawled, documents_indexed, errors, swap_temp, swap_url, swap_key, index_uid, account_id) in idle_jobs {
                         let duration_secs = {
                             let jobs = idle_state.crawl.jobs.read();
                             jobs.get(&job_id)
@@ -3842,7 +3843,7 @@ pub async fn run_with_bus(
 
                                     let event = CrawlEvent::JobFailed {
                                         job_id: job_id.clone(),
-                                        account_id: None,
+                                        account_id: account_id.clone(),
                                         error: format!(
                                             "Index swap failed: {}. Temp index '{}' preserved for manual recovery.",
                                             e, temp_index
@@ -3866,7 +3867,7 @@ pub async fn run_with_bus(
 
                         let event = CrawlEvent::JobCompleted {
                             job_id: job_id.clone(),
-                            account_id: None,
+                            account_id,
                             pages_crawled,
                             documents_indexed,
                             errors,
