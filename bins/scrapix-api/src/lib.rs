@@ -3949,7 +3949,11 @@ pub async fn run_with_bus(
                     .delete(engines::delete_engine),
             )
             .route("/engines/{id}/default", post(engines::set_default_engine))
-            .route("/engines/{id}/indexes", get(engines::list_engine_indexes));
+            .route("/engines/{id}/indexes", get(engines::list_engine_indexes))
+            .route(
+                "/engines/{id}/indexes/{index_uid}/search",
+                post(engines::search_engine_index),
+            );
     }
 
     // Apply auth middleware if configured (accepts API key or session cookie)

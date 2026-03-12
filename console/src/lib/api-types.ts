@@ -199,6 +199,32 @@ export interface MeilisearchIndex {
   updatedAt: string;
 }
 
+export interface MeilisearchSearchResponse {
+  hits: MeilisearchHit[];
+  query: string;
+  processingTimeMs: number;
+  limit: number;
+  offset: number;
+  estimatedTotalHits: number;
+}
+
+export interface MeilisearchHit {
+  uid?: string;
+  url?: string;
+  domain?: string;
+  title?: string;
+  content?: string;
+  markdown?: string;
+  h1?: string;
+  h2?: string;
+  h3?: string;
+  language?: string;
+  crawled_at?: string;
+  metadata?: Record<string, string>;
+  _formatted?: Record<string, string>;
+  [key: string]: unknown;
+}
+
 export interface ScrapeMetadata {
   title?: string;
   description?: string;

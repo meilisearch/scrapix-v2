@@ -14,6 +14,7 @@ import type {
   CreateEngineRequest,
   UpdateEngineRequest,
   MeilisearchIndex,
+  MeilisearchSearchResponse,
   MapResult,
   AnalyticsResponse,
   HourlyStatsRow,
@@ -232,6 +233,21 @@ export async function setDefaultEngine(id: string): Promise<MeilisearchEngine> {
 
 export async function fetchEngineIndexes(id: string): Promise<MeilisearchIndex[]> {
   return request(`/engines/${encodeURIComponent(id)}/indexes`);
+}
+
+export async function searchEngineIndex(
+  engineId: string,
+  indexUid: string,
+  body: Record<string, unknown>
+): Promise<MeilisearchSearchResponse> {
+  return request(
+    `/engines/${encodeURIComponent(engineId)}/indexes/${encodeURIComponent(indexUid)}/search`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }
+  );
 }
 
 /** WebSocket URL pointing directly at the backend (rewrites don't proxy WS). */

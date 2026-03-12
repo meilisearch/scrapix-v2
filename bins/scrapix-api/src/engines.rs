@@ -473,3 +473,71 @@ pub(crate) async fn list_engine_indexes(
 
     Ok(Json(indexes))
 }
+
+/// Proxy a search request to a Meilisearch engine index.
+pub(crate) async fn search_engine_index(
+    State(state): State<Arc<AppState>>,
+    account_ext: Option<Extension<AuthenticatedAccount>>,
+    user_ext: Option<Extension<AuthenticatedUser>>,
+    Path((engine_id, index_uid)): Path<(String, String)>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let pool = get_pool(&state)?;
+    let account_id = resolve_account_id(
+        pool,
+        account_ext.as_ref().map(|e| &e.0),
+        user_ext.as_ref().map(|e| &e.0),
+    )
+    .await?;
+
+    let engine_uuid: uuid::Uuid = engine_id
+        .parse()
+        .map_err(|_| ApiError::new("Invalid engine ID", "validation_error"))?;
+
+    let row = sqlx::query("SELECT * FROM meilisearch_engines WHERE id = $1 AND account_id = $2")
+        .bind(engine_uuid)
+        .bind(account_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| ApiError::new(format!("Database error: {e}"), "internal_error"))?
+        .ok_or_else(|| ApiError::new("Engine not found", "not_found"))?;
+
+    let engine_url: String = row.get("url");
+    let engine_api_key: String = row.get("api_key");
+
+    let client = reqwest::Client::new();
+    let mut req = client.post(format!(
+        "{}/indexes/{}/search",
+        engine_url.trim_end_matches('/'),
+        index_uid
+    ));
+    if !engine_api_key.is_empty() {
+        req = req.header("Authorization", format!("Bearer {engine_api_key}"));
+    }
+    req = req.json(&body);
+
+    let resp = req.send().await.map_err(|e| {
+        ApiError::new(
+            format!("Failed to connect to Meilisearch: {e}"),
+            "bad_request",
+        )
+    })?;
+
+    if !resp.status().is_success() {
+        let status = resp.status().as_u16();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(ApiError::new(
+            format!("Meilisearch returned {status}: {body}"),
+            "bad_request",
+        ));
+    }
+
+    let result: serde_json::Value = resp.json().await.map_err(|e| {
+        ApiError::new(
+            format!("Failed to parse Meilisearch response: {e}"),
+            "internal_error",
+        )
+    })?;
+
+    Ok(Json(result))
+}

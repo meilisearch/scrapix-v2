@@ -51,7 +51,9 @@ import {
   Pencil,
   ChevronRight,
   Database,
+  Eye,
 } from "lucide-react";
+import Link from "next/link";
 import { TableSkeleton } from "@/components/table-skeleton";
 import { EmptyState } from "@/components/empty-state";
 import {
@@ -320,6 +322,20 @@ function EngineRow({
         </TableCell>
         <TableCell>
           <div className="flex items-center gap-1">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  asChild
+                >
+                  <Link href={`/engines/${engine.id}/preview`}>
+                    <Eye className="h-4 w-4" />
+                  </Link>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Search preview</TooltipContent>
+            </Tooltip>
             {!engine.is_default && (
               <Tooltip>
                 <TooltipTrigger asChild>
