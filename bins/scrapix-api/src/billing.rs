@@ -304,10 +304,24 @@ pub(crate) async fn check_spend_limit(
 /// - AI summary: +5
 /// - AI extraction: +5
 /// - Minimum: 1 credit (even if no features)
-pub(crate) fn scrape_credits(formats: &[ScrapeFormat], has_ai_summary: bool, has_ai_extraction: bool) -> i64 {
+pub(crate) fn scrape_credits(
+    formats: &[ScrapeFormat],
+    has_ai_summary: bool,
+    has_ai_extraction: bool,
+) -> i64 {
     let feature_count = formats
         .iter()
-        .filter(|f| matches!(f, ScrapeFormat::Markdown | ScrapeFormat::Links | ScrapeFormat::Metadata | ScrapeFormat::Screenshot | ScrapeFormat::Schema | ScrapeFormat::Blocks))
+        .filter(|f| {
+            matches!(
+                f,
+                ScrapeFormat::Markdown
+                    | ScrapeFormat::Links
+                    | ScrapeFormat::Metadata
+                    | ScrapeFormat::Screenshot
+                    | ScrapeFormat::Schema
+                    | ScrapeFormat::Blocks
+            )
+        })
         .count() as i64;
 
     let ai_cost = if has_ai_summary { 5 } else { 0 } + if has_ai_extraction { 5 } else { 0 };
@@ -342,7 +356,11 @@ pub fn crawl_credits_per_page(crawler_type: &CrawlerType, features: &FeaturesCon
     if features.schema.as_ref().is_some_and(|s| s.enabled) {
         feature_count += 1;
     }
-    if features.custom_selectors.as_ref().is_some_and(|s| s.enabled) {
+    if features
+        .custom_selectors
+        .as_ref()
+        .is_some_and(|s| s.enabled)
+    {
         feature_count += 1;
     }
     if features.ai_extraction.as_ref().is_some_and(|a| a.enabled) {

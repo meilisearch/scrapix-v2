@@ -14,6 +14,7 @@ use meilisearch_sdk::{
 };
 use tracing::{debug, info, instrument, warn};
 
+use scrapix_core::config::FeaturesConfig;
 use scrapix_core::{Document, Result, ScrapixError};
 
 /// Meilisearch configuration
@@ -37,6 +38,8 @@ pub struct MeilisearchConfig {
     pub displayed_attributes: Option<Vec<String>>,
     /// Ranking rules
     pub ranking_rules: Option<Vec<String>>,
+    /// Distinct attribute
+    pub distinct_attribute: Option<String>,
     /// Max total hits for pagination
     pub max_total_hits: usize,
     /// Batch size for document indexing
@@ -55,7 +58,6 @@ impl Default for MeilisearchConfig {
             searchable_attributes: vec![
                 "title".to_string(),
                 "content".to_string(),
-                "markdown".to_string(),
                 "h1".to_string(),
                 "h2".to_string(),
                 "h3".to_string(),
@@ -69,6 +71,7 @@ impl Default for MeilisearchConfig {
             sortable_attributes: vec!["crawled_at".to_string()],
             displayed_attributes: None,
             ranking_rules: None,
+            distinct_attribute: None,
             max_total_hits: 10000,
             batch_size: 1000,
             timeout: Duration::from_secs(60),
@@ -137,6 +140,10 @@ impl MeilisearchStorage {
 
         if let Some(ref ranking) = self.config.ranking_rules {
             settings = settings.with_ranking_rules(ranking);
+        }
+
+        if let Some(ref distinct) = self.config.distinct_attribute {
+            settings = settings.with_distinct_attribute(Some(distinct));
         }
 
         let task =
@@ -278,6 +285,10 @@ impl MeilisearchStorage {
                 max_total_hits: self.config.max_total_hits,
             });
 
+        if let Some(ref distinct) = self.config.distinct_attribute {
+            settings = settings.with_distinct_attribute(Some(distinct));
+        }
+
         let _ = index.set_settings(&settings).await;
 
         // Index the document (fire-and-forget)
@@ -363,6 +374,94 @@ impl MeilisearchStorage {
                     // Still processing (Enqueued or Processing)
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
+            }
+        }
+    }
+
+    /// Configure index settings based on enabled features.
+    ///
+    /// Dynamically adjusts searchable, filterable, and sortable attributes
+    /// depending on which features are active for the crawl job. Also sets
+    /// the distinct attribute when block splitting is enabled.
+    pub async fn configure_index_for_features(&self, index_uid: &str, features: &FeaturesConfig) {
+        let index = if index_uid == self.config.index_uid {
+            self.index.clone()
+        } else {
+            self.client.index(index_uid)
+        };
+
+        // Start from the base configured attributes
+        let mut searchable = self.config.searchable_attributes.clone();
+        let mut filterable = self.config.filterable_attributes.clone();
+        let mut sortable = self.config.sortable_attributes.clone();
+
+        // Markdown is an alternative text representation — searchable when enabled
+        if features.markdown_enabled() {
+            searchable.push("markdown".to_string());
+        }
+
+        // AI summary is free-text, good for search
+        if features.ai_summary_enabled() {
+            searchable.push("ai_summary".to_string());
+        }
+
+        // AI extraction is structured but may contain searchable text
+        if features.ai_extraction_enabled() {
+            searchable.push("ai_extraction".to_string());
+        }
+
+        // Schema.org/JSON-LD is structured data — filterable for faceting
+        if features.schema_enabled() {
+            filterable.push("schema".to_string());
+        }
+
+        // Custom CSS selectors produce named fields under `custom.*`
+        // Each custom field should be both searchable and filterable
+        if let Some(ref selectors_config) = features.custom_selectors {
+            if selectors_config.enabled {
+                for key in selectors_config.selectors.keys() {
+                    let field = format!("custom.{}", key);
+                    searchable.push(field.clone());
+                    filterable.push(field);
+                }
+            }
+        }
+
+        // Block split: add heading sub-levels, block navigation fields, and distinct
+        if features.block_split_enabled() {
+            searchable.extend(["h4".to_string(), "h5".to_string(), "h6".to_string()]);
+            filterable.extend([
+                "parent_document_id".to_string(),
+                "page_block".to_string(),
+                "anchor".to_string(),
+            ]);
+            sortable.push("page_block".to_string());
+        }
+
+        // Build settings
+        let mut settings = Settings::new()
+            .with_searchable_attributes(&searchable)
+            .with_filterable_attributes(&filterable)
+            .with_sortable_attributes(&sortable);
+
+        // Set distinct attribute for block-split mode
+        if features.block_split_enabled() {
+            settings = settings.with_distinct_attribute(Some("parent_document_id"));
+        }
+
+        match index.set_settings(&settings).await {
+            Ok(_) => {
+                info!(
+                    index = %index_uid,
+                    "Configured index settings for enabled features"
+                );
+            }
+            Err(e) => {
+                warn!(
+                    index = %index_uid,
+                    error = %e,
+                    "Failed to configure index settings for features"
+                );
             }
         }
     }
@@ -646,6 +745,11 @@ impl MeilisearchStorageBuilder {
 
     pub fn sortable_attributes(mut self, attrs: Vec<String>) -> Self {
         self.config.sortable_attributes = attrs;
+        self
+    }
+
+    pub fn distinct_attribute(mut self, attr: impl Into<String>) -> Self {
+        self.config.distinct_attribute = Some(attr.into());
         self
     }
 

@@ -1490,7 +1490,8 @@ async fn list_pipes() -> Json<Vec<PipeInfo>> {
         },
         PipeInfo {
             name: "account_usage".into(),
-            description: "Account usage summary (requests, bandwidth, JS renders, AI tokens)".into(),
+            description: "Account usage summary (requests, bandwidth, JS renders, AI tokens)"
+                .into(),
             parameters: vec![
                 ParamInfo {
                     name: "account_id".into(),

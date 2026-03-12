@@ -466,11 +466,7 @@ impl ClickHouseStorage {
         info!("Creating ClickHouse tables");
 
         // Drop old tables from previous schema
-        for old_table in &[
-            "crawl_events",
-            "content_events",
-            "domain_stats_hourly",
-        ] {
+        for old_table in &["crawl_events", "content_events", "domain_stats_hourly"] {
             let name = self.table_name(old_table);
             self.client
                 .query(&format!("DROP TABLE IF EXISTS {}", name))
@@ -812,7 +808,10 @@ impl ClickHouseStorage {
             .fetch_all::<StatusCount>()
             .await?;
 
-        Ok(results.into_iter().map(|r| (r.status_code, r.count)).collect())
+        Ok(results
+            .into_iter()
+            .map(|r| (r.status_code, r.count))
+            .collect())
     }
 
     // ========================================================================
@@ -970,10 +969,7 @@ impl ClickHouseStorage {
     // ========================================================================
 
     #[instrument(skip(self))]
-    pub async fn get_job_stats(
-        &self,
-        job_id: &str,
-    ) -> Result<Option<JobStats>, ClickHouseError> {
+    pub async fn get_job_stats(&self, job_id: &str) -> Result<Option<JobStats>, ClickHouseError> {
         let table = self.table_name("request_events");
         let result = self
             .client

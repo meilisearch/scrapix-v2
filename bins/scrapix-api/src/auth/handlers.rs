@@ -809,7 +809,11 @@ async fn topup_credits(
     check_spend_limit(&state.pool, account_id, req.amount).await?;
 
     let mut tx = state.pool.begin().await.map_err(|_| {
-        err(StatusCode::INTERNAL_SERVER_ERROR, "Database error", "internal_error")
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Database error",
+            "internal_error",
+        )
     })?;
 
     let new_balance: i64 = sqlx::query_scalar(
@@ -833,11 +837,19 @@ async fn topup_credits(
     .fetch_one(&mut *tx)
     .await
     .map_err(|_| {
-        err(StatusCode::INTERNAL_SERVER_ERROR, "Failed to log transaction", "internal_error")
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to log transaction",
+            "internal_error",
+        )
     })?;
 
     tx.commit().await.map_err(|_| {
-        err(StatusCode::INTERNAL_SERVER_ERROR, "Database error", "internal_error")
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Database error",
+            "internal_error",
+        )
     })?;
 
     info!(account_id = %account_id, amount = req.amount, new_balance, "Manual credit top-up");
@@ -885,12 +897,20 @@ async fn update_auto_topup(
             .execute(&state.pool)
             .await
             .map_err(|_| {
-                err(StatusCode::INTERNAL_SERVER_ERROR, "Failed to update", "internal_error")
+                err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Failed to update",
+                    "internal_error",
+                )
             })?;
     }
 
     Ok(Json(MessageResponse {
-        message: if req.enabled { "Auto top-up enabled".to_string() } else { "Auto top-up disabled".to_string() },
+        message: if req.enabled {
+            "Auto top-up enabled".to_string()
+        } else {
+            "Auto top-up disabled".to_string()
+        },
     }))
 }
 
@@ -919,7 +939,11 @@ async fn update_spend_limit(
         .execute(&state.pool)
         .await
         .map_err(|_| {
-            err(StatusCode::INTERNAL_SERVER_ERROR, "Failed to update", "internal_error")
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to update",
+                "internal_error",
+            )
         })?;
 
     Ok(Json(MessageResponse {
@@ -949,15 +973,17 @@ async fn list_transactions(
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
 
-    let total: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM transactions WHERE account_id = $1",
-    )
-    .bind(account_id)
-    .fetch_one(&state.pool)
-    .await
-    .map_err(|_| {
-        err(StatusCode::INTERNAL_SERVER_ERROR, "Database error", "internal_error")
-    })?;
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM transactions WHERE account_id = $1")
+        .bind(account_id)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|_| {
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Database error",
+                "internal_error",
+            )
+        })?;
 
     let rows = sqlx::query(
         "SELECT id, type, amount, balance_after, description, created_at \
@@ -970,7 +996,11 @@ async fn list_transactions(
     .fetch_all(&state.pool)
     .await
     .map_err(|_| {
-        err(StatusCode::INTERNAL_SERVER_ERROR, "Database error", "internal_error")
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Database error",
+            "internal_error",
+        )
     })?;
 
     let transactions: Vec<TransactionResponse> = rows
@@ -999,16 +1029,18 @@ async fn check_spend_limit(
     account_id: uuid::Uuid,
     amount: i64,
 ) -> Result<(), ApiError> {
-    let row = sqlx::query(
-        "SELECT monthly_spend_limit FROM accounts WHERE id = $1",
-    )
-    .bind(account_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|_| {
-        err(StatusCode::INTERNAL_SERVER_ERROR, "Database error", "internal_error")
-    })?
-    .ok_or_else(|| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
+    let row = sqlx::query("SELECT monthly_spend_limit FROM accounts WHERE id = $1")
+        .bind(account_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|_| {
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Database error",
+                "internal_error",
+            )
+        })?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
 
     let limit: Option<i64> = row.get("monthly_spend_limit");
     if let Some(limit) = limit {
@@ -1023,7 +1055,11 @@ async fn check_spend_limit(
         .fetch_one(pool)
         .await
         .map_err(|_| {
-            err(StatusCode::INTERNAL_SERVER_ERROR, "Database error", "internal_error")
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Database error",
+                "internal_error",
+            )
         })?;
 
         if spent + amount > limit {

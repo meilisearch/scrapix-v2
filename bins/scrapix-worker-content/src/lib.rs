@@ -286,6 +286,8 @@ struct ContentWorker {
     ai_config: AiConfig,
     dedup_detector: Option<Arc<NearDuplicateDetector>>,
     block_splitter: Option<BlockSplitter>,
+    /// Indexes that have already had feature-based settings configured
+    feature_configured_indexes: tokio::sync::Mutex<std::collections::HashSet<String>>,
     semaphore: Arc<Semaphore>,
     metrics: Arc<WorkerMetrics>,
     shutdown: Arc<AtomicBool>,
@@ -500,6 +502,7 @@ impl ContentWorker {
             ai_config,
             dedup_detector,
             block_splitter,
+            feature_configured_indexes: tokio::sync::Mutex::new(std::collections::HashSet::new()),
             semaphore,
             metrics: Arc::new(WorkerMetrics::new()),
             shutdown: Arc::new(AtomicBool::new(false)),
@@ -695,6 +698,7 @@ impl ContentWorker {
             ai_config,
             dedup_detector,
             block_splitter,
+            feature_configured_indexes: tokio::sync::Mutex::new(std::collections::HashSet::new()),
             semaphore,
             metrics: Arc::new(WorkerMetrics::new()),
             shutdown: Arc::new(AtomicBool::new(false)),
@@ -949,6 +953,18 @@ impl ContentWorker {
         let features = self.resolve_features(msg);
         let mut document = document;
         Self::filter_document(&mut document, &features);
+
+        // Configure index settings for enabled features (once per index)
+        {
+            let mut configured = self.feature_configured_indexes.lock().await;
+            if configured.insert(msg.index_uid.clone()) {
+                if let Some(storage) = self.get_storage(msg).await {
+                    storage
+                        .configure_index_for_features(&msg.index_uid, &features)
+                        .await;
+                }
+            }
+        }
 
         // Apply custom CSS selector extraction if enabled
         if features.custom_selectors_enabled() {
@@ -1220,6 +1236,18 @@ impl ContentWorker {
         let features = self.resolve_features(msg);
         let mut document = document;
         Self::filter_document(&mut document, &features);
+
+        // Configure index settings for enabled features (once per index)
+        {
+            let mut configured = self.feature_configured_indexes.lock().await;
+            if configured.insert(msg.index_uid.clone()) {
+                if let Some(storage) = self.get_storage(msg).await {
+                    storage
+                        .configure_index_for_features(&msg.index_uid, &features)
+                        .await;
+                }
+            }
+        }
 
         let parse_duration = start.elapsed();
         info!(

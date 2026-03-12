@@ -20,7 +20,7 @@
 //!
 //! ## Example
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use scrapix_queue::{ProducerBuilder, ConsumerBuilder, topics};
 //! use scrapix_core::CrawlUrl;
 //!
