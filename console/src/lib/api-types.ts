@@ -158,8 +158,17 @@ export interface ScrapeResult {
   links?: string[];
   language?: string;
   metadata?: ScrapeMetadata;
+  schema?: Record<string, unknown>;
+  blocks?: ContentBlock[];
+  extract?: Record<string, unknown>;
   ai?: AiResult;
   warning?: string;
+}
+
+export interface ContentBlock {
+  heading?: string;
+  heading_level?: number;
+  content: string;
 }
 
 export interface AiResult {

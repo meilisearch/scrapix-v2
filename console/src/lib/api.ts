@@ -113,7 +113,11 @@ export interface ScrapeOptions {
   include_links?: boolean;
   timeout_ms?: number;
   headers?: Record<string, string>;
-  ai?: { summary: boolean };
+  extract?: Record<string, string>;
+  ai?: {
+    summary?: boolean;
+    extract?: { prompt: string };
+  };
 }
 
 export async function submitScrape(opts: ScrapeOptions): Promise<ScrapeResult> {

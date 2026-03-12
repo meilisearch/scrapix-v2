@@ -22,6 +22,12 @@ export default function ScrapePage() {
     include_links: false,
     timeout_ms: "30000",
     ai_summary: false,
+    feat_schema: false,
+    feat_block_split: false,
+    feat_custom_selectors: false,
+    custom_selectors: "",
+    feat_ai_extraction: false,
+    ai_extraction_prompt: "",
   });
 
   useEffect(() => {
@@ -43,13 +49,43 @@ export default function ScrapePage() {
     setError(null);
 
     try {
+      // Build formats list, adding schema/blocks if their features are enabled
+      const formats = [...scrapeState.formats];
+      if (scrapeState.feat_schema && !formats.includes("schema")) {
+        formats.push("schema");
+      }
+      if (scrapeState.feat_block_split && !formats.includes("blocks")) {
+        formats.push("blocks");
+      }
+
+      // Build custom CSS selector extract map
+      let extract: Record<string, string> | undefined;
+      if (scrapeState.feat_custom_selectors && scrapeState.custom_selectors.trim()) {
+        try {
+          extract = JSON.parse(scrapeState.custom_selectors);
+        } catch {
+          // ignore invalid JSON
+        }
+      }
+
+      // Build AI options
+      let ai: { summary?: boolean; extract?: { prompt: string } } | undefined;
+      if (scrapeState.ai_summary || scrapeState.feat_ai_extraction) {
+        ai = {};
+        if (scrapeState.ai_summary) ai.summary = true;
+        if (scrapeState.feat_ai_extraction && scrapeState.ai_extraction_prompt.trim()) {
+          ai.extract = { prompt: scrapeState.ai_extraction_prompt.trim() };
+        }
+      }
+
       const data = await submitScrape({
         url,
-        formats: scrapeState.formats,
+        formats,
         only_main_content: scrapeState.only_main_content,
         include_links: scrapeState.include_links,
         timeout_ms: parseInt(scrapeState.timeout_ms) || 30000,
-        ai: scrapeState.ai_summary ? { summary: true } : undefined,
+        extract,
+        ai,
       });
       setResult(data);
       const newRuns = saveRun({
