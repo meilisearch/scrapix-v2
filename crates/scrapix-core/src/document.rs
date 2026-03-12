@@ -17,6 +17,12 @@ pub struct Document {
     /// Domain/hostname
     pub domain: String,
 
+    /// Source identifier for multi-tenant indexing.
+    /// Used to tag all documents from a specific crawl source (e.g. brand name, site slug).
+    /// Enables per-source filtering and deletion within a shared index.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+
     /// Page title
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
@@ -99,6 +105,7 @@ impl Document {
             uid: Uuid::new_v4().to_string(),
             url: url.into(),
             domain: domain.into(),
+            source: None,
             title: None,
             urls_tags: None,
             content: None,
@@ -129,6 +136,7 @@ impl Document {
             uid: Uuid::new_v4().to_string(),
             url: parent.url.clone(),
             domain: parent.domain.clone(),
+            source: parent.source.clone(),
             title: parent.title.clone(),
             urls_tags: parent.urls_tags.clone(),
             content: None,

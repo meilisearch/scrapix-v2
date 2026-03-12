@@ -763,6 +763,64 @@ mod tests {
     }
 
     #[test]
+    fn test_no_headings_single_block() {
+        // Content without headings gets collected into a single trailing block
+        let html = r#"
+            <!DOCTYPE html>
+            <html>
+            <body>
+                <article><p>Content without any headings at all, just plain text in a paragraph.</p></article>
+            </body>
+            </html>
+        "#;
+
+        let splitter = BlockSplitter::with_defaults();
+        let result = splitter.split(html).unwrap();
+
+        // All content goes into one block with no heading metadata
+        assert_eq!(result.count, 1);
+        assert!(result.blocks[0].heading.is_none());
+        assert!(result.blocks[0].heading_level.is_none());
+        assert!(result.blocks[0].content.contains("Content without"));
+    }
+
+    #[test]
+    fn test_heading_hierarchy_gap() {
+        // H1 directly to H4 — h2/h3 should be None in the block
+        let html = r#"
+            <!DOCTYPE html>
+            <html>
+            <body>
+                <h1>Title</h1>
+                <p>Some intro content that should be long enough to pass the minimum check.</p>
+                <h4>Deep Section</h4>
+                <p>Content under the deep section heading, needs to be long enough too.</p>
+            </body>
+            </html>
+        "#;
+
+        let splitter = BlockSplitter::new(BlockConfig {
+            min_level: 1,
+            max_level: 6,
+            min_content_length: 20,
+            ..Default::default()
+        });
+        let result = splitter.split(html).unwrap();
+
+        let deep_block = result
+            .blocks
+            .iter()
+            .find(|b| b.heading == Some("Deep Section".to_string()));
+
+        assert!(deep_block.is_some(), "Should find the deep section block");
+        let block = deep_block.unwrap();
+        assert_eq!(block.h1, Some("Title".to_string()));
+        assert_eq!(block.h2, None, "H2 should be None (gap in hierarchy)");
+        assert_eq!(block.h3, None, "H3 should be None (gap in hierarchy)");
+        assert_eq!(block.h4, Some("Deep Section".to_string()));
+    }
+
+    #[test]
     fn test_empty_document() {
         let html = r#"
             <!DOCTYPE html>

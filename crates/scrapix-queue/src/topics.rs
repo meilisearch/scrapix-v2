@@ -35,6 +35,9 @@ pub struct UrlMessage {
     pub job_id: String,
     /// Index UID for the destination
     pub index_uid: String,
+    /// Source identifier for multi-tenant indexing
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
     /// Account ID for billing attribution
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account_id: Option<String>,
@@ -60,6 +63,14 @@ pub struct UrlMessage {
     /// Per-job max pages to crawl (None = unlimited)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_pages: Option<u64>,
+    /// Whether this job uses incremental crawling (conditional HTTP headers + Redis history).
+    /// Defaults to true. Set to false for Replace index strategy (full re-crawl).
+    #[serde(default = "default_true")]
+    pub incremental: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl UrlMessage {
@@ -68,6 +79,7 @@ impl UrlMessage {
             url,
             job_id: job_id.into(),
             index_uid: index_uid.into(),
+            source: None,
             account_id: None,
             message_id: uuid::Uuid::new_v4().to_string(),
             created_at: chrono::Utc::now().timestamp_millis(),
@@ -77,6 +89,7 @@ impl UrlMessage {
             features: None,
             max_depth: None,
             max_pages: None,
+            incremental: true,
         }
     }
 
@@ -91,6 +104,7 @@ impl UrlMessage {
             url,
             job_id: job_id.into(),
             index_uid: index_uid.into(),
+            source: None,
             account_id: Some(account_id.into()),
             message_id: uuid::Uuid::new_v4().to_string(),
             created_at: chrono::Utc::now().timestamp_millis(),
@@ -100,6 +114,7 @@ impl UrlMessage {
             features: None,
             max_depth: None,
             max_pages: None,
+            incremental: true,
         }
     }
 
@@ -114,6 +129,7 @@ impl UrlMessage {
             url,
             job_id: job_id.into(),
             index_uid: index_uid.into(),
+            source: None,
             account_id: None,
             message_id: uuid::Uuid::new_v4().to_string(),
             created_at: chrono::Utc::now().timestamp_millis(),
@@ -123,12 +139,19 @@ impl UrlMessage {
             features: None,
             max_depth: None,
             max_pages: None,
+            incremental: true,
         }
     }
 
     /// Set account ID (builder pattern)
     pub fn account(mut self, account_id: impl Into<String>) -> Self {
         self.account_id = Some(account_id.into());
+        self
+    }
+
+    /// Set source identifier for multi-tenant indexing (builder pattern)
+    pub fn with_source(mut self, source: Option<String>) -> Self {
+        self.source = source;
         self
     }
 
@@ -149,6 +172,13 @@ impl UrlMessage {
     pub fn with_limits(mut self, max_depth: Option<u32>, max_pages: Option<u64>) -> Self {
         self.max_depth = max_depth;
         self.max_pages = max_pages;
+        self
+    }
+
+    /// Set whether this job uses incremental crawling (builder pattern).
+    /// When false, the crawler always does a full fetch (no conditional headers, no Redis history).
+    pub fn with_incremental(mut self, incremental: bool) -> Self {
+        self.incremental = incremental;
         self
     }
 
@@ -188,6 +218,9 @@ pub struct RawPageMessage {
     pub job_id: String,
     /// Index UID
     pub index_uid: String,
+    /// Source identifier for multi-tenant indexing
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
     /// Account ID for billing attribution
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account_id: Option<String>,

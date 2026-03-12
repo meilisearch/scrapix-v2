@@ -170,6 +170,12 @@ impl PolitenessScheduler {
         if let Some(state) = domains.get_mut(domain) {
             state.in_flight = state.in_flight.saturating_sub(1);
             state.consecutive_errors = 0;
+
+            // Gradually reduce delay back toward default after recovery
+            if state.delay_ms > self.config.default_delay_ms {
+                state.delay_ms =
+                    ((state.delay_ms as f64 * 0.9) as u64).max(self.config.default_delay_ms);
+            }
         }
     }
 
@@ -381,5 +387,98 @@ mod tests {
 
         let stats = scheduler.domain_stats("example.com").unwrap();
         assert_eq!(stats.delay_ms, 5000);
+    }
+
+    #[test]
+    fn test_delay_reduces_after_recovery() {
+        let config = PolitenessConfig {
+            default_delay_ms: 100,
+            max_delay_ms: 10_000,
+            ..Default::default()
+        };
+        let scheduler = PolitenessScheduler::new(config);
+
+        // Simulate 3 failures to increase delay
+        scheduler.start_request("example.com");
+        scheduler.failed_request("example.com", false);
+        scheduler.start_request("example.com");
+        scheduler.failed_request("example.com", false);
+        scheduler.start_request("example.com");
+        scheduler.failed_request("example.com", false);
+
+        let elevated = scheduler.domain_stats("example.com").unwrap().delay_ms;
+        assert!(elevated > 100, "Delay should have increased: {}", elevated);
+
+        // Simulate 10 successes — delay should reduce toward default
+        for _ in 0..10 {
+            scheduler.start_request("example.com");
+            scheduler.complete_request("example.com");
+        }
+
+        let recovered = scheduler.domain_stats("example.com").unwrap().delay_ms;
+        assert!(
+            recovered < elevated,
+            "Delay should decrease after recovery: {} vs {}",
+            recovered,
+            elevated
+        );
+    }
+
+    #[test]
+    fn test_delay_stays_elevated_during_errors() {
+        let config = PolitenessConfig {
+            default_delay_ms: 100,
+            max_delay_ms: 10_000,
+            ..Default::default()
+        };
+        let scheduler = PolitenessScheduler::new(config);
+
+        // 3 failures
+        for _ in 0..3 {
+            scheduler.start_request("example.com");
+            scheduler.failed_request("example.com", false);
+        }
+        let after_first_batch = scheduler.domain_stats("example.com").unwrap().delay_ms;
+
+        // 1 success (partial recovery)
+        scheduler.start_request("example.com");
+        scheduler.complete_request("example.com");
+
+        // 3 more failures — delay should increase again
+        for _ in 0..3 {
+            scheduler.start_request("example.com");
+            scheduler.failed_request("example.com", false);
+        }
+        let after_second_batch = scheduler.domain_stats("example.com").unwrap().delay_ms;
+
+        assert!(
+            after_second_batch >= after_first_batch,
+            "Delay should increase again after new errors: {} vs {}",
+            after_second_batch,
+            after_first_batch
+        );
+    }
+
+    #[test]
+    fn test_delay_cannot_exceed_max() {
+        let config = PolitenessConfig {
+            default_delay_ms: 100,
+            max_delay_ms: 1000,
+            ..Default::default()
+        };
+        let scheduler = PolitenessScheduler::new(config);
+
+        // Many failures
+        for _ in 0..20 {
+            scheduler.start_request("example.com");
+            scheduler.failed_request("example.com", true);
+        }
+
+        let stats = scheduler.domain_stats("example.com").unwrap();
+        assert!(
+            stats.delay_ms <= 1000,
+            "Delay should not exceed max: {}",
+            stats.delay_ms
+        );
     }
 }

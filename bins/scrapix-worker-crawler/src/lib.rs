@@ -38,7 +38,7 @@ use scrapix_queue::{
     topic_names, AnyConsumer, AnyProducer, ConsumerBuilder, CrawlEvent, LinksMessage,
     ProducerBuilder, RawPageMessage, UrlMessage,
 };
-use scrapix_storage::{RocksConfig, RocksStorage, RocksStorageAdapter};
+use scrapix_storage::{RedisCrawlHistory, RedisStorage, RocksConfig, RocksStorage, RocksStorageAdapter};
 
 use std::collections::HashSet;
 
@@ -192,6 +192,10 @@ pub struct Args {
     /// Enable incremental crawling (use conditional HTTP headers)
     #[arg(long, env = "INCREMENTAL_CRAWL", default_value = "true")]
     pub incremental_crawl: bool,
+
+    /// Redis URL for crawl history persistence (enables cross-session incremental crawling)
+    #[arg(long, env = "REDIS_URL")]
+    pub redis_url: Option<String>,
 
     /// Enable browser rendering for JavaScript-heavy pages (requires --features browser)
     #[arg(long, env = "BROWSER_RENDER")]
@@ -367,6 +371,8 @@ struct CrawlerWorker {
     link_graph_interval: u64,
     incremental_crawl: bool,
     publish_links: bool,
+    /// Redis-backed crawl history for cross-session incremental crawling
+    crawl_history: Option<Arc<RedisCrawlHistory>>,
     /// Tracks domains we've already discovered sitemaps for
     discovered_sitemap_domains: Arc<parking_lot::RwLock<std::collections::HashSet<String>>>,
     max_sitemap_urls: usize,
@@ -596,6 +602,27 @@ impl CrawlerWorker {
         // Create concurrency limiter
         let semaphore = Arc::new(Semaphore::new(args.concurrency));
 
+        // Create Redis crawl history for incremental crawling if Redis URL is provided
+        let crawl_history = if args.incremental_crawl {
+            if let Some(ref redis_url) = args.redis_url {
+                match RedisStorage::with_url(redis_url.as_str()).await {
+                    Ok(storage) => {
+                        info!(redis_url = %redis_url, "Redis crawl history enabled for incremental crawling");
+                        Some(Arc::new(RedisCrawlHistory::with_defaults(storage)))
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "Failed to connect to Redis for crawl history, incremental crawling will use in-message headers only");
+                        None
+                    }
+                }
+            } else {
+                debug!("No REDIS_URL configured, incremental crawling will use in-message headers only");
+                None
+            }
+        } else {
+            None
+        };
+
         Ok(Self {
             consumer,
             producer,
@@ -616,6 +643,7 @@ impl CrawlerWorker {
             link_graph_interval: args.link_graph_interval,
             incremental_crawl: args.incremental_crawl,
             publish_links: args.publish_links,
+            crawl_history,
             discovered_sitemap_domains: Arc::new(parking_lot::RwLock::new(HashSet::new())),
             max_sitemap_urls: args.max_sitemap_urls,
         })
@@ -767,10 +795,12 @@ impl CrawlerWorker {
         domain: &str,
         job_id: &str,
         index_uid: &str,
+        source: Option<String>,
         url_patterns: Option<UrlPatterns>,
         meilisearch_url: Option<String>,
         meilisearch_api_key: Option<String>,
         features: Option<FeaturesConfig>,
+        incremental: bool,
     ) -> scrapix_core::Result<usize> {
         // Check if we've already discovered sitemaps for this domain
         {
@@ -901,8 +931,10 @@ impl CrawlerWorker {
                     }
                     None => UrlMessage::new(crawl_url, job_id, index_uid),
                 }
+                .with_source(source.clone())
                 .with_meilisearch(meilisearch_url.clone(), meilisearch_api_key.clone())
-                .with_features(features.clone());
+                .with_features(features.clone())
+                .with_incremental(incremental);
 
                 if let Err(e) = self
                     .producer
@@ -958,10 +990,12 @@ impl CrawlerWorker {
                         domain,
                         &msg.job_id,
                         &msg.index_uid,
+                        msg.source.clone(),
                         msg.url_patterns.clone(),
                         msg.meilisearch_url.clone(),
                         msg.meilisearch_api_key.clone(),
                         msg.features.clone(),
+                        msg.incremental,
                     )
                     .await
                 {
@@ -1002,14 +1036,41 @@ impl CrawlerWorker {
                 unreachable!("Browser feature not enabled")
             }
         } else {
-            // Build conditional headers for incremental crawling
-            let conditional_headers = if self.incremental_crawl {
+            // Build conditional headers for incremental crawling.
+            // Only when both the global flag and per-job incremental flag are enabled.
+            // Replace index strategy sets msg.incremental = false to force full re-crawl.
+            let conditional_headers = if self.incremental_crawl && msg.incremental {
                 let mut headers = ConditionalRequestHeaders::new();
                 if let Some(ref etag) = url.etag {
                     headers = headers.with_etag(etag);
                 }
                 if let Some(ref last_modified) = url.last_modified {
                     headers = headers.with_last_modified(last_modified);
+                }
+                // If no in-message headers, look up Redis crawl history
+                if !headers.has_headers() {
+                    if let Some(ref history) = self.crawl_history {
+                        match history.get(&msg.index_uid, &url.url).await {
+                            Ok(Some(record)) => {
+                                if let Some(ref etag) = record.etag {
+                                    headers = headers.with_etag(etag);
+                                }
+                                if let Some(ref lm) = record.last_modified {
+                                    headers = headers.with_last_modified(lm);
+                                }
+                                if headers.has_headers() {
+                                    debug!(
+                                        url = %url.url,
+                                        "Loaded conditional headers from Redis crawl history"
+                                    );
+                                }
+                            }
+                            Ok(None) => {}
+                            Err(e) => {
+                                debug!(url = %url.url, error = %e, "Failed to look up crawl history");
+                            }
+                        }
+                    }
                 }
                 headers
             } else {
@@ -1154,6 +1215,20 @@ impl CrawlerWorker {
         let etag = page.headers.get("etag").cloned();
         let last_modified = page.headers.get("last-modified").cloned();
 
+        // Save crawl history to Redis for future incremental crawls (only for Update strategy)
+        if msg.incremental {
+            if let Some(ref history) = self.crawl_history {
+                if etag.is_some() || last_modified.is_some() {
+                if let Err(e) = history
+                    .save(&msg.index_uid, &url.url, etag.clone(), last_modified.clone())
+                    .await
+                {
+                    debug!(url = %url.url, error = %e, "Failed to save crawl history to Redis");
+                }
+            }
+            }
+        }
+
         // Publish raw page to content processing topic
         let raw_page_msg = RawPageMessage {
             url: page.url.clone(),
@@ -1167,6 +1242,7 @@ impl CrawlerWorker {
             fetch_duration_ms: page.fetch_duration_ms,
             job_id: msg.job_id.clone(),
             index_uid: msg.index_uid.clone(),
+            source: msg.source.clone(),
             account_id: msg.account_id.clone(),
             message_id: uuid::Uuid::new_v4().to_string(),
             etag,
@@ -1205,6 +1281,8 @@ impl CrawlerWorker {
             } else {
                 UrlMessage::new(discovered_url, &msg.job_id, &msg.index_uid)
             };
+            // Propagate source for multi-tenant indexing
+            url_msg.source = msg.source.clone();
             // Propagate account_id for billing attribution
             url_msg.account_id = msg.account_id.clone();
             // Propagate per-job Meilisearch config
@@ -1215,6 +1293,7 @@ impl CrawlerWorker {
             // Propagate per-job crawl limits
             url_msg.max_depth = msg.max_depth;
             url_msg.max_pages = msg.max_pages;
+            url_msg.incremental = msg.incremental;
 
             self.producer
                 .send(

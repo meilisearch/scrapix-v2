@@ -11,6 +11,13 @@ pub struct CrawlConfig {
     #[validate(length(min = 1, message = "At least one start URL is required"))]
     pub start_urls: Vec<String>,
 
+    /// Source identifier for multi-tenant indexing.
+    /// When set, all documents from this crawl job are tagged with this value,
+    /// enabling per-source filtering and deletion within a shared index.
+    /// Falls back to the domain if not set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+
     /// Meilisearch index UID
     #[validate(length(min = 1, message = "Index UID is required"))]
     pub index_uid: String,
@@ -646,6 +653,7 @@ mod tests {
     fn test_default_config() {
         let config = CrawlConfig {
             start_urls: vec!["https://example.com".to_string()],
+            source: None,
             index_uid: "test".to_string(),
             crawler_type: CrawlerType::default(),
             max_depth: None,

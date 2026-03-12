@@ -382,4 +382,38 @@ mod tests {
         assert!(!normalized.contains("utm_campaign"));
         assert_eq!(normalized, "https://example.com/page");
     }
+
+    #[test]
+    fn test_normalize_url_with_query() {
+        let normalized = normalize_url("https://example.com/page?utm=1");
+        assert_eq!(normalized, "https://example.com/page");
+    }
+
+    #[test]
+    fn test_normalize_malformed_url_with_query() {
+        // Non-parseable URL — fallback path doesn't strip query params
+        let url = "not-a-url?foo=bar";
+        let normalized = normalize_url(url);
+        // Document that the fallback path does NOT strip query params
+        // (Url::parse fails, so we only get lowercase + fragment removal)
+        assert!(
+            normalized.contains("foo=bar"),
+            "Known issue: fallback path doesn't strip query params: {}",
+            normalized
+        );
+    }
+
+    #[test]
+    fn test_normalize_preserves_path() {
+        let normalized = normalize_url("https://example.com/a/b/c");
+        assert_eq!(normalized, "https://example.com/a/b/c");
+    }
+
+    #[test]
+    fn test_normalize_removes_fragment_fallback() {
+        // Fragment removal happens before URL parsing, so it works even on weird URLs
+        let normalized = normalize_url("https://example.com/page#section");
+        assert!(!normalized.contains("#section"));
+        assert_eq!(normalized, "https://example.com/page");
+    }
 }

@@ -821,6 +821,24 @@ struct CreateCrawlResponse {
     message: String,
 }
 
+/// Bulk crawl response
+#[derive(Debug, Serialize)]
+struct BulkCrawlResponse {
+    /// Successfully created jobs
+    jobs: Vec<CreateCrawlResponse>,
+    /// Number of jobs that failed to create
+    errors: Vec<BulkCrawlError>,
+    /// Total jobs submitted
+    total: usize,
+}
+
+/// Error for a single config in a bulk submission
+#[derive(Debug, Serialize)]
+struct BulkCrawlError {
+    index: usize,
+    error: String,
+}
+
 /// Job status response
 #[derive(Debug, Serialize)]
 struct JobStatusResponse {
@@ -2034,9 +2052,11 @@ pub(crate) async fn do_create_crawl(
         } else {
             UrlMessage::new(crawl_url, &job_id, &pipeline_index_uid)
         }
+        .with_source(config.source.clone())
         .with_meilisearch(job_meilisearch_url.clone(), job_meilisearch_key.clone())
         .with_features(Some(config.features.clone()))
-        .with_limits(config.max_depth, config.max_pages);
+        .with_limits(config.max_depth, config.max_pages)
+        .with_incremental(!replace_index);
 
         // Attach account_id to message for billing attribution
         let msg = if let Some(ctx) = account_ctx {
@@ -2826,6 +2846,44 @@ async fn create_crawl_sync(
             }
         }
     }
+}
+
+/// Create multiple crawl jobs from a batch of configs
+async fn create_crawl_bulk(
+    State(state): State<Arc<AppState>>,
+    account_ext: Option<Extension<AuthenticatedAccount>>,
+    user_ext: Option<Extension<AuthenticatedUser>>,
+    Json(configs): Json<Vec<CrawlConfig>>,
+) -> Result<Json<BulkCrawlResponse>, ApiError> {
+    let account_ctx =
+        extract_account_context(state.db_pool.as_ref(), &account_ext, &user_ext).await;
+
+    let total = configs.len();
+    let mut jobs = Vec::with_capacity(total);
+    let mut errors = Vec::new();
+
+    for (index, config) in configs.into_iter().enumerate() {
+        match do_create_crawl(&state, config, account_ctx.as_ref()).await {
+            Ok(response) => jobs.push(response),
+            Err(e) => errors.push(BulkCrawlError {
+                index,
+                error: e.error.clone(),
+            }),
+        }
+    }
+
+    info!(
+        total = total,
+        succeeded = jobs.len(),
+        failed = errors.len(),
+        "Bulk crawl submission completed"
+    );
+
+    Ok(Json(BulkCrawlResponse {
+        jobs,
+        errors,
+        total,
+    }))
 }
 
 /// Get job status
@@ -3955,6 +4013,7 @@ pub async fn run_with_bus(
         .route("/map", post(map_url))
         .route("/crawl", post(create_crawl))
         .route("/crawl/sync", post(create_crawl_sync))
+        .route("/crawl/bulk", post(create_crawl_bulk))
         .route("/jobs", get(list_jobs))
         .route("/job/{id}/status", get(job_status))
         .route("/job/{id}/events", get(job_events))

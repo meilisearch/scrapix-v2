@@ -53,6 +53,7 @@ pub use object_storage::{
     S3StorageBuilder,
 };
 pub use redis::{
-    AcquireResult, RateLimiterConfig, RedisConfig, RedisRateLimiter, RedisSeenCache, RedisStorage,
+    AcquireResult, CrawlHistoryRecord, RateLimiterConfig, RedisConfig, RedisCrawlHistory,
+    RedisRateLimiter, RedisSeenCache, RedisStorage,
 };
 pub use rocks::{RocksConfig, RocksSeenTracker, RocksStorage, RocksStorageAdapter, WorkerState};

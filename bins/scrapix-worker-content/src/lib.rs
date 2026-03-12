@@ -952,6 +952,12 @@ impl ContentWorker {
         // Resolve per-job features and filter disabled fields
         let features = self.resolve_features(msg);
         let mut document = document;
+        // Set source for multi-tenant indexing (from crawl config, falls back to domain)
+        document.source = Some(
+            msg.source
+                .clone()
+                .unwrap_or_else(|| document.domain.clone()),
+        );
         Self::filter_document(&mut document, &features);
 
         // Configure index settings for enabled features (once per index)
@@ -1235,6 +1241,12 @@ impl ContentWorker {
         // Resolve per-job features and filter disabled fields
         let features = self.resolve_features(msg);
         let mut document = document;
+        // Set source for multi-tenant indexing (from crawl config, falls back to domain)
+        document.source = Some(
+            msg.source
+                .clone()
+                .unwrap_or_else(|| document.domain.clone()),
+        );
         Self::filter_document(&mut document, &features);
 
         // Configure index settings for enabled features (once per index)
@@ -1371,6 +1383,7 @@ impl ContentWorker {
             uid: format!("{}-block-{}", parent_doc.uid, block.index),
             url: block_url,
             domain: parent_doc.domain.clone(),
+            source: parent_doc.source.clone(),
             title: block_title,
             urls_tags: if urls_tags.is_empty() {
                 parent_doc.urls_tags.clone()

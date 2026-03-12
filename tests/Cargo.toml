@@ -14,12 +14,16 @@ scrapix-parser = { path = "../crates/scrapix-parser" }
 scrapix-extractor = { path = "../crates/scrapix-extractor" }
 scrapix-frontier = { path = "../crates/scrapix-frontier" }
 scrapix-crawler = { path = "../crates/scrapix-crawler" }
+scrapix-queue = { path = "../crates/scrapix-queue" }
 
 # Async runtime
 tokio = { workspace = true }
 
 # HTTP mocking
 wiremock = { workspace = true }
+
+# Validation
+validator = { workspace = true }
 
 # Utilities
 serde_json = { workspace = true }
@@ -56,3 +60,43 @@ path = "src/link_graph.rs"
 [[test]]
 name = "dns_cache"
 path = "src/dns_cache.rs"
+
+[[test]]
+name = "message_contracts"
+path = "src/message_contracts.rs"
+
+[[test]]
+name = "config_validation"
+path = "src/config_validation.rs"
+
+[[test]]
+name = "url_normalization"
+path = "src/url_normalization.rs"
+
+[[test]]
+name = "error_resilience"
+path = "src/error_resilience.rs"
+
+[[test]]
+name = "billing_accuracy"
+path = "src/billing_accuracy.rs"
+
+[[test]]
+name = "domain_safety"
+path = "src/domain_safety.rs"
+
+[[test]]
+name = "concurrency"
+path = "src/concurrency.rs"
+
+[[test]]
+name = "job_lifecycle"
+path = "src/job_lifecycle.rs"
+
+[[test]]
+name = "document_uid"
+path = "src/document_uid.rs"
+
+[[test]]
+name = "simhash_properties"
+path = "src/simhash_properties.rs"

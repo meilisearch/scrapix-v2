@@ -489,6 +489,12 @@ impl NearDuplicateDetector {
     }
 
     fn find_similar_simhash(&self, hash: u64) -> Option<(String, u32)> {
+        // Zero-hash means empty/no-token content — treat as unique to avoid
+        // false collisions between unrelated empty pages.
+        if hash == 0 {
+            return None;
+        }
+
         let buckets = self.simhash_buckets.read();
 
         // For small datasets, check all buckets (brute force)
@@ -500,6 +506,10 @@ impl NearDuplicateDetector {
         // Check all buckets for similarity
         for entries in buckets.values() {
             for (url, stored_hash) in entries {
+                // Skip zero-hash stored entries too
+                if *stored_hash == 0 {
+                    continue;
+                }
                 let distance = SimHash::hamming_distance(hash, *stored_hash);
                 if distance <= self.config.simhash_threshold {
                     return Some((url.clone(), distance));
@@ -856,6 +866,71 @@ mod tests {
 
         let stats = detector.stats();
         assert_eq!(stats.documents_checked, 2);
+    }
+
+    #[test]
+    fn test_hash_empty_content() {
+        let simhash = SimHash::new();
+        let hash = simhash.hash("");
+        assert_eq!(hash, 0);
+    }
+
+    #[test]
+    fn test_empty_contents_not_similar_in_detector() {
+        let config = NearDuplicateConfig {
+            use_simhash: true,
+            simhash_threshold: 3,
+            ..Default::default()
+        };
+        let detector = NearDuplicateDetector::new(config);
+
+        // Two empty pages should NOT be flagged as duplicates of each other
+        let result1 = detector.check_and_add("https://example.com/page1", "");
+        assert!(result1.is_none(), "First empty page should not be duplicate");
+
+        let result2 = detector.check_and_add("https://example.com/page2", "");
+        assert!(
+            result2.is_none(),
+            "Second empty page should not be duplicate of first"
+        );
+    }
+
+    #[test]
+    fn test_punctuation_only_content() {
+        let simhash = SimHash::new();
+        let hash_empty = simhash.hash("");
+        let hash_punct = simhash.hash("!@#$%^&*()");
+        // Both hash to 0 because normalization strips non-alphanumeric chars,
+        // but the detector should handle zero-hashes gracefully
+        assert_eq!(hash_empty, 0);
+        assert_eq!(hash_punct, 0);
+
+        // The detector should not flag them as duplicates
+        let config = NearDuplicateConfig {
+            use_simhash: true,
+            simhash_threshold: 3,
+            ..Default::default()
+        };
+        let detector = NearDuplicateDetector::new(config);
+        let r1 = detector.check_and_add("https://a.com/1", "!@#$%^&*()");
+        let r2 = detector.check_and_add("https://a.com/2", "");
+        assert!(r1.is_none());
+        assert!(r2.is_none());
+    }
+
+    #[test]
+    fn test_single_word_content() {
+        let simhash = SimHash::new();
+        let hash = simhash.hash("hello");
+        assert_ne!(hash, 0);
+    }
+
+    #[test]
+    fn test_very_short_content_distinct() {
+        let simhash = SimHash::new();
+        let hash_cats = simhash.hash("cats");
+        let hash_dogs = simhash.hash("dogs");
+        assert_ne!(hash_cats, hash_dogs);
     }
 
     #[test]

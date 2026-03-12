@@ -64,6 +64,7 @@ impl Default for MeilisearchConfig {
             ],
             filterable_attributes: vec![
                 "domain".to_string(),
+                "source".to_string(),
                 "urls_tags".to_string(),
                 "language".to_string(),
                 "crawled_at".to_string(),

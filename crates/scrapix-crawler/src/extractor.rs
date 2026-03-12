@@ -251,8 +251,8 @@ impl UrlExtractor {
         // Convert to string
         let mut url_str = normalized.to_string();
 
-        // Remove trailing slash for consistency (except for root)
-        if url_str.ends_with('/') && url_str.chars().filter(|c| *c == '/').count() > 3 {
+        // Remove trailing slash for consistency (except for root path "/")
+        if url_str.ends_with('/') && normalized.path().len() > 1 {
             url_str.pop();
         }
 
@@ -640,6 +640,87 @@ mod tests {
         assert!(!extractor.matches_glob(
             "https://example.com/blog/page",
             "https://example.com/docs/**"
+        ));
+    }
+
+    #[test]
+    fn test_trailing_slash_http_scheme() {
+        let extractor = UrlExtractor::with_defaults();
+        let page = make_page(
+            "http://example.com",
+            r#"<html><body><a href="http://example.com/path/">Link</a></body></html>"#,
+        );
+        let urls = extractor.extract_urls(&page);
+        assert_eq!(urls.len(), 1);
+        assert_eq!(urls[0], "http://example.com/path");
+    }
+
+    #[test]
+    fn test_trailing_slash_https_scheme() {
+        let extractor = UrlExtractor::with_defaults();
+        let page = make_page(
+            "https://example.com",
+            r#"<html><body><a href="https://example.com/path/">Link</a></body></html>"#,
+        );
+        let urls = extractor.extract_urls(&page);
+        assert_eq!(urls.len(), 1);
+        assert_eq!(urls[0], "https://example.com/path");
+    }
+
+    #[test]
+    fn test_trailing_slash_root_preserved() {
+        let extractor = UrlExtractor::with_defaults();
+        let page = make_page(
+            "https://example.com",
+            r#"<html><body><a href="https://example.com/">Link</a></body></html>"#,
+        );
+        let urls = extractor.extract_urls(&page);
+        assert_eq!(urls.len(), 1);
+        assert_eq!(urls[0], "https://example.com/");
+    }
+
+    #[test]
+    fn test_trailing_slash_deep_path() {
+        let extractor = UrlExtractor::with_defaults();
+        let page = make_page(
+            "https://example.com",
+            r#"<html><body><a href="https://example.com/a/b/c/">Link</a></body></html>"#,
+        );
+        let urls = extractor.extract_urls(&page);
+        assert_eq!(urls.len(), 1);
+        assert_eq!(urls[0], "https://example.com/a/b/c");
+    }
+
+    #[test]
+    fn test_glob_multiple_double_star() {
+        let extractor = UrlExtractor::with_defaults();
+        // Pattern with multiple ** segments currently only handles 2-part split
+        assert!(extractor.matches_glob(
+            "https://example.com/docs/v2/api",
+            "https://example.com/docs/**/api"
+        ));
+    }
+
+    #[test]
+    fn test_glob_single_star_no_slash_crossing() {
+        let extractor = UrlExtractor::with_defaults();
+        // Single * should NOT cross directory boundaries
+        assert!(!extractor.matches_glob(
+            "https://example.com/docs/a/b/page",
+            "https://example.com/docs/*/page"
+        ));
+    }
+
+    #[test]
+    fn test_glob_exact_match() {
+        let extractor = UrlExtractor::with_defaults();
+        assert!(extractor.matches_glob(
+            "https://example.com/page",
+            "https://example.com/page"
+        ));
+        assert!(!extractor.matches_glob(
+            "https://example.com/other",
+            "https://example.com/page"
         ));
     }
 

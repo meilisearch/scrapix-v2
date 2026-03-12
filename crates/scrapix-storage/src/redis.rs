@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use redis::{aio::ConnectionManager, AsyncCommands, Client};
+use serde::{Deserialize, Serialize};
 use tracing::{debug, instrument};
 
 use scrapix_core::{Result, ScrapixError};
@@ -368,6 +369,87 @@ impl RedisSeenCache {
             self.mark_seen(url).await?;
         }
         Ok(())
+    }
+}
+
+/// Crawl history record stored in Redis for incremental crawling
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrawlHistoryRecord {
+    /// ETag from the HTTP response
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub etag: Option<String>,
+    /// Last-Modified header from the HTTP response
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_modified: Option<String>,
+    /// Timestamp of the last successful crawl (epoch millis)
+    pub crawled_at: i64,
+}
+
+/// Redis-backed crawl history store for incremental crawling.
+///
+/// Stores per-URL `{etag, last_modified, crawled_at}` keyed by `(index_uid, url)`.
+/// The crawler worker looks up history before fetching to populate conditional HTTP
+/// headers (If-None-Match / If-Modified-Since). After a successful fetch it saves
+/// the response headers so the next crawl can skip unchanged pages.
+pub struct RedisCrawlHistory {
+    storage: RedisStorage,
+    /// TTL for history records (default 30 days)
+    ttl: Duration,
+}
+
+impl RedisCrawlHistory {
+    /// Create a new crawl history store
+    pub fn new(storage: RedisStorage, ttl: Duration) -> Self {
+        Self { storage, ttl }
+    }
+
+    /// Create with default 30-day TTL
+    pub fn with_defaults(storage: RedisStorage) -> Self {
+        Self::new(storage, Duration::from_secs(86400 * 30))
+    }
+
+    /// Build the Redis key for a (index_uid, url) pair
+    fn history_key(index_uid: &str, url: &str) -> String {
+        format!("crawl_history:{}:{}", index_uid, url_hash(url))
+    }
+
+    /// Look up the crawl history for a URL in a given index.
+    /// Returns None if the URL has never been crawled.
+    pub async fn get(
+        &self,
+        index_uid: &str,
+        url: &str,
+    ) -> Result<Option<CrawlHistoryRecord>> {
+        let key = Self::history_key(index_uid, url);
+        match self.storage.get(&key).await? {
+            Some(json) => {
+                let record: CrawlHistoryRecord = serde_json::from_str(&json).map_err(|e| {
+                    ScrapixError::Storage(format!("Failed to deserialize crawl history: {}", e))
+                })?;
+                Ok(Some(record))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Save the crawl history for a URL after a successful fetch.
+    pub async fn save(
+        &self,
+        index_uid: &str,
+        url: &str,
+        etag: Option<String>,
+        last_modified: Option<String>,
+    ) -> Result<()> {
+        let key = Self::history_key(index_uid, url);
+        let record = CrawlHistoryRecord {
+            etag,
+            last_modified,
+            crawled_at: chrono::Utc::now().timestamp_millis(),
+        };
+        let json = serde_json::to_string(&record).map_err(|e| {
+            ScrapixError::Storage(format!("Failed to serialize crawl history: {}", e))
+        })?;
+        self.storage.set(&key, &json, Some(self.ttl)).await
     }
 }
 

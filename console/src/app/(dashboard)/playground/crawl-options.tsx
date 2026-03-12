@@ -974,7 +974,7 @@ export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
             <div className="space-y-1.5">
               <Label className="text-sm font-medium">Index Strategy</Label>
               <p className="text-xs text-muted-foreground">
-                Update adds new documents or updates existing ones. Replace creates a fresh index and swaps it atomically on completion.
+                Update adds new documents or updates existing ones — unchanged pages are skipped using conditional HTTP headers. Replace creates a fresh index and swaps it atomically on completion (always re-crawls all pages).
               </p>
               <ToggleGroup
                 type="single"

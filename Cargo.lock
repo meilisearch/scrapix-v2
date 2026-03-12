@@ -4451,11 +4451,13 @@ dependencies = [
  "scrapix-extractor",
  "scrapix-frontier",
  "scrapix-parser",
+ "scrapix-queue",
  "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
  "url",
+ "validator",
  "wiremock",
 ]
 
