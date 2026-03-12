@@ -714,14 +714,8 @@ mod tests {
     #[test]
     fn test_glob_exact_match() {
         let extractor = UrlExtractor::with_defaults();
-        assert!(extractor.matches_glob(
-            "https://example.com/page",
-            "https://example.com/page"
-        ));
-        assert!(!extractor.matches_glob(
-            "https://example.com/other",
-            "https://example.com/page"
-        ));
+        assert!(extractor.matches_glob("https://example.com/page", "https://example.com/page"));
+        assert!(!extractor.matches_glob("https://example.com/other", "https://example.com/page"));
     }
 
     #[test]

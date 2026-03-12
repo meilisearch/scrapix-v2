@@ -4258,11 +4258,7 @@ mod tests {
     #[test]
     fn test_preprocess_html_include_and_exclude() {
         let html = r#"<html><body><main><p>Keep</p><div class="ad">Ad</div></main><footer>Foot</footer></body></html>"#;
-        let result = preprocess_html(
-            html,
-            &["main".to_string()],
-            &[".ad".to_string()],
-        );
+        let result = preprocess_html(html, &["main".to_string()], &[".ad".to_string()]);
         assert!(result.contains("Keep"));
         assert!(!result.contains("Ad</div>"));
         assert!(!result.contains("Foot"));

@@ -886,7 +886,10 @@ mod tests {
 
         // Two empty pages should NOT be flagged as duplicates of each other
         let result1 = detector.check_and_add("https://example.com/page1", "");
-        assert!(result1.is_none(), "First empty page should not be duplicate");
+        assert!(
+            result1.is_none(),
+            "First empty page should not be duplicate"
+        );
 
         let result2 = detector.check_and_add("https://example.com/page2", "");
         assert!(

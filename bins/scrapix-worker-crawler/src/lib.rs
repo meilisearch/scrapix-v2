@@ -38,7 +38,9 @@ use scrapix_queue::{
     topic_names, AnyConsumer, AnyProducer, ConsumerBuilder, CrawlEvent, LinksMessage,
     ProducerBuilder, RawPageMessage, UrlMessage,
 };
-use scrapix_storage::{RedisCrawlHistory, RedisStorage, RocksConfig, RocksStorage, RocksStorageAdapter};
+use scrapix_storage::{
+    RedisCrawlHistory, RedisStorage, RocksConfig, RocksStorage, RocksStorageAdapter,
+};
 
 use std::collections::HashSet;
 
@@ -1219,13 +1221,18 @@ impl CrawlerWorker {
         if msg.incremental {
             if let Some(ref history) = self.crawl_history {
                 if etag.is_some() || last_modified.is_some() {
-                if let Err(e) = history
-                    .save(&msg.index_uid, &url.url, etag.clone(), last_modified.clone())
-                    .await
-                {
-                    debug!(url = %url.url, error = %e, "Failed to save crawl history to Redis");
+                    if let Err(e) = history
+                        .save(
+                            &msg.index_uid,
+                            &url.url,
+                            etag.clone(),
+                            last_modified.clone(),
+                        )
+                        .await
+                    {
+                        debug!(url = %url.url, error = %e, "Failed to save crawl history to Redis");
+                    }
                 }
-            }
             }
         }
 

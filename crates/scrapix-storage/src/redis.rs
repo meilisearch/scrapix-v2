@@ -415,11 +415,7 @@ impl RedisCrawlHistory {
 
     /// Look up the crawl history for a URL in a given index.
     /// Returns None if the URL has never been crawled.
-    pub async fn get(
-        &self,
-        index_uid: &str,
-        url: &str,
-    ) -> Result<Option<CrawlHistoryRecord>> {
+    pub async fn get(&self, index_uid: &str, url: &str) -> Result<Option<CrawlHistoryRecord>> {
         let key = Self::history_key(index_uid, url);
         match self.storage.get(&key).await? {
             Some(json) => {

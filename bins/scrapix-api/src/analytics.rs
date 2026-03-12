@@ -385,7 +385,10 @@ async fn pipe_hourly_stats(
                 0.0
             };
             HourlyStatsRow {
-                hour: s.hour.format(&time::format_description::well_known::Rfc3339).unwrap_or_else(|_| s.hour.to_string()),
+                hour: s
+                    .hour
+                    .format(&time::format_description::well_known::Rfc3339)
+                    .unwrap_or_else(|_| s.hour.to_string()),
                 requests: s.requests,
                 successes: s.successes,
                 failures: s.failures,

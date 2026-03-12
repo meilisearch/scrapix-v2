@@ -399,7 +399,11 @@ mod tests {
     fn test_scrape_credits_base_formats_free() {
         // Html, RawHtml, Content are free (still minimum 1)
         let credits = scrape_credits(
-            &[ScrapeFormat::Html, ScrapeFormat::RawHtml, ScrapeFormat::Content],
+            &[
+                ScrapeFormat::Html,
+                ScrapeFormat::RawHtml,
+                ScrapeFormat::Content,
+            ],
             false,
             false,
         );
@@ -413,7 +417,11 @@ mod tests {
         assert_eq!(credits, 1);
 
         let credits = scrape_credits(
-            &[ScrapeFormat::Markdown, ScrapeFormat::Links, ScrapeFormat::Metadata],
+            &[
+                ScrapeFormat::Markdown,
+                ScrapeFormat::Links,
+                ScrapeFormat::Metadata,
+            ],
             false,
             false,
         );
@@ -455,22 +463,14 @@ mod tests {
     #[test]
     fn test_scrape_credits_combined() {
         // 2 feature formats + AI summary + AI extraction = 2 + 5 + 5 = 12
-        let credits = scrape_credits(
-            &[ScrapeFormat::Markdown, ScrapeFormat::Schema],
-            true,
-            true,
-        );
+        let credits = scrape_credits(&[ScrapeFormat::Markdown, ScrapeFormat::Schema], true, true);
         assert_eq!(credits, 12);
     }
 
     #[test]
     fn test_scrape_credits_mixed_base_and_feature() {
         // Base (Html) is free, only Markdown counts = 1
-        let credits = scrape_credits(
-            &[ScrapeFormat::Html, ScrapeFormat::Markdown],
-            false,
-            false,
-        );
+        let credits = scrape_credits(&[ScrapeFormat::Html, ScrapeFormat::Markdown], false, false);
         assert_eq!(credits, 1);
     }
 
@@ -507,9 +507,12 @@ mod tests {
     #[test]
     fn test_crawl_credits_with_ai() {
         let features = FeaturesConfig::from_cli_args(
-            false, false, false, false,
-            true,  // ai_summary +5
-            true,  // ai_extraction +5
+            false,
+            false,
+            false,
+            false,
+            true, // ai_summary +5
+            true, // ai_extraction +5
             Some("extract product info".to_string()),
         );
         let credits = crawl_credits_per_page(&CrawlerType::Http, &features);
@@ -520,7 +523,12 @@ mod tests {
     #[test]
     fn test_crawl_credits_browser_all_features() {
         let features = FeaturesConfig::from_cli_args(
-            true, true, true, true, true, true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
             Some("extract".to_string()),
         );
         let credits = crawl_credits_per_page(&CrawlerType::Browser, &features);
