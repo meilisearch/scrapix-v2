@@ -295,7 +295,8 @@ impl AppState {
         // Track last activity for idle-based completion detection
         {
             let now = std::time::Instant::now();
-            self.crawl.job_last_activity
+            self.crawl
+                .job_last_activity
                 .write()
                 .insert(job_id.to_string(), now);
 
@@ -307,7 +308,10 @@ impl AppState {
                 _ => None,
             };
             if let Some(svc) = service {
-                self.diagnostics.service_last_seen.write().insert(svc.to_string(), now);
+                self.diagnostics
+                    .service_last_seen
+                    .write()
+                    .insert(svc.to_string(), now);
             }
         }
 
@@ -481,17 +485,24 @@ impl AppState {
                             jobs.get(job_id)
                                 .and_then(|j| j.config.as_ref())
                                 .map(|cfg| {
-                                    let ct = cfg.get("crawler_type")
-                                        .and_then(|v| serde_json::from_value::<CrawlerType>(v.clone()).ok())
+                                    let ct = cfg
+                                        .get("crawler_type")
+                                        .and_then(|v| {
+                                            serde_json::from_value::<CrawlerType>(v.clone()).ok()
+                                        })
                                         .unwrap_or_default();
-                                    let ft = cfg.get("features")
-                                        .and_then(|v| serde_json::from_value::<FeaturesConfig>(v.clone()).ok())
+                                    let ft = cfg
+                                        .get("features")
+                                        .and_then(|v| {
+                                            serde_json::from_value::<FeaturesConfig>(v.clone()).ok()
+                                        })
                                         .unwrap_or_default();
                                     (ct, ft)
                                 })
                                 .unwrap_or_default()
                         };
-                        let cost_per_page = billing::crawl_credits_per_page(&crawler_type, &features);
+                        let cost_per_page =
+                            billing::crawl_credits_per_page(&crawler_type, &features);
                         let total_pages = *pages_crawled;
                         let credits = total_pages as i64 * cost_per_page;
                         let pool = pool.clone();
@@ -503,7 +514,10 @@ impl AppState {
                                 &acct_id,
                                 credits,
                                 "crawl",
-                                &format!("Job {} ({} pages × {} credits/page)", job_id, total_pages, cost_per_page),
+                                &format!(
+                                    "Job {} ({} pages × {} credits/page)",
+                                    job_id, total_pages, cost_per_page
+                                ),
                             )
                             .await
                             {
@@ -1364,7 +1378,8 @@ async fn scrape_url(
     // Compute credit cost based on requested features
     let has_ai_summary_req = request.ai.as_ref().is_some_and(|ai| ai.summary);
     let has_ai_extraction_req = request.ai.as_ref().is_some_and(|ai| ai.extract.is_some());
-    let scrape_cost = billing::scrape_credits(&request.formats, has_ai_summary_req, has_ai_extraction_req);
+    let scrape_cost =
+        billing::scrape_credits(&request.formats, has_ai_summary_req, has_ai_extraction_req);
 
     // Pre-flight credit check (soft UX check; real deduction is atomic below)
     if let (Some(ref pool), Some(ref ctx)) = (&state.db_pool, &account_ctx) {
@@ -1386,7 +1401,10 @@ async fn scrape_url(
     }
 
     // Block raw IP addresses to prevent SSRF
-    if matches!(parsed_url.host(), Some(url::Host::Ipv4(_)) | Some(url::Host::Ipv6(_))) {
+    if matches!(
+        parsed_url.host(),
+        Some(url::Host::Ipv4(_)) | Some(url::Host::Ipv6(_))
+    ) {
         return Err(ApiError::new(
             "Raw IP addresses are not allowed, use a hostname instead",
             "validation_error",
@@ -1751,6 +1769,7 @@ async fn scrape_url(
 }
 
 /// Log a scrape request to ClickHouse request_events (fire-and-forget).
+#[allow(clippy::too_many_arguments)]
 fn log_scrape_request(
     batcher: &Arc<RequestEventBatcher>,
     url: &str,
@@ -1907,7 +1926,10 @@ pub(crate) async fn do_create_crawl(
     job.config = serde_json::to_value(&config).ok().map(|mut v| {
         if let Some(ms) = v.get_mut("meilisearch") {
             if let Some(obj) = ms.as_object_mut() {
-                obj.insert("api_key".to_string(), serde_json::Value::String("***".to_string()));
+                obj.insert(
+                    "api_key".to_string(),
+                    serde_json::Value::String("***".to_string()),
+                );
             }
         }
         v
@@ -2093,7 +2115,10 @@ pub(crate) async fn do_create_crawl(
         j.config = serde_json::to_value(&config).ok().map(|mut v| {
             if let Some(ms) = v.get_mut("meilisearch") {
                 if let Some(obj) = ms.as_object_mut() {
-                    obj.insert("api_key".to_string(), serde_json::Value::String("***".to_string()));
+                    obj.insert(
+                        "api_key".to_string(),
+                        serde_json::Value::String("***".to_string()),
+                    );
                 }
             }
             v
@@ -2224,7 +2249,7 @@ fn extract_page_links(html: &str, base_url: &url::Url) -> Vec<(String, Option<St
     let base_domain = base_url.host_str().unwrap_or("");
 
     let mut links = Vec::new();
-    for element in document.select(&link_selector) {
+    for element in document.select(link_selector) {
         if let Some(href) = element.value().attr("href") {
             let resolved = base_url.join(href).ok();
             if let Some(resolved_url) = resolved {
@@ -2260,13 +2285,22 @@ async fn map_fetch_page(
     use regex::Regex;
     use std::sync::LazyLock;
 
+    #[allow(clippy::incompatible_msrv)]
     static RE_TITLE: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?is)<title[^>]*>(.*?)</title>").unwrap());
+    #[allow(clippy::incompatible_msrv)]
     static RE_DESC: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r#"(?is)<meta[^>]+name\s*=\s*["']description["'][^>]+content\s*=\s*["']([^"']*)["']"#).unwrap()
+        Regex::new(
+            r#"(?is)<meta[^>]+name\s*=\s*["']description["'][^>]+content\s*=\s*["']([^"']*)["']"#,
+        )
+        .unwrap()
     });
+    #[allow(clippy::incompatible_msrv)]
     static RE_DESC_ALT: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r#"(?is)<meta[^>]+content\s*=\s*["']([^"']*)["'][^>]+name\s*=\s*["']description["']"#).unwrap()
+        Regex::new(
+            r#"(?is)<meta[^>]+content\s*=\s*["']([^"']*)["'][^>]+name\s*=\s*["']description["']"#,
+        )
+        .unwrap()
     });
 
     let crawl_url = CrawlUrl::seed(&url);
@@ -2277,7 +2311,10 @@ async fn map_fetch_page(
     };
 
     // Extract title and description from the head via regex (avoids a full DOM parse)
-    let head_end = page.html.find("</head>").unwrap_or(8192.min(page.html.len()));
+    let head_end = page
+        .html
+        .find("</head>")
+        .unwrap_or(8192.min(page.html.len()));
     let head = &page.html[..head_end];
 
     let title = RE_TITLE
@@ -2339,7 +2376,10 @@ async fn map_url(
     }
 
     // Block raw IP addresses to prevent SSRF
-    if matches!(parsed_url.host(), Some(url::Host::Ipv4(_)) | Some(url::Host::Ipv6(_))) {
+    if matches!(
+        parsed_url.host(),
+        Some(url::Host::Ipv4(_)) | Some(url::Host::Ipv6(_))
+    ) {
         return Err(ApiError::new(
             "Raw IP addresses are not allowed, use a hostname instead",
             "validation_error",
@@ -2359,8 +2399,8 @@ async fn map_url(
     let mut results: Vec<MapLink> = Vec::new();
 
     // Map from URL → sitemap metadata for enrichment
-    let mut sitemap_meta: HashMap<String, (Option<String>, Option<f32>, Option<String>)> =
-        HashMap::new();
+    type SitemapMeta = (Option<String>, Option<f32>, Option<String>);
+    let mut sitemap_meta: HashMap<String, SitemapMeta> = HashMap::new();
 
     let base_url = parsed_url.clone();
     let base_domain = base_url.host_str().unwrap_or("").to_string();
@@ -2410,8 +2450,10 @@ async fn map_url(
                         } else {
                             None
                         };
-                        sitemap_meta
-                            .insert(su.loc.clone(), (lastmod.clone(), priority, changefreq.clone()));
+                        sitemap_meta.insert(
+                            su.loc.clone(),
+                            (lastmod.clone(), priority, changefreq.clone()),
+                        );
                         results.push(MapLink {
                             url: su.loc,
                             title: None,
@@ -2445,13 +2487,13 @@ async fn map_url(
     // ── Step 2: Enrich sitemap URLs with HTML metadata (title/description) ──
 
     if needs_html_fetch && !results.is_empty() {
-        let urls_to_fetch: Vec<String> = results
-            .iter()
-            .take(limit)
-            .map(|r| r.url.clone())
-            .collect();
+        let urls_to_fetch: Vec<String> =
+            results.iter().take(limit).map(|r| r.url.clone()).collect();
 
-        debug!(count = urls_to_fetch.len(), "Fetching HTML metadata for sitemap URLs");
+        debug!(
+            count = urls_to_fetch.len(),
+            "Fetching HTML metadata for sitemap URLs"
+        );
 
         let get_title = request.get_title;
         let get_description = request.get_description;
@@ -2544,20 +2586,10 @@ async fn map_url(
                             continue;
                         }
                         if visited.len() < limit && visited.insert(child_url.clone()) {
-                            let title = if request.get_title {
-                                None // will be fetched if we crawl this URL
-                            } else {
-                                None
-                            };
-                            let description = if request.get_description {
-                                None
-                            } else {
-                                None
-                            };
                             results.push(MapLink {
                                 url: child_url.clone(),
-                                title,
-                                description,
+                                title: None,
+                                description: None,
                                 lastmod: None,
                                 priority: None,
                                 changefreq: None,
@@ -2579,11 +2611,11 @@ async fn map_url(
 
                 let mut enrich_flight: FuturesUnordered<_> = next_frontier
                     .iter()
-                    .cloned()
                     .map(|url| {
                         let semaphore = semaphore.clone();
                         let fetcher = fetcher.clone();
                         let base_url = base_url.clone();
+                        let url = url.clone();
                         tokio::spawn(async move {
                             let _permit = semaphore.acquire().await.ok()?;
                             map_fetch_page(fetcher, url, base_url).await
@@ -3482,7 +3514,11 @@ async fn init_clickhouse() -> (
     );
 
     // Create request event batcher (batch size of 50 — 1 row per API call)
-    let batcher = Arc::new(RequestEventBatcher::new(storage.clone(), 50, "request_events"));
+    let batcher = Arc::new(RequestEventBatcher::new(
+        storage.clone(),
+        50,
+        "request_events",
+    ));
 
     // Create AI usage batcher (batch size of 50 events)
     let ai_batcher = Arc::new(AiUsageBatcher::new(storage.clone(), 50, "ai_usage"));
@@ -4040,7 +4076,14 @@ pub async fn run_with_bus(
     // Start server with graceful shutdown
     let addr: SocketAddr = format!("{}:{}", args.host, args.port)
         .parse()
-        .map_err(|e| anyhow::anyhow!("Invalid server address '{}:{}': {}", args.host, args.port, e))?;
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "Invalid server address '{}:{}': {}",
+                args.host,
+                args.port,
+                e
+            )
+        })?;
 
     // Retry binding in case the previous process hasn't released the port yet (hot-reload)
     let listener = {

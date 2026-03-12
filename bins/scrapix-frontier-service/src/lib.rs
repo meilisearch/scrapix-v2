@@ -588,6 +588,7 @@ impl FrontierService {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn get_or_create_job(
         &self,
         job_id: &str,

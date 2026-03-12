@@ -351,7 +351,7 @@ impl BlockSplitter {
         static BODY_SELECTOR: OnceLock<Selector> = OnceLock::new();
         let body_selector =
             BODY_SELECTOR.get_or_init(|| Selector::parse("body").expect("valid body selector"));
-        if let Some(body) = document.select(&body_selector).next() {
+        if let Some(body) = document.select(body_selector).next() {
             self.extract_blocks_from_element(&body)
         } else {
             Vec::new()
