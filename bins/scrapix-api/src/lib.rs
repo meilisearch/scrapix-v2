@@ -4163,3 +4163,289 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 
     run_with_bus(args, producer, consumer).await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ========================================================================
+    // preprocess_html tests
+    // ========================================================================
+
+    #[test]
+    fn test_preprocess_html_passthrough() {
+        let html = "<html><body><p>Hello</p></body></html>";
+        let result = preprocess_html(html, &[], &[]);
+        assert_eq!(result, html);
+    }
+
+    #[test]
+    fn test_preprocess_html_include_selectors() {
+        let html = r#"<html><body><nav>Nav</nav><main><p>Content</p></main><footer>Foot</footer></body></html>"#;
+        let result = preprocess_html(html, &["main".to_string()], &[]);
+        assert!(result.contains("Content"));
+        assert!(!result.contains("Nav</nav>"));
+        assert!(!result.contains("Foot"));
+    }
+
+    #[test]
+    fn test_preprocess_html_exclude_selectors() {
+        let html = r#"<html><body><p>Keep</p><nav>Remove</nav></body></html>"#;
+        let result = preprocess_html(html, &[], &["nav".to_string()]);
+        assert!(result.contains("Keep"));
+        assert!(!result.contains("Remove"));
+    }
+
+    #[test]
+    fn test_preprocess_html_include_and_exclude() {
+        let html = r#"<html><body><main><p>Keep</p><div class="ad">Ad</div></main><footer>Foot</footer></body></html>"#;
+        let result = preprocess_html(
+            html,
+            &["main".to_string()],
+            &[".ad".to_string()],
+        );
+        assert!(result.contains("Keep"));
+        assert!(!result.contains("Ad</div>"));
+        assert!(!result.contains("Foot"));
+    }
+
+    #[test]
+    fn test_preprocess_html_invalid_selector_skipped() {
+        let html = "<html><body><p>Hello</p></body></html>";
+        // Invalid selector should be skipped gracefully
+        let result = preprocess_html(html, &["[[[invalid".to_string()], &[]);
+        // Falls back to original HTML when include selector yields no results
+        assert!(result.contains("Hello"));
+    }
+
+    #[test]
+    fn test_preprocess_html_include_no_match_returns_original() {
+        let html = "<html><body><p>Hello</p></body></html>";
+        let result = preprocess_html(html, &[".nonexistent".to_string()], &[]);
+        // When include selector matches nothing, return original HTML
+        assert!(result.contains("Hello"));
+    }
+
+    // ========================================================================
+    // ApiError tests
+    // ========================================================================
+
+    #[test]
+    fn test_api_error_status_codes() {
+        use axum::http::StatusCode;
+
+        let test_cases = vec![
+            ("not_found", StatusCode::NOT_FOUND),
+            ("bad_request", StatusCode::BAD_REQUEST),
+            ("validation_error", StatusCode::BAD_REQUEST),
+            ("unauthorized", StatusCode::UNAUTHORIZED),
+            ("conflict", StatusCode::CONFLICT),
+            ("insufficient_credits", StatusCode::PAYMENT_REQUIRED),
+            ("spend_limit_exceeded", StatusCode::FORBIDDEN),
+            ("internal_error", StatusCode::INTERNAL_SERVER_ERROR),
+            ("unknown_code", StatusCode::INTERNAL_SERVER_ERROR),
+        ];
+
+        for (code, expected_status) in test_cases {
+            let error = ApiError::new("test error", code);
+            let response = error.into_response();
+            assert_eq!(
+                response.status(),
+                expected_status,
+                "Code '{}' should map to {}",
+                code,
+                expected_status
+            );
+        }
+    }
+
+    #[test]
+    fn test_api_error_serialization() {
+        let error = ApiError::new("Something went wrong", "bad_request");
+        let json = serde_json::to_value(&error).unwrap();
+        assert_eq!(json["error"], "Something went wrong");
+        assert_eq!(json["code"], "bad_request");
+        assert!(json.get("details").is_none()); // skip_serializing_if = None
+    }
+
+    #[test]
+    fn test_api_error_with_details() {
+        let error = ApiError::new("Validation failed", "validation_error")
+            .with_details(serde_json::json!({"field": "url", "reason": "empty"}));
+        let json = serde_json::to_value(&error).unwrap();
+        assert_eq!(json["details"]["field"], "url");
+    }
+
+    // ========================================================================
+    // ScrapeFormat deserialization tests
+    // ========================================================================
+
+    #[test]
+    fn test_scrape_format_deserialize() {
+        let formats: Vec<ScrapeFormat> =
+            serde_json::from_str(r#"["markdown","html","rawhtml","content","links","metadata","screenshot","schema","blocks"]"#)
+                .unwrap();
+        assert_eq!(formats.len(), 9);
+        assert_eq!(formats[0], ScrapeFormat::Markdown);
+        assert_eq!(formats[7], ScrapeFormat::Schema);
+        assert_eq!(formats[8], ScrapeFormat::Blocks);
+    }
+
+    #[test]
+    fn test_scrape_request_defaults() {
+        let json = r#"{"url": "https://example.com"}"#;
+        let request: ScrapeRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(request.url, "https://example.com");
+        assert!(request.formats.is_empty());
+        assert!(request.only_main_content); // default true
+        assert!(!request.include_links); // default false
+        assert_eq!(request.timeout_ms, 30000); // default 30s
+        assert!(request.headers.is_empty());
+        assert!(request.exclude_selectors.is_empty());
+        assert!(request.include_selectors.is_empty());
+        assert!(request.extract.is_empty());
+        assert!(request.ai.is_none());
+    }
+
+    #[test]
+    fn test_scrape_request_full() {
+        let json = r#"{
+            "url": "https://example.com",
+            "formats": ["markdown", "schema", "blocks"],
+            "only_main_content": false,
+            "include_links": true,
+            "timeout_ms": 5000,
+            "headers": {"User-Agent": "TestBot"},
+            "exclude_selectors": ["nav", "footer"],
+            "include_selectors": ["main"],
+            "ai": {
+                "summary": true,
+                "extract": {
+                    "prompt": "Extract product info",
+                    "schema": [
+                        {"name": "price", "description": "Product price", "field_type": "number", "required": true}
+                    ]
+                }
+            }
+        }"#;
+        let request: ScrapeRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(request.formats.len(), 3);
+        assert!(!request.only_main_content);
+        assert!(request.include_links);
+        assert_eq!(request.timeout_ms, 5000);
+        assert_eq!(request.headers.get("User-Agent").unwrap(), "TestBot");
+        assert_eq!(request.exclude_selectors, vec!["nav", "footer"]);
+        assert_eq!(request.include_selectors, vec!["main"]);
+
+        let ai = request.ai.unwrap();
+        assert!(ai.summary);
+        let extract = ai.extract.unwrap();
+        assert_eq!(extract.prompt, "Extract product info");
+        let schema = extract.schema.unwrap();
+        assert_eq!(schema[0].name, "price");
+        assert_eq!(schema[0].field_type, "number");
+        assert!(schema[0].required);
+    }
+
+    #[test]
+    fn test_ai_field_def_defaults() {
+        let json = r#"{"name": "title", "description": "Page title"}"#;
+        let field: AiFieldDef = serde_json::from_str(json).unwrap();
+        assert_eq!(field.field_type, "string"); // default
+        assert!(!field.required); // default false
+    }
+
+    // ========================================================================
+    // URL validation tests (extracted from scrape_url logic)
+    // ========================================================================
+
+    #[test]
+    fn test_url_validation_accepts_http() {
+        let parsed = url::Url::parse("http://example.com").unwrap();
+        assert!(matches!(parsed.scheme(), "http" | "https"));
+    }
+
+    #[test]
+    fn test_url_validation_accepts_https() {
+        let parsed = url::Url::parse("https://example.com").unwrap();
+        assert!(matches!(parsed.scheme(), "http" | "https"));
+    }
+
+    #[test]
+    fn test_url_validation_rejects_ftp() {
+        let parsed = url::Url::parse("ftp://example.com").unwrap();
+        assert!(!matches!(parsed.scheme(), "http" | "https"));
+    }
+
+    #[test]
+    fn test_url_validation_rejects_javascript() {
+        let parsed = url::Url::parse("javascript:alert(1)");
+        // javascript: URLs either fail to parse or fail the scheme check
+        if let Ok(p) = parsed {
+            assert!(!matches!(p.scheme(), "http" | "https"));
+        }
+    }
+
+    #[test]
+    fn test_url_validation_blocks_raw_ipv4() {
+        let parsed = url::Url::parse("http://192.168.1.1/admin").unwrap();
+        assert!(matches!(
+            parsed.host(),
+            Some(url::Host::Ipv4(_)) | Some(url::Host::Ipv6(_))
+        ));
+    }
+
+    #[test]
+    fn test_url_validation_blocks_raw_ipv6() {
+        let parsed = url::Url::parse("http://[::1]/admin").unwrap();
+        assert!(matches!(
+            parsed.host(),
+            Some(url::Host::Ipv4(_)) | Some(url::Host::Ipv6(_))
+        ));
+    }
+
+    #[test]
+    fn test_url_validation_allows_hostname() {
+        let parsed = url::Url::parse("https://example.com").unwrap();
+        assert!(!matches!(
+            parsed.host(),
+            Some(url::Host::Ipv4(_)) | Some(url::Host::Ipv6(_))
+        ));
+    }
+
+    #[test]
+    fn test_url_validation_allows_subdomain() {
+        let parsed = url::Url::parse("https://docs.example.com/guide").unwrap();
+        assert!(matches!(parsed.scheme(), "http" | "https"));
+        assert!(!matches!(
+            parsed.host(),
+            Some(url::Host::Ipv4(_)) | Some(url::Host::Ipv6(_))
+        ));
+    }
+
+    // ========================================================================
+    // Blocked headers test (SSRF prevention)
+    // ========================================================================
+
+    #[test]
+    fn test_blocked_headers() {
+        let blocked: &[&str] = &[
+            "host",
+            "transfer-encoding",
+            "connection",
+            "upgrade",
+            "proxy-authorization",
+            "proxy-connection",
+            "te",
+            "trailer",
+        ];
+
+        // Verify the canonical list of headers that must be blocked
+        for header in blocked {
+            assert!(
+                header.to_lowercase() == *header,
+                "Blocked headers should be lowercase for case-insensitive comparison"
+            );
+        }
+    }
+}

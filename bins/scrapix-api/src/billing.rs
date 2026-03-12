@@ -383,3 +383,153 @@ pub const MAP_CREDITS: i64 = 2;
 fn parse_uuid(id: &str) -> Result<uuid::Uuid, ApiError> {
     uuid::Uuid::parse_str(id).map_err(|_| ApiError::new("Invalid account ID", "internal_error"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_scrape_credits_minimum_one() {
+        // Even with no feature formats, minimum is 1 credit
+        let credits = scrape_credits(&[], false, false);
+        assert_eq!(credits, 1);
+    }
+
+    #[test]
+    fn test_scrape_credits_base_formats_free() {
+        // Html, RawHtml, Content are free (still minimum 1)
+        let credits = scrape_credits(
+            &[ScrapeFormat::Html, ScrapeFormat::RawHtml, ScrapeFormat::Content],
+            false,
+            false,
+        );
+        assert_eq!(credits, 1);
+    }
+
+    #[test]
+    fn test_scrape_credits_feature_formats() {
+        // Each feature format costs 1 credit
+        let credits = scrape_credits(&[ScrapeFormat::Markdown], false, false);
+        assert_eq!(credits, 1);
+
+        let credits = scrape_credits(
+            &[ScrapeFormat::Markdown, ScrapeFormat::Links, ScrapeFormat::Metadata],
+            false,
+            false,
+        );
+        assert_eq!(credits, 3);
+
+        let credits = scrape_credits(
+            &[
+                ScrapeFormat::Markdown,
+                ScrapeFormat::Links,
+                ScrapeFormat::Metadata,
+                ScrapeFormat::Screenshot,
+                ScrapeFormat::Schema,
+                ScrapeFormat::Blocks,
+            ],
+            false,
+            false,
+        );
+        assert_eq!(credits, 6);
+    }
+
+    #[test]
+    fn test_scrape_credits_ai_summary() {
+        let credits = scrape_credits(&[], true, false);
+        assert_eq!(credits, 5);
+    }
+
+    #[test]
+    fn test_scrape_credits_ai_extraction() {
+        let credits = scrape_credits(&[], false, true);
+        assert_eq!(credits, 5);
+    }
+
+    #[test]
+    fn test_scrape_credits_ai_both() {
+        let credits = scrape_credits(&[], true, true);
+        assert_eq!(credits, 10);
+    }
+
+    #[test]
+    fn test_scrape_credits_combined() {
+        // 2 feature formats + AI summary + AI extraction = 2 + 5 + 5 = 12
+        let credits = scrape_credits(
+            &[ScrapeFormat::Markdown, ScrapeFormat::Schema],
+            true,
+            true,
+        );
+        assert_eq!(credits, 12);
+    }
+
+    #[test]
+    fn test_scrape_credits_mixed_base_and_feature() {
+        // Base (Html) is free, only Markdown counts = 1
+        let credits = scrape_credits(
+            &[ScrapeFormat::Html, ScrapeFormat::Markdown],
+            false,
+            false,
+        );
+        assert_eq!(credits, 1);
+    }
+
+    #[test]
+    fn test_crawl_credits_http_no_features() {
+        let features = FeaturesConfig::default();
+        let credits = crawl_credits_per_page(&CrawlerType::Http, &features);
+        assert_eq!(credits, 1);
+    }
+
+    #[test]
+    fn test_crawl_credits_browser_base() {
+        let features = FeaturesConfig::default();
+        let credits = crawl_credits_per_page(&CrawlerType::Browser, &features);
+        assert_eq!(credits, 2);
+    }
+
+    #[test]
+    fn test_crawl_credits_with_features() {
+        let features = FeaturesConfig::from_cli_args(
+            true,  // metadata +1
+            true,  // markdown +1
+            true,  // schema +1
+            true,  // block_split +1
+            false, // ai_summary
+            false, // ai_extraction
+            None,
+        );
+        let credits = crawl_credits_per_page(&CrawlerType::Http, &features);
+        // 1 base + 4 features = 5
+        assert_eq!(credits, 5);
+    }
+
+    #[test]
+    fn test_crawl_credits_with_ai() {
+        let features = FeaturesConfig::from_cli_args(
+            false, false, false, false,
+            true,  // ai_summary +5
+            true,  // ai_extraction +5
+            Some("extract product info".to_string()),
+        );
+        let credits = crawl_credits_per_page(&CrawlerType::Http, &features);
+        // 1 base + 5 + 5 = 11
+        assert_eq!(credits, 11);
+    }
+
+    #[test]
+    fn test_crawl_credits_browser_all_features() {
+        let features = FeaturesConfig::from_cli_args(
+            true, true, true, true, true, true,
+            Some("extract".to_string()),
+        );
+        let credits = crawl_credits_per_page(&CrawlerType::Browser, &features);
+        // 2 base + 4 features + 5 ai_extraction + 5 ai_summary = 16
+        assert_eq!(credits, 16);
+    }
+
+    #[test]
+    fn test_map_credits_constant() {
+        assert_eq!(MAP_CREDITS, 2);
+    }
+}

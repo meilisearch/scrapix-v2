@@ -15,7 +15,7 @@
 //! use scrapix_storage::{MeilisearchStorageBuilder, RedisStorage, RocksStorage};
 //!
 //! #[tokio::main]
-//! async fn main() -> anyhow::Result<()> {
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // Meilisearch for document indexing
 //!     let meili = MeilisearchStorageBuilder::new(
 //!         "http://localhost:7700",

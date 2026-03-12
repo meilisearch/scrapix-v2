@@ -658,9 +658,9 @@ impl ClickHouseStorage {
                 r#"
                 SELECT
                     toStartOfHour(timestamp) as hour,
-                    count() as requests,
-                    countIf(status_code >= 200 AND status_code < 400) as successes,
-                    countIf(status_code >= 400 OR error != '') as failures,
+                    sum(pages_fetched) as requests,
+                    sumIf(pages_fetched, status_code >= 200 AND status_code < 400) as successes,
+                    sumIf(pages_fetched, status_code >= 400 OR status_code = 0 OR error != '') as failures,
                     avg(duration_ms) as avg_duration_ms,
                     sum(content_length) as total_bytes
                 FROM {}
@@ -685,9 +685,9 @@ impl ClickHouseStorage {
                 r#"
                 SELECT
                     toDate(timestamp) as date,
-                    count() as requests,
-                    countIf(status_code >= 200 AND status_code < 400) as successes,
-                    countIf(status_code >= 400 OR error != '') as failures,
+                    sum(pages_fetched) as requests,
+                    sumIf(pages_fetched, status_code >= 200 AND status_code < 400) as successes,
+                    sumIf(pages_fetched, status_code >= 400 OR status_code = 0 OR error != '') as failures,
                     avg(duration_ms) as avg_duration_ms,
                     sum(content_length) as total_bytes
                 FROM {}
@@ -716,9 +716,9 @@ impl ClickHouseStorage {
                 r#"
                 SELECT
                     domain,
-                    count() as total_requests,
-                    countIf(status_code >= 200 AND status_code < 400) as successful_requests,
-                    countIf(status_code >= 400 OR error != '') as failed_requests,
+                    sum(pages_fetched) as total_requests,
+                    sumIf(pages_fetched, status_code >= 200 AND status_code < 400) as successful_requests,
+                    sumIf(pages_fetched, status_code >= 400 OR status_code = 0 OR error != '') as failed_requests,
                     avg(duration_ms) as avg_duration_ms,
                     sum(content_length) as total_bytes
                 FROM {}
@@ -749,9 +749,9 @@ impl ClickHouseStorage {
                 r#"
                 SELECT
                     domain,
-                    count() as total_requests,
-                    countIf(status_code >= 200 AND status_code < 400) as successful_requests,
-                    countIf(status_code >= 400 OR error != '') as failed_requests,
+                    sum(pages_fetched) as total_requests,
+                    sumIf(pages_fetched, status_code >= 200 AND status_code < 400) as successful_requests,
+                    sumIf(pages_fetched, status_code >= 400 OR status_code = 0 OR error != '') as failed_requests,
                     avg(duration_ms) as avg_duration_ms,
                     sum(content_length) as total_bytes
                 FROM {}
@@ -831,9 +831,9 @@ impl ClickHouseStorage {
                 r#"
                 SELECT
                     account_id,
-                    count() as total_requests,
-                    countIf(status_code >= 200 AND status_code < 400) as successful_requests,
-                    countIf(status_code >= 400 OR error != '') as failed_requests,
+                    sum(pages_fetched) as total_requests,
+                    sumIf(pages_fetched, status_code >= 200 AND status_code < 400) as successful_requests,
+                    sumIf(pages_fetched, status_code >= 400 OR status_code = 0 OR error != '') as failed_requests,
                     sum(content_length) as total_bytes,
                     avg(duration_ms) as avg_duration_ms,
                     uniqExact(domain) as unique_domains,
@@ -878,9 +878,9 @@ impl ClickHouseStorage {
                 r#"
                 SELECT
                     account_id,
-                    count() as total_requests,
-                    countIf(status_code >= 200 AND status_code < 400) as successful_requests,
-                    countIf(status_code >= 400 OR error != '') as failed_requests,
+                    sum(pages_fetched) as total_requests,
+                    sumIf(pages_fetched, status_code >= 200 AND status_code < 400) as successful_requests,
+                    sumIf(pages_fetched, status_code >= 400 OR status_code = 0 OR error != '') as failed_requests,
                     sum(content_length) as total_bytes,
                     avg(duration_ms) as avg_duration_ms,
                     uniqExact(domain) as unique_domains,
@@ -915,7 +915,7 @@ impl ClickHouseStorage {
                 r#"
                 SELECT
                     toDate(timestamp) as date,
-                    count() as requests,
+                    sum(pages_fetched) as requests,
                     sum(content_length) as bytes,
                     countIf(js_rendered) as js_renders,
                     sum(ai_prompt_tokens) as ai_prompt_tokens,
@@ -977,9 +977,9 @@ impl ClickHouseStorage {
                 r#"
                 SELECT
                     job_id,
-                    count() as total_requests,
-                    countIf(status_code >= 200 AND status_code < 400) as successful_requests,
-                    countIf(status_code >= 400 OR error != '') as failed_requests,
+                    sum(pages_fetched) as total_requests,
+                    sumIf(pages_fetched, status_code >= 200 AND status_code < 400) as successful_requests,
+                    sumIf(pages_fetched, status_code >= 400 OR status_code = 0 OR error != '') as failed_requests,
                     sum(content_length) as total_bytes,
                     avg(duration_ms) as avg_duration_ms,
                     uniqExact(domain) as unique_domains,

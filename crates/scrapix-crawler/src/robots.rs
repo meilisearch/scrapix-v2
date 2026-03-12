@@ -217,6 +217,9 @@ impl RobotsCache {
             } else if in_user_agent_section && line.starts_with("crawl-delay:") {
                 let delay_str = line.trim_start_matches("crawl-delay:").trim();
                 if let Ok(delay) = delay_str.parse::<f64>() {
+                    if delay < 0.0 || delay.is_nan() || delay.is_infinite() {
+                        return None;
+                    }
                     // Convert seconds to milliseconds
                     return Some((delay * 1000.0) as u64);
                 }
@@ -279,6 +282,41 @@ mod tests {
         let cache = RobotsCache::new(config).unwrap();
         let content = "User-agent: Scrapix\nCrawl-delay: 5\nUser-agent: *\nCrawl-delay: 1";
         assert_eq!(cache.parse_crawl_delay(content), Some(5000));
+    }
+
+    #[test]
+    fn test_negative_crawl_delay() {
+        let cache = RobotsCache::new(RobotsConfig::default()).unwrap();
+        let content = "User-agent: *\nCrawl-delay: -5";
+        assert_eq!(cache.parse_crawl_delay(content), None);
+    }
+
+    #[test]
+    fn test_nan_crawl_delay() {
+        let cache = RobotsCache::new(RobotsConfig::default()).unwrap();
+        let content = "User-agent: *\nCrawl-delay: NaN";
+        assert_eq!(cache.parse_crawl_delay(content), None);
+    }
+
+    #[test]
+    fn test_infinity_crawl_delay() {
+        let cache = RobotsCache::new(RobotsConfig::default()).unwrap();
+        let content = "User-agent: *\nCrawl-delay: inf";
+        assert_eq!(cache.parse_crawl_delay(content), None);
+    }
+
+    #[test]
+    fn test_zero_crawl_delay() {
+        let cache = RobotsCache::new(RobotsConfig::default()).unwrap();
+        let content = "User-agent: *\nCrawl-delay: 0";
+        assert_eq!(cache.parse_crawl_delay(content), Some(0));
+    }
+
+    #[test]
+    fn test_fractional_crawl_delay() {
+        let cache = RobotsCache::new(RobotsConfig::default()).unwrap();
+        let content = "User-agent: *\nCrawl-delay: 0.5";
+        assert_eq!(cache.parse_crawl_delay(content), Some(500));
     }
 }
 
@@ -667,6 +705,9 @@ impl PersistentRobotsCache {
             } else if in_user_agent_section && line.starts_with("crawl-delay:") {
                 let delay_str = line.trim_start_matches("crawl-delay:").trim();
                 if let Ok(delay) = delay_str.parse::<f64>() {
+                    if delay < 0.0 || delay.is_nan() || delay.is_infinite() {
+                        return None;
+                    }
                     return Some((delay * 1000.0) as u64);
                 }
             }

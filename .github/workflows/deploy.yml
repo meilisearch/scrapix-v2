@@ -5,6 +5,11 @@ on:
     branches: [main]
 
 jobs:
+  # Run CI first — deploy only if checks pass
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
   # Detect which parts of the codebase changed
   changes:
     name: Detect changes
@@ -29,32 +34,66 @@ jobs:
 
   deploy-api:
     name: Deploy API
-    needs: changes
+    needs: [ci, changes]
     if: needs.changes.outputs.api == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Heroku Container Registry
+        run: echo "${{ secrets.HEROKU_API_KEY }}" | docker login registry.heroku.com -u _ --password-stdin
+
+      - name: Build and push API image
+        uses: docker/build-push-action@v6
         with:
-          fetch-depth: 0
-      - name: Deploy to Heroku
-        uses: akhileshns/heroku-deploy@v3.13.15
-        with:
-          heroku_api_key: ${{ secrets.HEROKU_API_KEY }}
-          heroku_app_name: scrapix-api
-          heroku_email: ${{ secrets.HEROKU_EMAIL }}
+          context: .
+          file: Dockerfile.heroku
+          push: true
+          tags: registry.heroku.com/scrapix-api/web
+          cache-from: type=gha,scope=heroku-api
+          cache-to: type=gha,mode=max,scope=heroku-api
+
+      - name: Release API on Heroku
+        run: |
+          IMAGE_ID=$(docker inspect registry.heroku.com/scrapix-api/web --format='{{.Id}}')
+          curl -sf -X PATCH "https://api.heroku.com/apps/scrapix-api/formation" \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/vnd.heroku+json; version=3.docker-releases" \
+            -H "Authorization: Bearer ${{ secrets.HEROKU_API_KEY }}" \
+            -d '{"updates": [{"type": "web", "docker_image": "'"$IMAGE_ID"'"}]}'
 
   deploy-console:
     name: Deploy Console
-    needs: changes
+    needs: [ci, changes]
     if: needs.changes.outputs.console == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Heroku Container Registry
+        run: echo "${{ secrets.HEROKU_API_KEY }}" | docker login registry.heroku.com -u _ --password-stdin
+
+      - name: Build and push Console image
+        uses: docker/build-push-action@v6
         with:
-          fetch-depth: 0
-      - name: Deploy console subtree to Heroku
-        env:
-          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+          context: ./console
+          file: ./console/Dockerfile
+          push: true
+          tags: registry.heroku.com/scrapix-console/web
+          cache-from: type=gha,scope=heroku-console
+          cache-to: type=gha,mode=max,scope=heroku-console
+
+      - name: Release Console on Heroku
         run: |
-          git remote add heroku-console https://heroku:${HEROKU_API_KEY}@git.heroku.com/scrapix-console.git
-          git push heroku-console $(git subtree split --prefix console main):refs/heads/main --force
+          IMAGE_ID=$(docker inspect registry.heroku.com/scrapix-console/web --format='{{.Id}}')
+          curl -sf -X PATCH "https://api.heroku.com/apps/scrapix-console/formation" \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/vnd.heroku+json; version=3.docker-releases" \
+            -H "Authorization: Bearer ${{ secrets.HEROKU_API_KEY }}" \
+            -d '{"updates": [{"type": "web", "docker_image": "'"$IMAGE_ID"'"}]}'
