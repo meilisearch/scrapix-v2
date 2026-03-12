@@ -1857,9 +1857,10 @@ pub(crate) async fn do_create_crawl(
     // Generate job ID
     let job_id = uuid::Uuid::new_v4().to_string();
 
-    // If replace_index is enabled, workers write to a temp index; we swap on completion
+    // If index_strategy is Replace, workers write to a temp index; we swap on completion
     let target_index_uid = config.index_uid.clone();
-    let pipeline_index_uid = if config.replace_index {
+    let replace_index = config.index_strategy.is_replace();
+    let pipeline_index_uid = if replace_index {
         format!("{}_tmp_{}", config.index_uid, &job_id[..8])
     } else {
         config.index_uid.clone()
@@ -1869,7 +1870,7 @@ pub(crate) async fn do_create_crawl(
         job_id = %job_id,
         index_uid = %target_index_uid,
         pipeline_index_uid = %pipeline_index_uid,
-        replace_index = config.replace_index,
+        replace_index = replace_index,
         start_urls_count = config.start_urls.len(),
         "Creating new crawl job"
     );
@@ -1911,7 +1912,7 @@ pub(crate) async fn do_create_crawl(
         }
         v
     });
-    if config.replace_index {
+    if replace_index {
         job.swap_temp_index = Some(pipeline_index_uid.clone());
         job.swap_meilisearch_url = Some(config.meilisearch.url.clone());
         job.swap_meilisearch_api_key = Some(config.meilisearch.api_key.clone());
@@ -2069,7 +2070,6 @@ pub(crate) async fn do_create_crawl(
     state.broadcast_event(&job_id, event);
 
     // Update job state (write back config, start_urls, max_pages, swap metadata)
-    let replace_index = config.replace_index;
     let swap_temp = if replace_index {
         Some(pipeline_index_uid.clone())
     } else {

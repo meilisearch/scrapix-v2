@@ -54,6 +54,10 @@ export function crawlStateToConfig(
     ...(maxPages ? { max_pages: maxPages } : {}),
   };
 
+  if (crawlState.index_strategy === "replace") {
+    config.index_strategy = "replace";
+  }
+
   const ms: Record<string, unknown> = {
     url: crawlState.meilisearch_url,
     api_key: crawlState.meilisearch_api_key,
@@ -288,6 +292,14 @@ export function configToCrawlState(config: AnyConfig): CrawlState {
     ) {
       state.proxy_rotation = rotation;
     }
+  }
+
+  // Index strategy (also supports legacy replace_index boolean)
+  const strategy = str(config.index_strategy);
+  if (strategy === "update" || strategy === "replace") {
+    state.index_strategy = strategy;
+  } else if (config.replace_index === true) {
+    state.index_strategy = "replace";
   }
 
   // Meilisearch

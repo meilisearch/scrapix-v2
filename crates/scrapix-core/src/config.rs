@@ -73,10 +73,71 @@ pub struct CrawlConfig {
     #[serde(default)]
     pub user_agents: Vec<String>,
 
-    /// When true, crawl indexes into a temporary index then atomically
-    /// swaps it with the target index_uid on completion.
-    #[serde(default)]
-    pub replace_index: bool,
+    /// Indexing strategy: how documents are written to the target index.
+    /// - `update`: add/update documents in the existing index (default)
+    /// - `replace`: index into a temporary index, then atomically swap on completion
+    ///
+    /// Also accepts the legacy field name `replace_index` (bool) for backward compatibility.
+    #[serde(
+        default,
+        alias = "replace_index",
+        deserialize_with = "deserialize_index_strategy"
+    )]
+    pub index_strategy: IndexStrategy,
+}
+
+/// Indexing strategy for a crawl job.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum IndexStrategy {
+    /// Add/update documents in the existing index.
+    #[default]
+    Update,
+    /// Index into a temporary index, then atomically swap with the target on completion.
+    Replace,
+}
+
+impl IndexStrategy {
+    pub fn is_replace(&self) -> bool {
+        matches!(self, IndexStrategy::Replace)
+    }
+}
+
+/// Backward-compatible deserializer: accepts either `"index_strategy": "replace"` (new)
+/// or the legacy `"replace_index": true` boolean form.
+fn deserialize_index_strategy<'de, D>(deserializer: D) -> Result<IndexStrategy, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de;
+
+    struct IndexStrategyVisitor;
+
+    impl<'de> de::Visitor<'de> for IndexStrategyVisitor {
+        type Value = IndexStrategy;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str(r#""update", "replace", or a boolean"#)
+        }
+
+        fn visit_bool<E: de::Error>(self, v: bool) -> Result<IndexStrategy, E> {
+            Ok(if v {
+                IndexStrategy::Replace
+            } else {
+                IndexStrategy::Update
+            })
+        }
+
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<IndexStrategy, E> {
+            match v {
+                "update" => Ok(IndexStrategy::Update),
+                "replace" => Ok(IndexStrategy::Replace),
+                other => Err(de::Error::unknown_variant(other, &["update", "replace"])),
+            }
+        }
+    }
+
+    deserializer.deserialize_any(IndexStrategyVisitor)
 }
 
 /// Type of crawler to use
@@ -607,7 +668,7 @@ mod tests {
             webhooks: vec![],
             headers: HashMap::new(),
             user_agents: vec![],
-            replace_index: false,
+            index_strategy: IndexStrategy::Update,
         };
 
         assert_eq!(config.crawler_type, CrawlerType::Http);

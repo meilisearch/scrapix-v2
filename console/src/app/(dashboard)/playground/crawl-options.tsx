@@ -99,6 +99,8 @@ export interface CrawlState {
   feat_ai_extraction: boolean;
   ai_extraction_prompt: string;
   feat_ai_summary: boolean;
+  // Indexing
+  index_strategy: "update" | "replace";
   // Advanced
   headers: string;
   user_agents: string;
@@ -142,6 +144,7 @@ export const defaultCrawlState: CrawlState = {
   feat_ai_extraction: false,
   ai_extraction_prompt: "",
   feat_ai_summary: false,
+  index_strategy: "update",
   headers: "",
   user_agents: "",
   proxy_urls: "",
@@ -966,6 +969,35 @@ export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
                 onChange={(e) => set("index_uid", e.target.value)}
                 className="font-mono text-xs"
               />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium">Index Strategy</Label>
+              <p className="text-xs text-muted-foreground">
+                Update adds new documents or updates existing ones. Replace creates a fresh index and swaps it atomically on completion.
+              </p>
+              <ToggleGroup
+                type="single"
+                variant="outline"
+                value={state.index_strategy}
+                onValueChange={(v) => {
+                  if (v) set("index_strategy", v as "update" | "replace");
+                }}
+                className="w-full"
+              >
+                <ToggleGroupItem
+                  value="update"
+                  className="flex-1 text-xs data-[state=on]:bg-primary/10 data-[state=on]:text-primary data-[state=on]:border-primary/30"
+                >
+                  Update
+                </ToggleGroupItem>
+                <ToggleGroupItem
+                  value="replace"
+                  className="flex-1 text-xs data-[state=on]:bg-primary/10 data-[state=on]:text-primary data-[state=on]:border-primary/30"
+                >
+                  Replace
+                </ToggleGroupItem>
+              </ToggleGroup>
             </div>
 
             <MeilisearchEngineSelector state={state} onChange={onChange} />
