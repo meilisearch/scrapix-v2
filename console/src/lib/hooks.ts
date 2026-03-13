@@ -39,3 +39,15 @@ export function useTransactions(limit: number = 50, offset: number = 0) {
     queryFn: () => fetchTransactions(limit, offset),
   });
 }
+
+export function useAllTransactions() {
+  return useQuery({
+    queryKey: ["transactions", "all"],
+    queryFn: async () => {
+      const first = await fetchTransactions(1, 0);
+      if (first.total <= 0) return { transactions: [], total: 0 };
+      const all = await fetchTransactions(first.total, 0);
+      return all;
+    },
+  });
+}

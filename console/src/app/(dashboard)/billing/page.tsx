@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useBilling, useTransactions, useMe } from "@/lib/hooks";
+import { useState, useMemo } from "react";
+import { useBilling, useTransactions, useAllTransactions, useMe } from "@/lib/hooks";
 import { topupCredits, updateAutoTopup, updateSpendLimit } from "@/lib/api";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -36,7 +36,16 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { toast } from "sonner";
-import { formatDistanceToNow } from "date-fns";
+import { formatDistanceToNow, format, parseISO, eachDayOfInterval, startOfDay } from "date-fns";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 
 const TOPUP_PACKAGES = [
   { amount: 1_000, price: "$10" },
@@ -87,6 +96,7 @@ export default function BillingPage() {
   const { data: billing, isLoading: billingLoading } = useBilling();
   const [txOffset, setTxOffset] = useState(0);
   const { data: txData, isLoading: txLoading } = useTransactions(TX_PAGE_SIZE, txOffset);
+  const { data: allTxData } = useAllTransactions();
 
   // Auto top-up form state
   const [autoTopupAmount, setAutoTopupAmount] = useState("");
@@ -143,6 +153,32 @@ export default function BillingPage() {
   }
 
   const creditsBalance = billing?.credits_balance ?? user?.account?.credits_balance ?? 0;
+
+  const dailyCostData = useMemo(() => {
+    if (!allTxData?.transactions.length) return [];
+
+    const costByDay = new Map<string, number>();
+    for (const tx of allTxData.transactions) {
+      if (tx.amount >= 0) continue;
+      const day = format(startOfDay(parseISO(tx.created_at)), "yyyy-MM-dd");
+      costByDay.set(day, (costByDay.get(day) ?? 0) + Math.abs(tx.amount));
+    }
+
+    if (costByDay.size === 0) return [];
+
+    const sortedDays = [...costByDay.keys()].sort();
+    const start = parseISO(sortedDays[0]);
+    const end = parseISO(sortedDays[sortedDays.length - 1]);
+    const allDays = eachDayOfInterval({ start, end });
+
+    return allDays.map((d) => {
+      const key = format(d, "yyyy-MM-dd");
+      return {
+        date: format(d, "MMM d"),
+        cost: costByDay.get(key) ?? 0,
+      };
+    });
+  }, [allTxData]);
 
   return (
     <div className="space-y-6">
@@ -458,6 +494,59 @@ export default function BillingPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Daily Cost Chart */}
+      {dailyCostData.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Daily Credit Usage</CardTitle>
+            <CardDescription>
+              Credits consumed per day
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="h-[250px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={dailyCostData}>
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                  <XAxis
+                    dataKey="date"
+                    tick={{ fontSize: 12 }}
+                    className="text-muted-foreground"
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <YAxis
+                    tick={{ fontSize: 12 }}
+                    className="text-muted-foreground"
+                    tickLine={false}
+                    axisLine={false}
+                    tickFormatter={(v: number) => v.toLocaleString()}
+                  />
+                  <Tooltip
+                    content={({ active, payload, label }) => {
+                      if (!active || !payload?.length) return null;
+                      return (
+                        <div className="rounded-lg border bg-background p-2 shadow-sm">
+                          <p className="text-sm font-medium">{label}</p>
+                          <p className="text-sm text-muted-foreground">
+                            {Number(payload[0].value).toLocaleString()} credits
+                          </p>
+                        </div>
+                      );
+                    }}
+                  />
+                  <Bar
+                    dataKey="cost"
+                    fill="hsl(var(--primary))"
+                    radius={[4, 4, 0, 0]}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Transaction History */}
       <Card>
