@@ -57,6 +57,7 @@ jobs:
         run: echo "${{ secrets.HEROKU_API_KEY }}" | docker login registry.heroku.com -u _ --password-stdin
 
       - name: Build and push API image
+        id: build-api
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -69,13 +70,11 @@ jobs:
 
       - name: Release API on Heroku
         run: |
-          docker pull registry.heroku.com/scrapix-api/web
-          IMAGE_ID=$(docker inspect registry.heroku.com/scrapix-api/web --format='{{.Id}}')
           curl -sf -X PATCH "https://api.heroku.com/apps/scrapix-api/formation" \
             -H "Content-Type: application/json" \
             -H "Accept: application/vnd.heroku+json; version=3.docker-releases" \
             -H "Authorization: Bearer ${{ secrets.HEROKU_API_KEY }}" \
-            -d '{"updates": [{"type": "web", "docker_image": "'"$IMAGE_ID"'"}]}'
+            -d '{"updates": [{"type": "web", "docker_image": "${{ steps.build-api.outputs.imageid }}"}]}'
 
   deploy-console:
     name: Deploy Console
@@ -92,6 +91,7 @@ jobs:
         run: echo "${{ secrets.HEROKU_API_KEY }}" | docker login registry.heroku.com -u _ --password-stdin
 
       - name: Build and push Console image
+        id: build-console
         uses: docker/build-push-action@v7
         with:
           context: ./console
@@ -104,10 +104,8 @@ jobs:
 
       - name: Release Console on Heroku
         run: |
-          docker pull registry.heroku.com/scrapix-console/web
-          IMAGE_ID=$(docker inspect registry.heroku.com/scrapix-console/web --format='{{.Id}}')
           curl -sf -X PATCH "https://api.heroku.com/apps/scrapix-console/formation" \
             -H "Content-Type: application/json" \
             -H "Accept: application/vnd.heroku+json; version=3.docker-releases" \
             -H "Authorization: Bearer ${{ secrets.HEROKU_API_KEY }}" \
-            -d '{"updates": [{"type": "web", "docker_image": "'"$IMAGE_ID"'"}]}'
+            -d '{"updates": [{"type": "web", "docker_image": "${{ steps.build-console.outputs.imageid }}"}]}'
