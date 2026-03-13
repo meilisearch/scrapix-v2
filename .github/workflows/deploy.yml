@@ -3,6 +3,16 @@ name: Deploy
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      force_api:
+        description: "Force deploy API"
+        type: boolean
+        default: false
+      force_console:
+        description: "Force deploy Console"
+        type: boolean
+        default: false
 
 jobs:
   # Run CI first — deploy only if checks pass
@@ -35,7 +45,7 @@ jobs:
   deploy-api:
     name: Deploy API
     needs: [ci, changes]
-    if: needs.changes.outputs.api == 'true'
+    if: needs.changes.outputs.api == 'true' || inputs.force_api == true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -68,7 +78,7 @@ jobs:
   deploy-console:
     name: Deploy Console
     needs: [ci, changes]
-    if: needs.changes.outputs.console == 'true'
+    if: needs.changes.outputs.console == 'true' || inputs.force_console == true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
