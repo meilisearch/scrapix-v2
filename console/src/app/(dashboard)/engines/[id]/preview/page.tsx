@@ -23,6 +23,7 @@ import {
   Database,
   ChevronLeft,
   ChevronRight,
+  Loader2,
 } from "lucide-react";
 import { fetchEngine, fetchEngineIndexes, searchEngineIndex } from "@/lib/api";
 import type {
@@ -35,6 +36,7 @@ import { formatDistanceToNow } from "date-fns";
 import { cn } from "@/lib/utils";
 
 const HITS_PER_PAGE = 10;
+const DEBOUNCE_MS = 200;
 
 export default function EngineDemoPage() {
   const params = useParams();
@@ -43,12 +45,13 @@ export default function EngineDemoPage() {
 
   const [selectedIndex, setSelectedIndex] = useState<string>("");
   const [query, setQuery] = useState("");
-  const [submittedQuery, setSubmittedQuery] = useState("");
   const [page, setPage] = useState(0);
   const [searchResult, setSearchResult] = useState<MeilisearchSearchResponse | null>(null);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   const { data: engine, isLoading: engineLoading } = useQuery({
     queryKey: ["engine", engineId],
@@ -67,9 +70,20 @@ export default function EngineDemoPage() {
     }
   }, [indexes, selectedIndex]);
 
-  const handleSearch = useCallback(
+  const performSearch = useCallback(
     async (q: string, offset: number) => {
-      if (!q.trim() || !selectedIndex) return;
+      if (!q.trim() || !selectedIndex) {
+        if (!q.trim()) {
+          setSearchResult(null);
+          setSearchError(null);
+        }
+        return;
+      }
+
+      // Cancel any in-flight request
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
 
       setSearching(true);
       setSearchError(null);
@@ -84,27 +98,52 @@ export default function EngineDemoPage() {
           highlightPreTag: "<mark>",
           highlightPostTag: "</mark>",
         });
-        setSearchResult(result);
+        // Only apply result if this request wasn't aborted
+        if (!controller.signal.aborted) {
+          setSearchResult(result);
+          setSearching(false);
+        }
       } catch (err) {
-        setSearchError(err instanceof Error ? err.message : "Search failed");
-        setSearchResult(null);
-      } finally {
-        setSearching(false);
+        if (!controller.signal.aborted) {
+          setSearchError(err instanceof Error ? err.message : "Search failed");
+          setSearchResult(null);
+          setSearching(false);
+        }
       }
     },
     [engineId, selectedIndex]
   );
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  // Debounced search on query change
+  useEffect(() => {
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+    }
+
     setPage(0);
-    setSubmittedQuery(query);
-    handleSearch(query, 0);
-  };
+
+    if (!query.trim()) {
+      setSearchResult(null);
+      setSearchError(null);
+      setSearching(false);
+      return;
+    }
+
+    setSearching(true);
+    debounceRef.current = setTimeout(() => {
+      performSearch(query, 0);
+    }, DEBOUNCE_MS);
+
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+      }
+    };
+  }, [query, performSearch]);
 
   const handlePageChange = (newPage: number) => {
     setPage(newPage);
-    handleSearch(submittedQuery, newPage * HITS_PER_PAGE);
+    performSearch(query, newPage * HITS_PER_PAGE);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -123,7 +162,7 @@ export default function EngineDemoPage() {
   }
 
   const hasResults = searchResult && searchResult.hits.length > 0;
-  const hasSearched = submittedQuery.length > 0;
+  const hasSearched = query.trim().length > 0;
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
@@ -148,7 +187,6 @@ export default function EngineDemoPage() {
           <Select value={selectedIndex} onValueChange={(v) => {
             setSelectedIndex(v);
             setSearchResult(null);
-            setSubmittedQuery("");
             setQuery("");
           }}>
             <SelectTrigger className="w-[200px]">
@@ -173,25 +211,20 @@ export default function EngineDemoPage() {
       </div>
 
       {/* Search bar */}
-      <form onSubmit={handleSubmit} className="relative">
+      <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <Input
           ref={inputRef}
           placeholder="Search indexed content..."
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          className="pl-10 pr-24 h-12 text-base"
+          className="pl-10 pr-10 h-12 text-base"
           autoFocus
         />
-        <Button
-          type="submit"
-          size="sm"
-          className="absolute right-1.5 top-1/2 -translate-y-1/2"
-          disabled={!query.trim() || !selectedIndex || searching}
-        >
-          {searching ? "Searching..." : "Search"}
-        </Button>
-      </form>
+        {searching && (
+          <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground animate-spin" />
+        )}
+      </div>
 
       {indexes.length === 0 && (
         <div className="text-center py-12 text-muted-foreground">
@@ -209,7 +242,7 @@ export default function EngineDemoPage() {
       )}
 
       {/* Results meta */}
-      {hasSearched && searchResult && (
+      {hasSearched && searchResult && !searching && (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <span>
             About {searchResult.estimatedTotalHits.toLocaleString()} results
@@ -244,7 +277,7 @@ export default function EngineDemoPage() {
       {hasSearched && searchResult && searchResult.hits.length === 0 && !searching && (
         <div className="text-center py-12 text-muted-foreground">
           <Search className="h-8 w-8 mx-auto mb-3 opacity-50" />
-          <p>No results found for &ldquo;{submittedQuery}&rdquo;</p>
+          <p>No results found for &ldquo;{query}&rdquo;</p>
           <p className="text-sm mt-1">Try different keywords or check another index.</p>
         </div>
       )}
