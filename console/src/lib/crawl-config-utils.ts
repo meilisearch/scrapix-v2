@@ -49,14 +49,13 @@ export function crawlStateToConfig(
   const config: Record<string, unknown> = {
     start_urls: startUrls,
     index_uid: indexUid,
+    ...(crawlState.source.trim() ? { source: crawlState.source.trim() } : {}),
     crawler_type: crawlState.crawler_type,
     ...(maxDepth && maxDepth > 0 ? { max_depth: maxDepth } : {}),
     ...(maxPages ? { max_pages: maxPages } : {}),
   };
 
-  if (crawlState.index_strategy === "replace") {
-    config.index_strategy = "replace";
-  }
+  config.index_strategy = crawlState.index_strategy;
 
   const ms: Record<string, unknown> = {
     url: crawlState.meilisearch_url,
@@ -66,7 +65,7 @@ export function crawlStateToConfig(
     ms.primary_key = crawlState.meilisearch_primary_key;
   const batchSize = optInt(crawlState.meilisearch_batch_size);
   if (batchSize && batchSize !== 1000) ms.batch_size = batchSize;
-  if (crawlState.meilisearch_keep_settings) ms.keep_settings = true;
+  ms.keep_settings = crawlState.meilisearch_keep_settings;
   config.meilisearch = ms;
 
   const domains = lines(crawlState.allowed_domains);
@@ -185,6 +184,7 @@ export function configToCrawlState(config: AnyConfig): CrawlState {
   const state: CrawlState = { ...defaultCrawlState };
 
   state.index_uid = str(config.index_uid);
+  state.source = str(config.source);
   state.max_depth = str(config.max_depth);
   state.max_pages = str(config.max_pages) || defaultCrawlState.max_pages;
   state.crawler_type =

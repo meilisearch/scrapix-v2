@@ -68,6 +68,7 @@ const SCHEMA_ORG_TYPES = [
 export interface CrawlState {
   // General
   index_uid: string;
+  source: string;
   max_depth: string;
   max_pages: string;
   crawler_type: "http" | "browser";
@@ -116,6 +117,7 @@ export interface CrawlState {
 
 export const defaultCrawlState: CrawlState = {
   index_uid: "",
+  source: "",
   max_depth: "",
   max_pages: "1000000",
   crawler_type: "http",
@@ -972,6 +974,23 @@ export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
             </div>
 
             <div className="space-y-1.5">
+              <Label htmlFor="source" className="text-sm font-medium">
+                Source
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Tag documents with a source identifier for multi-tenant indexing.
+                Enables per-source filtering and deletion within a shared index.
+              </p>
+              <Input
+                id="source"
+                placeholder="Optional (defaults to domain)"
+                value={state.source}
+                onChange={(e) => set("source", e.target.value)}
+                className="font-mono text-xs"
+              />
+            </div>
+
+            <div className="space-y-1.5">
               <Label className="text-sm font-medium">Index Strategy</Label>
               <p className="text-xs text-muted-foreground">
                 Update adds new documents or updates existing ones — unchanged pages are skipped using conditional HTTP headers. Replace creates a fresh index and swaps it atomically on completion (always re-crawls all pages).
@@ -1053,19 +1072,38 @@ function MeilisearchEngineSelector({
     staleTime: 60_000,
   });
 
-  // Auto-select default engine on first load
+  // Auto-select engine on first load:
+  // 1. If the current URL/key matches a known engine, select it (preserves saved config)
+  // 2. Otherwise, if URL/key are still defaults, select the default engine
   const [initialized, setInitialized] = useState(false);
   useEffect(() => {
     if (initialized || engines.length === 0) return;
     setInitialized(true);
-    const defaultEngine = engines.find((e) => e.is_default);
-    if (defaultEngine && !state.meilisearch_engine_id) {
-      onChange({
-        ...state,
-        meilisearch_engine_id: defaultEngine.id,
-        meilisearch_url: defaultEngine.url,
-        meilisearch_api_key: defaultEngine.api_key,
-      });
+    if (state.meilisearch_engine_id) return;
+
+    // Try to match current URL/key to a known engine
+    const matchingEngine = engines.find(
+      (e) => e.url === state.meilisearch_url && e.api_key === state.meilisearch_api_key
+    );
+    if (matchingEngine) {
+      onChange({ ...state, meilisearch_engine_id: matchingEngine.id });
+      return;
+    }
+
+    // Only auto-select default engine if URL/key are still the defaults
+    const isDefault =
+      state.meilisearch_url === defaultCrawlState.meilisearch_url &&
+      state.meilisearch_api_key === defaultCrawlState.meilisearch_api_key;
+    if (isDefault) {
+      const defaultEngine = engines.find((e) => e.is_default);
+      if (defaultEngine) {
+        onChange({
+          ...state,
+          meilisearch_engine_id: defaultEngine.id,
+          meilisearch_url: defaultEngine.url,
+          meilisearch_api_key: defaultEngine.api_key,
+        });
+      }
     }
   }, [engines, initialized, state, onChange]);
 
