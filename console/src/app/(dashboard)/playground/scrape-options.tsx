@@ -6,18 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  FileText,
-  Code2,
-  FileCode,
-  AlignLeft,
-  Link2,
-  Tags,
-  Sparkles,
-  Plus,
-  X,
-  type LucideIcon,
-} from "lucide-react";
+import { Plus, X } from "lucide-react";
 
 export interface ScrapeState {
   formats: string[];
@@ -46,14 +35,13 @@ const FORMAT_OPTIONS: {
   value: string;
   label: string;
   description: string;
-  icon: LucideIcon;
 }[] = [
-  { value: "markdown", label: "Markdown", description: "Clean, readable text with formatting", icon: FileText },
-  { value: "html", label: "HTML", description: "Cleaned HTML with main content", icon: Code2 },
-  { value: "rawhtml", label: "Raw HTML", description: "Original unprocessed HTML source", icon: FileCode },
-  { value: "content", label: "Content", description: "Plain text without any markup", icon: AlignLeft },
-  { value: "links", label: "Links", description: "All hyperlinks found on the page", icon: Link2 },
-  { value: "metadata", label: "Metadata", description: "Title, description, OG tags, etc.", icon: Tags },
+  { value: "markdown", label: "Markdown", description: "Clean, readable text with formatting" },
+  { value: "html", label: "HTML", description: "Cleaned HTML with main content" },
+  { value: "rawhtml", label: "Raw HTML", description: "Original unprocessed HTML source" },
+  { value: "content", label: "Content", description: "Plain text without any markup" },
+  { value: "links", label: "Links", description: "All hyperlinks found on the page" },
+  { value: "metadata", label: "Metadata", description: "Title, description, OG tags, etc." },
 ];
 
 function SwitchRow({
@@ -218,24 +206,15 @@ export function ScrapeOptions({ state, onChange }: ScrapeOptionsProps) {
           Output Formats
         </Label>
         <div className="space-y-1">
-          {FORMAT_OPTIONS.map(({ value, label, description, icon: Icon }) => (
-            <button
+          {FORMAT_OPTIONS.map(({ value, label, description }) => (
+            <SwitchRow
               key={value}
-              type="button"
-              onClick={() => toggle(value)}
-              className="flex items-center gap-3 w-full rounded-md px-3 py-2.5 text-left transition-colors hover:bg-muted/50 cursor-pointer"
-            >
-              <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium">{label}</p>
-                <p className="text-xs text-muted-foreground">{description}</p>
-              </div>
-              <Switch
-                checked={state.formats.includes(value)}
-                onCheckedChange={() => toggle(value)}
-                className="shrink-0"
-              />
-            </button>
+              id={`fmt-${value}`}
+              label={label}
+              description={description}
+              checked={state.formats.includes(value)}
+              onCheckedChange={() => toggle(value)}
+            />
           ))}
         </div>
       </div>
@@ -292,24 +271,13 @@ export function ScrapeOptions({ state, onChange }: ScrapeOptionsProps) {
           AI
         </Label>
 
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-muted-foreground" />
-            <div>
-              <Label htmlFor="ai-summary" className="text-sm font-medium">
-                AI Summary
-              </Label>
-              <p className="text-xs text-muted-foreground">
-                Generate a TL;DR using Claude Haiku
-              </p>
-            </div>
-          </div>
-          <Switch
-            id="ai-summary"
-            checked={state.ai_summary}
-            onCheckedChange={(v) => set("ai_summary", v)}
-          />
-        </div>
+        <SwitchRow
+          id="ai-summary"
+          label="AI Summary"
+          description="Generate a TL;DR using Claude Haiku"
+          checked={state.ai_summary}
+          onCheckedChange={(v) => set("ai_summary", v)}
+        />
 
         {/* AI Extraction */}
         <SwitchRow

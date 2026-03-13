@@ -87,7 +87,7 @@ export default function CrawlPage() {
         }
       />
 
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(280px,1fr)_1fr] gap-4 flex-1 min-h-0">
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(280px,1fr)_3fr] gap-4 flex-1 min-h-0">
         <Card className="overflow-auto">
           <CardContent className="p-4">
             <CrawlOptions state={crawlState} onChange={setCrawlState} />

@@ -2,10 +2,10 @@
 
 import { useState, useCallback, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
@@ -19,7 +19,6 @@ import {
 } from "@/components/ui/table";
 import { toast } from "sonner";
 import {
-  Network,
   Search,
   ExternalLink,
   Clock,
@@ -27,15 +26,10 @@ import {
   Loader2,
   Copy,
   Download,
-  History,
 } from "lucide-react";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import { submitMap } from "@/lib/api";
 import { CodeBlock } from "@/app/(dashboard)/playground/result-panel";
+import { UrlBar } from "@/app/(dashboard)/playground/url-bar";
 import { HistoryPanel, loadRuns, saveRun, type RunEntry } from "@/app/(dashboard)/playground/recent-runs";
 import type { MapResult, MapLink } from "@/lib/api-types";
 
@@ -52,6 +46,27 @@ const MAP_EXAMPLE = `curl -X POST https://scrapix.meilisearch.dev/map \\
     "get_priority": true,
     "get_changefreq": true
   }'`;
+
+function SwitchRow({
+  id,
+  label,
+  checked,
+  onCheckedChange,
+}: {
+  id: string;
+  label: string;
+  checked: boolean;
+  onCheckedChange: (v: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between">
+      <Label htmlFor={id} className="text-sm font-medium cursor-pointer">
+        {label}
+      </Label>
+      <Switch id={id} checked={checked} onCheckedChange={onCheckedChange} />
+    </div>
+  );
+}
 
 export default function MapPage() {
   const [url, setUrl] = useState("https://scrapix.meilisearch.dev");
@@ -116,10 +131,6 @@ export default function MapPage() {
     setLoading(false);
   }, [url, depth, limit, search, getTitle, getDescription, getLastmod, getPriority, getChangefreq]);
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") handleMap();
-  };
-
   const handleReplay = (run: RunEntry) => {
     setUrl(run.url);
   };
@@ -158,248 +169,223 @@ export default function MapPage() {
 
   return (
     <div className="flex flex-col gap-4 h-full">
-      {/* URL Input + Options */}
-      <Card>
-        <CardContent className="p-4">
-          <div className="flex flex-col gap-4">
-            <div className="flex gap-2">
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button variant="ghost" size="icon" className="shrink-0">
-                    <History className="h-4 w-4" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent align="start" className="w-72 p-0">
-                  <div className="h-80 p-3">
-                    <HistoryPanel runs={runs} onReplay={handleReplay} typeFilter="map" />
-                  </div>
-                </PopoverContent>
-              </Popover>
-              <div className="flex-1">
-                <Input
-                  placeholder="https://scrapix.meilisearch.dev"
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  className="font-mono text-sm"
-                />
-              </div>
-              <Button onClick={handleMap} disabled={loading}>
-                {loading ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <Network className="mr-2 h-4 w-4" />
-                )}
-                Map
-              </Button>
-            </div>
-
-            <div className="flex flex-wrap gap-4 items-end">
-              <div className="space-y-1">
-                <Label className="text-xs text-muted-foreground">Depth</Label>
-                <Input
-                  type="number"
-                  min={0}
-                  max={5}
-                  value={depth}
-                  onChange={(e) => setDepth(e.target.value)}
-                  className="w-20 text-sm"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs text-muted-foreground">Limit</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  max={10000}
-                  value={limit}
-                  onChange={(e) => setLimit(e.target.value)}
-                  className="w-24 text-sm"
-                />
-              </div>
-              <div className="space-y-1 flex-1 min-w-[200px]">
-                <Label className="text-xs text-muted-foreground">
-                  Search filter (server-side)
-                </Label>
-                <Input
-                  placeholder="Filter by keyword..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  className="text-sm"
-                />
-              </div>
-            </div>
-
-            <div className="flex flex-wrap gap-4 items-center">
-              <span className="text-xs text-muted-foreground font-medium">Include:</span>
-              <div className="flex items-center gap-1.5">
-                <Switch id="get-title" checked={getTitle} onCheckedChange={setGetTitle} />
-                <Label htmlFor="get-title" className="text-xs cursor-pointer">Title</Label>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <Switch id="get-description" checked={getDescription} onCheckedChange={setGetDescription} />
-                <Label htmlFor="get-description" className="text-xs cursor-pointer">Description</Label>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <Switch id="get-lastmod" checked={getLastmod} onCheckedChange={setGetLastmod} />
-                <Label htmlFor="get-lastmod" className="text-xs cursor-pointer">Last Modified</Label>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <Switch id="get-priority" checked={getPriority} onCheckedChange={setGetPriority} />
-                <Label htmlFor="get-priority" className="text-xs cursor-pointer">Priority</Label>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <Switch id="get-changefreq" checked={getChangefreq} onCheckedChange={setGetChangefreq} />
-                <Label htmlFor="get-changefreq" className="text-xs cursor-pointer">Change Freq</Label>
-              </div>
-            </div>
+      <UrlBar
+        mode="map"
+        url={url}
+        onUrlChange={setUrl}
+        onSubmit={handleMap}
+        loading={loading}
+        historySlot={
+          <div className="p-3 h-full">
+            <HistoryPanel runs={runs} onReplay={handleReplay} typeFilter="map" />
           </div>
-        </CardContent>
-      </Card>
+        }
+      />
 
-      {/* Results */}
-      <div className="flex-1 min-h-0">
-        {loading && (
-          <Card className="h-full">
-            <CardContent className="p-6 space-y-4">
-              <div className="flex items-center gap-2 text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                <span className="text-sm">
-                  Mapping website... This may take a moment for deep crawls.
-                </span>
-              </div>
-              {Array.from({ length: 8 }).map((_, i) => (
-                <div key={i} className="flex gap-4 items-center">
-                  <Skeleton className="h-4 flex-[3]" />
-                  <Skeleton className="h-4 flex-[2]" />
-                  <Skeleton className="h-4 flex-[4]" />
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(280px,1fr)_3fr] gap-4 flex-1 min-h-0">
+        <Card className="overflow-auto">
+          <CardContent className="p-4">
+            <div className="space-y-5">
+              <div className="space-y-3">
+                <Label className="text-xs text-muted-foreground uppercase tracking-wide">
+                  Parameters
+                </Label>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="depth" className="text-sm font-medium">Depth</Label>
+                    <Input
+                      id="depth"
+                      type="number"
+                      min={0}
+                      max={5}
+                      value={depth}
+                      onChange={(e) => setDepth(e.target.value)}
+                      className="text-sm"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="limit" className="text-sm font-medium">Limit</Label>
+                    <Input
+                      id="limit"
+                      type="number"
+                      min={1}
+                      max={10000}
+                      value={limit}
+                      onChange={(e) => setLimit(e.target.value)}
+                      className="text-sm"
+                    />
+                  </div>
                 </div>
-              ))}
-            </CardContent>
-          </Card>
-        )}
-
-        {error && (
-          <Card className="border-destructive">
-            <CardContent className="p-6">
-              <p className="text-destructive text-sm">{error}</p>
-            </CardContent>
-          </Card>
-        )}
-
-        {result && (
-          <Card className="h-full flex flex-col">
-            <CardHeader className="pb-3 flex-none">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <CardTitle className="text-base">
-                    Discovered Links
-                  </CardTitle>
-                  <Badge variant="secondary" className="font-mono">
-                    <Link2 className="mr-1 h-3 w-3" />
-                    {result.total}
-                  </Badge>
-                  <Badge variant="outline" className="text-xs font-normal">
-                    <Clock className="mr-1 h-3 w-3" />
-                    {result.duration_ms < 1000
-                      ? `${result.duration_ms}ms`
-                      : `${(result.duration_ms / 1000).toFixed(1)}s`}
-                  </Badge>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={copyAllUrls}
-                  >
-                    <Copy className="mr-1.5 h-3 w-3" />
-                    Copy URLs
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={exportCsv}
-                  >
-                    <Download className="mr-1.5 h-3 w-3" />
-                    CSV
-                  </Button>
-                </div>
-              </div>
-
-              {/* Client-side filter */}
-              <div className="mt-3">
-                <div className="relative">
-                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <div className="space-y-1.5">
+                  <Label htmlFor="search-filter" className="text-sm font-medium">
+                    Search filter
+                  </Label>
+                  <p className="text-xs text-muted-foreground">Server-side keyword filter</p>
                   <Input
-                    placeholder="Filter results..."
-                    value={filterText}
-                    onChange={(e) => setFilterText(e.target.value)}
-                    className="pl-9 text-sm"
+                    id="search-filter"
+                    placeholder="Filter by keyword..."
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    className="text-sm"
                   />
                 </div>
-                {filterText && (
-                  <p className="text-xs text-muted-foreground mt-1.5">
-                    Showing {filteredLinks.length} of {result.links.length}
-                  </p>
-                )}
               </div>
-            </CardHeader>
 
-            <CardContent className="flex-1 min-h-0 p-0">
-              <ScrollArea className="h-full">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="min-w-[250px]">URL</TableHead>
-                      {getTitle && <TableHead>Title</TableHead>}
-                      {getDescription && <TableHead>Description</TableHead>}
-                      {getLastmod && <TableHead className="w-[120px]">Last Modified</TableHead>}
-                      {getPriority && <TableHead className="w-[80px]">Priority</TableHead>}
-                      {getChangefreq && <TableHead className="w-[100px]">Freq</TableHead>}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredLinks.map((link, i) => (
-                      <MapRow
-                        key={i}
-                        link={link}
-                        showTitle={getTitle}
-                        showDescription={getDescription}
-                        showLastmod={getLastmod}
-                        showPriority={getPriority}
-                        showChangefreq={getChangefreq}
-                      />
-                    ))}
-                    {filteredLinks.length === 0 && (
+              <div className="space-y-3 border-t pt-4">
+                <Label className="text-xs text-muted-foreground uppercase tracking-wide">
+                  Include Fields
+                </Label>
+                <SwitchRow id="get-title" label="Title" checked={getTitle} onCheckedChange={setGetTitle} />
+                <SwitchRow id="get-description" label="Description" checked={getDescription} onCheckedChange={setGetDescription} />
+                <SwitchRow id="get-lastmod" label="Last Modified" checked={getLastmod} onCheckedChange={setGetLastmod} />
+                <SwitchRow id="get-priority" label="Priority" checked={getPriority} onCheckedChange={setGetPriority} />
+                <SwitchRow id="get-changefreq" label="Change Freq" checked={getChangefreq} onCheckedChange={setGetChangefreq} />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="flex-1 min-h-0">
+          {loading && (
+            <Card className="h-full">
+              <CardContent className="p-6 space-y-4">
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span className="text-sm">
+                    Mapping website... This may take a moment for deep crawls.
+                  </span>
+                </div>
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <div key={i} className="flex gap-4 items-center">
+                    <Skeleton className="h-4 flex-[3]" />
+                    <Skeleton className="h-4 flex-[2]" />
+                    <Skeleton className="h-4 flex-[4]" />
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+
+          {error && (
+            <Card className="border-destructive">
+              <CardContent className="p-6">
+                <p className="text-destructive text-sm">{error}</p>
+              </CardContent>
+            </Card>
+          )}
+
+          {result && (
+            <Card className="h-full flex flex-col">
+              <CardHeader className="pb-3 flex-none">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <CardTitle className="text-base">
+                      Discovered Links
+                    </CardTitle>
+                    <Badge variant="secondary" className="font-mono">
+                      <Link2 className="mr-1 h-3 w-3" />
+                      {result.total}
+                    </Badge>
+                    <Badge variant="outline" className="text-xs font-normal">
+                      <Clock className="mr-1 h-3 w-3" />
+                      {result.duration_ms < 1000
+                        ? `${result.duration_ms}ms`
+                        : `${(result.duration_ms / 1000).toFixed(1)}s`}
+                    </Badge>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={copyAllUrls}
+                    >
+                      <Copy className="mr-1.5 h-3 w-3" />
+                      Copy URLs
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={exportCsv}
+                    >
+                      <Download className="mr-1.5 h-3 w-3" />
+                      CSV
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="mt-3">
+                  <div className="relative">
+                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Filter results..."
+                      value={filterText}
+                      onChange={(e) => setFilterText(e.target.value)}
+                      className="pl-9 text-sm"
+                    />
+                  </div>
+                  {filterText && (
+                    <p className="text-xs text-muted-foreground mt-1.5">
+                      Showing {filteredLinks.length} of {result.links.length}
+                    </p>
+                  )}
+                </div>
+              </CardHeader>
+
+              <CardContent className="flex-1 min-h-0 p-0">
+                <ScrollArea className="h-full">
+                  <Table>
+                    <TableHeader>
                       <TableRow>
-                        <TableCell
-                          colSpan={1 + (getTitle ? 1 : 0) + (getDescription ? 1 : 0) + (getLastmod ? 1 : 0) + (getPriority ? 1 : 0) + (getChangefreq ? 1 : 0)}
-                          className="text-center text-muted-foreground py-8"
-                        >
-                          No links match your filter.
-                        </TableCell>
+                        <TableHead className="min-w-[250px]">URL</TableHead>
+                        {getTitle && <TableHead>Title</TableHead>}
+                        {getDescription && <TableHead>Description</TableHead>}
+                        {getLastmod && <TableHead className="w-[120px]">Last Modified</TableHead>}
+                        {getPriority && <TableHead className="w-[80px]">Priority</TableHead>}
+                        {getChangefreq && <TableHead className="w-[100px]">Freq</TableHead>}
                       </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </ScrollArea>
-            </CardContent>
-          </Card>
-        )}
+                    </TableHeader>
+                    <TableBody>
+                      {filteredLinks.map((link, i) => (
+                        <MapRow
+                          key={i}
+                          link={link}
+                          showTitle={getTitle}
+                          showDescription={getDescription}
+                          showLastmod={getLastmod}
+                          showPriority={getPriority}
+                          showChangefreq={getChangefreq}
+                        />
+                      ))}
+                      {filteredLinks.length === 0 && (
+                        <TableRow>
+                          <TableCell
+                            colSpan={1 + (getTitle ? 1 : 0) + (getDescription ? 1 : 0) + (getLastmod ? 1 : 0) + (getPriority ? 1 : 0) + (getChangefreq ? 1 : 0)}
+                            className="text-center text-muted-foreground py-8"
+                          >
+                            No links match your filter.
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </ScrollArea>
+              </CardContent>
+            </Card>
+          )}
 
-        {!loading && !error && !result && (
-          <Card className="h-full flex flex-col">
-            <div className="px-6 pt-4 pb-2">
-              <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
-                API Example
-              </p>
-            </div>
-            <div className="px-6 pb-6 flex-1 min-h-0">
-              <CodeBlock code={MAP_EXAMPLE} lang="bash" />
-            </div>
-          </Card>
-        )}
+          {!loading && !error && !result && (
+            <Card className="h-full flex flex-col">
+              <div className="px-6 pt-4 pb-2">
+                <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">
+                  API Example
+                </p>
+              </div>
+              <div className="px-6 pb-6 flex-1 min-h-0">
+                <CodeBlock code={MAP_EXAMPLE} lang="bash" />
+              </div>
+            </Card>
+          )}
+        </div>
       </div>
     </div>
   );

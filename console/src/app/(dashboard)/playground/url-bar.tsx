@@ -11,7 +11,7 @@ import {
 import { Loader2, Play, History } from "lucide-react";
 
 interface UrlBarProps {
-  mode: "scrape" | "crawl";
+  mode: "scrape" | "crawl" | "map";
   url: string;
   onUrlChange: (url: string) => void;
   onSubmit: () => void;
@@ -42,18 +42,7 @@ export function UrlBar({
             </PopoverContent>
           </Popover>
         )}
-        {mode === "scrape" ? (
-          <Input
-            type="url"
-            placeholder="https://scrapix.meilisearch.dev"
-            value={url}
-            onChange={(e) => onUrlChange(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !loading) onSubmit();
-            }}
-            className="flex-1 font-mono text-sm"
-          />
-        ) : (
+        {mode === "crawl" ? (
           <Textarea
             placeholder={"https://scrapix.meilisearch.dev\nhttps://scrapix.meilisearch.dev/docs"}
             value={url}
@@ -67,6 +56,17 @@ export function UrlBar({
             rows={2}
             className="flex-1 font-mono text-sm min-h-0 resize-none"
           />
+        ) : (
+          <Input
+            type="url"
+            placeholder="https://scrapix.meilisearch.dev"
+            value={url}
+            onChange={(e) => onUrlChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !loading) onSubmit();
+            }}
+            className="flex-1 font-mono text-sm"
+          />
         )}
 
         <Button
@@ -79,14 +79,16 @@ export function UrlBar({
           ) : (
             <Play className="h-4 w-4" />
           )}
-          {mode === "scrape" ? "Scrape" : "Start Crawl"}
+          {mode === "scrape" ? "Scrape" : mode === "map" ? "Map" : "Start Crawl"}
         </Button>
       </div>
 
       <p className="text-xs text-muted-foreground px-1">
         {mode === "scrape"
           ? "Fetch and extract content from a single page."
-          : "Crawl a website by following links. Add one URL per line for multiple start URLs."}
+          : mode === "map"
+            ? "Discover all URLs on a website via sitemaps and crawling."
+            : "Crawl a website by following links. Add one URL per line for multiple start URLs."}
       </p>
     </div>
   );
