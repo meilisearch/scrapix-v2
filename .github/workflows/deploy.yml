@@ -69,6 +69,7 @@ jobs:
 
       - name: Release API on Heroku
         run: |
+          docker pull registry.heroku.com/scrapix-api/web
           IMAGE_ID=$(docker inspect registry.heroku.com/scrapix-api/web --format='{{.Id}}')
           curl -sf -X PATCH "https://api.heroku.com/apps/scrapix-api/formation" \
             -H "Content-Type: application/json" \
@@ -103,6 +104,7 @@ jobs:
 
       - name: Release Console on Heroku
         run: |
+          docker pull registry.heroku.com/scrapix-console/web
           IMAGE_ID=$(docker inspect registry.heroku.com/scrapix-console/web --format='{{.Id}}')
           curl -sf -X PATCH "https://api.heroku.com/apps/scrapix-console/formation" \
             -H "Content-Type: application/json" \
