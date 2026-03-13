@@ -19,6 +19,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -35,7 +36,9 @@ import {
   Trash2,
   AlertCircle,
   ExternalLink,
+  Copy,
 } from "lucide-react";
+import { HighlightedJson } from "@/components/highlighted-json";
 import {
   fetchConfig,
   updateConfig,
@@ -55,6 +58,125 @@ import {
   getStartUrls,
 } from "@/lib/crawl-config-utils";
 import { CronBuilder } from "@/components/cron-builder";
+
+function ConfigPreview({ config }: { config: Record<string, unknown> }) {
+  const jsonCode = JSON.stringify(config, null, 2);
+
+  const formatValue = (v: unknown): string => {
+    if (v == null) return "—";
+    if (typeof v === "boolean") return v ? "Yes" : "No";
+    if (Array.isArray(v)) return v.length === 0 ? "—" : v.join(", ");
+    if (typeof v === "object") return JSON.stringify(v);
+    return String(v);
+  };
+
+  const labelMap: Record<string, string> = {
+    start_urls: "Start URLs",
+    index_uid: "Index UID",
+    max_depth: "Max Depth",
+    max_pages: "Max Pages",
+    crawler_type: "Crawler Type",
+    allowed_domains: "Allowed Domains",
+    index_strategy: "Index Strategy",
+    keep_settings: "Keep Settings",
+  };
+
+  const sections: { title: string; entries: [string, string][] }[] = [];
+  const crawl: [string, string][] = [];
+  const meilisearch: [string, string][] = [];
+  const patterns: [string, string][] = [];
+  const other: [string, string][] = [];
+
+  for (const [key, value] of Object.entries(config)) {
+    if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+      const entries = Object.entries(value).filter(
+        ([, v]) =>
+          v != null &&
+          v !== "" &&
+          v !== false &&
+          !(Array.isArray(v) && v.length === 0)
+      );
+      if (entries.length === 0) continue;
+
+      if (key === "meilisearch") {
+        for (const [k, v] of entries) {
+          const display =
+            k === "api_key" && typeof v === "string" && v.length > 4
+              ? `${v.slice(0, 4)}${"*".repeat(Math.min(v.length - 4, 20))}`
+              : formatValue(v);
+          meilisearch.push([k.replace(/_/g, " "), display]);
+        }
+      } else if (key === "url_patterns") {
+        for (const [k, v] of entries) {
+          patterns.push([k.replace(/_/g, " "), formatValue(v)]);
+        }
+      } else {
+        for (const [k, v] of entries) {
+          other.push([`${key}.${k}`, formatValue(v)]);
+        }
+      }
+      continue;
+    }
+
+    const display = formatValue(value);
+    if (display !== "—") {
+      crawl.push([labelMap[key] || key.replace(/_/g, " "), display]);
+    }
+  }
+
+  if (crawl.length > 0) sections.push({ title: "Crawl", entries: crawl });
+  if (patterns.length > 0)
+    sections.push({ title: "URL Patterns", entries: patterns });
+  if (meilisearch.length > 0)
+    sections.push({ title: "Meilisearch", entries: meilisearch });
+  if (other.length > 0) sections.push({ title: "Other", entries: other });
+
+  return (
+    <Tabs defaultValue="pretty">
+      <TabsList>
+        <TabsTrigger value="pretty">Pretty</TabsTrigger>
+        <TabsTrigger value="json">JSON</TabsTrigger>
+      </TabsList>
+      <TabsContent value="pretty">
+        <div className="space-y-4 pt-2">
+          {sections.map(({ title, entries }) => (
+            <div key={title}>
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
+                {title}
+              </p>
+              <div className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1">
+                {entries.map(([label, value]) => (
+                  <div key={label} className="contents">
+                    <span className="text-sm text-muted-foreground capitalize">
+                      {label}
+                    </span>
+                    <span className="text-sm font-mono truncate">{value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </TabsContent>
+      <TabsContent value="json">
+        <div className="bg-muted rounded-lg overflow-x-auto relative group">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="absolute top-2 right-2 h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity"
+            onClick={() => {
+              navigator.clipboard.writeText(jsonCode);
+              toast.success("Copied to clipboard");
+            }}
+          >
+            <Copy className="h-3.5 w-3.5" />
+          </Button>
+          <HighlightedJson code={jsonCode} />
+        </div>
+      </TabsContent>
+    </Tabs>
+  );
+}
 
 export default function ConfigDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -398,9 +520,7 @@ export default function ConfigDetailPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <pre className="bg-muted rounded-lg p-4 overflow-x-auto text-xs font-mono">
-              {JSON.stringify(config.config, null, 2)}
-            </pre>
+            <ConfigPreview config={config.config as Record<string, unknown>} />
           </CardContent>
         </Card>
       )}
@@ -415,7 +535,7 @@ export default function ConfigDetailPage() {
         </CardHeader>
         <CardContent>
           <pre className="bg-muted rounded-lg p-4 overflow-x-auto text-xs font-mono">
-{`curl -X POST http://localhost:8080/configs/${config.id}/trigger \\
+{`curl -X POST https://api.scrapix.meilisearch.com/configs/${config.id}/trigger \\
   -H "X-API-Key: sk_live_YOUR_KEY"`}
           </pre>
         </CardContent>
