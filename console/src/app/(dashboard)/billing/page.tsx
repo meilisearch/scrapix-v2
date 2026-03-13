@@ -39,57 +39,9 @@ import { toast } from "sonner";
 import { formatDistanceToNow, format, parseISO, eachDayOfInterval, startOfDay } from "date-fns";
 import dynamic from "next/dynamic";
 
-const LazyBarChart = dynamic(
-  () =>
-    import("recharts").then((mod) => {
-      const { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } = mod;
-
-      function DailyCostChart({ data }: { data: { date: string; cost: number }[] }) {
-        return (
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data}>
-              <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-              <XAxis
-                dataKey="date"
-                tick={{ fontSize: 12 }}
-                className="text-muted-foreground"
-                tickLine={false}
-                axisLine={false}
-              />
-              <YAxis
-                tick={{ fontSize: 12 }}
-                className="text-muted-foreground"
-                tickLine={false}
-                axisLine={false}
-                tickFormatter={(v: number) => v.toLocaleString()}
-              />
-              <Tooltip
-                content={({ active, payload, label }) => {
-                  if (!active || !payload?.length) return null;
-                  return (
-                    <div className="rounded-lg border bg-background p-2 shadow-sm">
-                      <p className="text-sm font-medium">{label}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {Number(payload[0].value).toLocaleString()} credits
-                      </p>
-                    </div>
-                  );
-                }}
-              />
-              <Bar
-                dataKey="cost"
-                fill="hsl(var(--primary))"
-                radius={[4, 4, 0, 0]}
-              />
-            </BarChart>
-          </ResponsiveContainer>
-        );
-      }
-
-      return DailyCostChart;
-    }),
-  { ssr: false },
-);
+const DailyCostChart = dynamic(() => import("./daily-cost-chart"), {
+  ssr: false,
+});
 
 const TOPUP_PACKAGES = [
   { amount: 1_000, price: "$10" },
@@ -550,7 +502,7 @@ export default function BillingPage() {
           </CardHeader>
           <CardContent>
             <div className="h-[250px]">
-              <LazyBarChart data={dailyCostData} />
+              <DailyCostChart data={dailyCostData} />
             </div>
           </CardContent>
         </Card>
