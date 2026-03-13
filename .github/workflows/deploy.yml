@@ -62,6 +62,7 @@ jobs:
           context: .
           file: Dockerfile.heroku
           push: true
+          provenance: false
           tags: registry.heroku.com/scrapix-api/web
           cache-from: type=gha,scope=heroku-api
           cache-to: type=gha,mode=max,scope=heroku-api
@@ -95,6 +96,7 @@ jobs:
           context: ./console
           file: ./console/Dockerfile
           push: true
+          provenance: false
           tags: registry.heroku.com/scrapix-console/web
           cache-from: type=gha,scope=heroku-console
           cache-to: type=gha,mode=max,scope=heroku-console
