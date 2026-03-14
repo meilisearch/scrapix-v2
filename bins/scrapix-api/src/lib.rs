@@ -343,8 +343,8 @@ impl AppState {
                 ..
             } = event
             {
-                // Look up the job to get the start URL, crawler_type, and AI feature flags
-                let (url, domain, is_js_rendered, has_ai_summary, has_ai_extraction) = {
+                // Look up the job to get the start URL, crawler_type, AI feature flags, and api_key_id
+                let (url, domain, is_js_rendered, has_ai_summary, has_ai_extraction, job_api_key_id) = {
                     let jobs = self.crawl.jobs.read();
                     jobs.get(job_id)
                         .map(|j| {
@@ -361,13 +361,15 @@ impl AppState {
                             let has_extraction = cfg.as_ref()
                                 .map(|c| c.features.ai_extraction.as_ref().map_or(false, |t| t.enabled))
                                 .unwrap_or(false);
-                            (url, domain, is_js, has_summary, has_extraction)
+                            let api_key_id = j.api_key_id.clone().unwrap_or_default();
+                            (url, domain, is_js, has_summary, has_extraction, api_key_id)
                         })
                         .unwrap_or_default()
                 };
 
                 let ch_event = ClickHouseRequestEvent {
                     account_id: account_id.clone().unwrap_or_default(),
+                    api_key_id: job_api_key_id,
                     job_id: job_id.to_string(),
                     operation: "crawl".to_string(),
                     url,
@@ -384,6 +386,8 @@ impl AppState {
                     ai_model: String::new(),
                     urls_found: 0,
                     pages_fetched: *pages_crawled as u32,
+                    search_query: String::new(),
+                    results_count: 0,
                     timestamp: time::OffsetDateTime::now_utc(),
                 };
                 let batcher = batcher.clone();
@@ -768,6 +772,7 @@ use crate::auth::{AuthenticatedAccount, AuthenticatedUser};
 /// Resolved account context from either API key or session auth
 pub(crate) struct AccountContext {
     pub account_id: String,
+    pub api_key_id: Option<String>,
 }
 
 /// Extract account context from request extensions.
@@ -781,6 +786,7 @@ async fn extract_account_context(
     if let Some(Extension(acct)) = account_ext {
         return Some(AccountContext {
             account_id: acct.account_id.clone(),
+            api_key_id: acct.api_key_id.clone(),
         });
     }
 
@@ -802,6 +808,7 @@ async fn extract_account_context(
             let account_id: uuid::Uuid = row.get("id");
             return Some(AccountContext {
                 account_id: account_id.to_string(),
+                api_key_id: None,
             });
         }
     }
@@ -1542,6 +1549,10 @@ async fn scrape_url(
                 .as_ref()
                 .map(|c| c.account_id.clone())
                 .unwrap_or_default();
+            let api_key_id = account_ctx
+                .as_ref()
+                .and_then(|c| c.api_key_id.clone())
+                .unwrap_or_default();
             log_scrape_request(
                 batcher,
                 &final_url,
@@ -1549,6 +1560,7 @@ async fn scrape_url(
                 start_time.elapsed().as_millis() as u64,
                 0,
                 account_id,
+                api_key_id,
                 format!("HTTP {}", status_code),
                 js_rendered,
                 false,
@@ -1790,6 +1802,10 @@ async fn scrape_url(
             .as_ref()
             .map(|c| c.account_id.clone())
             .unwrap_or_default();
+        let api_key_id = account_ctx
+            .as_ref()
+            .and_then(|c| c.api_key_id.clone())
+            .unwrap_or_default();
         log_scrape_request(
             batcher,
             &final_url,
@@ -1797,6 +1813,7 @@ async fn scrape_url(
             scrape_duration_ms,
             original_html_len,
             account_id,
+            api_key_id,
             String::new(),
             js_rendered,
             has_ai_summary,
@@ -1858,6 +1875,7 @@ fn log_scrape_request(
     duration_ms: u64,
     content_length: u64,
     account_id: String,
+    api_key_id: String,
     error: String,
     js_rendered: bool,
     ai_summary: bool,
@@ -1869,6 +1887,7 @@ fn log_scrape_request(
     let domain = extract_domain(url).unwrap_or_default();
     let event = ClickHouseRequestEvent {
         account_id,
+        api_key_id,
         job_id: String::new(),
         operation: "scrape".to_string(),
         url: url.to_string(),
@@ -1885,6 +1904,8 @@ fn log_scrape_request(
         ai_model,
         urls_found: 0,
         pages_fetched: 1,
+        search_query: String::new(),
+        results_count: 0,
         timestamp: time::OffsetDateTime::now_utc(),
     };
     let batcher = batcher.clone();
@@ -1949,9 +1970,57 @@ pub(crate) async fn do_create_crawl(
         ));
     }
 
-    if config.index_uid.is_empty() {
-        return Err(ApiError::new("Index UID is required", "validation_error"));
-    }
+    // Auto-generate index_uid from first start URL if not provided
+    let config = if config.index_uid.is_empty() {
+        let mut config = config;
+        config.index_uid = scrapix_core::url_to_index_uid(
+            config.start_urls.first().map(|s| s.as_str()).unwrap_or(""),
+        );
+        if config.index_uid.is_empty() {
+            return Err(ApiError::new(
+                "Could not derive index UID from start URLs",
+                "validation_error",
+            ));
+        }
+        config
+    } else {
+        config
+    };
+
+    // Resolve Meilisearch config from account's default engine if not provided
+    let config = if config.meilisearch.url.is_empty() {
+        if let (Some(ref pool), Some(ctx)) = (&state.db_pool, account_ctx) {
+            let account_uuid: uuid::Uuid = ctx
+                .account_id
+                .parse()
+                .map_err(|_| ApiError::new("Invalid account ID", "internal_error"))?;
+            let engine_row = sqlx::query(
+                "SELECT url, api_key FROM meilisearch_engines WHERE account_id = $1 AND is_default = true LIMIT 1",
+            )
+            .bind(account_uuid)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| ApiError::new(format!("Database error: {e}"), "internal_error"))?
+            .ok_or_else(|| {
+                ApiError::new(
+                    "No Meilisearch engine configured. Add one in Settings.",
+                    "validation_error",
+                )
+            })?;
+            use sqlx::Row as _;
+            let mut config = config;
+            config.meilisearch.url = engine_row.get::<String, _>("url");
+            config.meilisearch.api_key = engine_row.get::<String, _>("api_key");
+            config
+        } else {
+            return Err(ApiError::new(
+                "Meilisearch configuration is required",
+                "validation_error",
+            ));
+        }
+    } else {
+        config
+    };
 
     // Pre-flight credit check (1 credit minimum to start a crawl)
     if let (Some(ref pool), Some(ctx)) = (&state.db_pool, account_ctx) {
@@ -1981,7 +2050,8 @@ pub(crate) async fn do_create_crawl(
 
     // Create job state (tracks the target index_uid, not the temp one)
     let mut job = if let Some(ctx) = account_ctx {
-        let j = JobState::with_account(&job_id, &target_index_uid, &ctx.account_id);
+        let mut j = JobState::with_account(&job_id, &target_index_uid, &ctx.account_id);
+        j.api_key_id = ctx.api_key_id.clone();
         let mut jobs = state.crawl.jobs.write();
         // Evict old jobs if at capacity
         if jobs.len() >= state.config.max_jobs {
@@ -2814,9 +2884,14 @@ async fn map_url(
             .as_ref()
             .map(|c| c.account_id.clone())
             .unwrap_or_default();
+        let api_key_id = account_ctx
+            .as_ref()
+            .and_then(|c| c.api_key_id.clone())
+            .unwrap_or_default();
         let domain = extract_domain(&request.url).unwrap_or_default();
         let event = ClickHouseRequestEvent {
             account_id,
+            api_key_id,
             job_id: String::new(),
             operation: "map".to_string(),
             url: request.url.clone(),
@@ -2833,6 +2908,8 @@ async fn map_url(
             ai_model: String::new(),
             urls_found: total as u32,
             pages_fetched: visited.len() as u32,
+            search_query: String::new(),
+            results_count: 0,
             timestamp: time::OffsetDateTime::now_utc(),
         };
         let batcher = batcher.clone();
@@ -2864,6 +2941,223 @@ async fn map_url(
         total,
         duration_ms,
     }))
+}
+
+// ============================================================================
+// Search endpoint
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+struct SearchRequest {
+    url: String,
+    q: String,
+    #[serde(default)]
+    limit: Option<u32>,
+    #[serde(default)]
+    offset: Option<u32>,
+    #[serde(default)]
+    filter: Option<serde_json::Value>,
+    #[serde(default)]
+    sort: Option<Vec<String>>,
+}
+
+/// Proxy search to the account's default Meilisearch engine.
+async fn search_url(
+    State(state): State<Arc<AppState>>,
+    account_ext: Option<Extension<AuthenticatedAccount>>,
+    user_ext: Option<Extension<AuthenticatedUser>>,
+    Json(request): Json<SearchRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let account_ctx =
+        extract_account_context(state.db_pool.as_ref(), &account_ext, &user_ext).await;
+
+    // Pre-flight credit check
+    if let (Some(ref pool), Some(ref ctx)) = (&state.db_pool, &account_ctx) {
+        billing::check_credits(pool, &ctx.account_id, billing::SEARCH_CREDITS).await?;
+    }
+
+    let start_time = std::time::Instant::now();
+
+    // Validate URL
+    let parsed_url = url::Url::parse(&request.url)
+        .map_err(|e| ApiError::new(format!("Invalid URL: {}", e), "validation_error"))?;
+
+    if !matches!(parsed_url.scheme(), "http" | "https") {
+        return Err(ApiError::new(
+            "Only http and https URLs are supported",
+            "validation_error",
+        ));
+    }
+
+    if request.q.is_empty() {
+        return Err(ApiError::new("Query parameter 'q' is required", "validation_error"));
+    }
+
+    // Resolve index UID from URL
+    let index_uid = scrapix_core::url_to_index_uid(&request.url);
+    if index_uid.is_empty() {
+        return Err(ApiError::new(
+            "Could not derive index UID from URL",
+            "validation_error",
+        ));
+    }
+
+    // Resolve default Meilisearch engine for this account
+    let pool = state.db_pool.as_ref().ok_or_else(|| {
+        ApiError::new("Search requires database configuration", "internal_error")
+    })?;
+
+    let account_id = account_ctx
+        .as_ref()
+        .map(|c| c.account_id.clone())
+        .ok_or_else(|| ApiError::new("Authentication required", "unauthorized"))?;
+
+    let account_uuid: uuid::Uuid = account_id
+        .parse()
+        .map_err(|_| ApiError::new("Invalid account ID", "internal_error"))?;
+
+    let engine_row = sqlx::query(
+        "SELECT url, api_key FROM meilisearch_engines WHERE account_id = $1 AND is_default = true LIMIT 1",
+    )
+    .bind(account_uuid)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| ApiError::new(format!("Database error: {e}"), "internal_error"))?
+    .ok_or_else(|| {
+        ApiError::new(
+            "No default Meilisearch engine configured. Add one in Settings > Engines.",
+            "not_found",
+        )
+    })?;
+
+    use sqlx::Row;
+    let engine_url: String = engine_row.get("url");
+    let engine_api_key: String = engine_row.get("api_key");
+
+    // Build Meilisearch search body
+    let mut search_body = serde_json::json!({ "q": request.q });
+    if let Some(limit) = request.limit {
+        search_body["limit"] = serde_json::json!(limit);
+    }
+    if let Some(offset) = request.offset {
+        search_body["offset"] = serde_json::json!(offset);
+    }
+    if let Some(ref filter) = request.filter {
+        search_body["filter"] = filter.clone();
+    }
+    if let Some(ref sort) = request.sort {
+        search_body["sort"] = serde_json::json!(sort);
+    }
+
+    // Proxy to Meilisearch
+    let client = reqwest::Client::new();
+    let mut req = client.post(format!(
+        "{}/indexes/{}/search",
+        engine_url.trim_end_matches('/'),
+        index_uid
+    ));
+    if !engine_api_key.is_empty() {
+        req = req.header("Authorization", format!("Bearer {engine_api_key}"));
+    }
+    req = req.json(&search_body);
+
+    let resp = req.send().await.map_err(|e| {
+        ApiError::new(
+            format!("Failed to connect to Meilisearch: {e}"),
+            "bad_request",
+        )
+    })?;
+
+    if !resp.status().is_success() {
+        let status = resp.status().as_u16();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(ApiError::new(
+            format!("Meilisearch returned {status}: {body}"),
+            "bad_request",
+        ));
+    }
+
+    let result: serde_json::Value = resp.json().await.map_err(|e| {
+        ApiError::new(
+            format!("Failed to parse Meilisearch response: {e}"),
+            "internal_error",
+        )
+    })?;
+
+    let duration_ms = start_time.elapsed().as_millis() as u64;
+    let results_count = result
+        .get("hits")
+        .and_then(|h| h.as_array())
+        .map(|a| a.len() as u32)
+        .unwrap_or(0);
+
+    info!(
+        url = %request.url,
+        q = %request.q,
+        index_uid = %index_uid,
+        results_count,
+        duration_ms,
+        "Search completed"
+    );
+
+    // Track search in ClickHouse
+    if let Some(ref batcher) = state.analytics.request_batcher {
+        let account_id = account_ctx
+            .as_ref()
+            .map(|c| c.account_id.clone())
+            .unwrap_or_default();
+        let api_key_id = account_ctx
+            .as_ref()
+            .and_then(|c| c.api_key_id.clone())
+            .unwrap_or_default();
+        let domain = extract_domain(&request.url).unwrap_or_default();
+        let event = ClickHouseRequestEvent {
+            account_id,
+            api_key_id,
+            job_id: String::new(),
+            operation: "search".to_string(),
+            url: request.url.clone(),
+            domain,
+            status_code: 200,
+            duration_ms: duration_ms as u32,
+            content_length: 0,
+            error: String::new(),
+            js_rendered: false,
+            ai_summary: false,
+            ai_extraction: false,
+            ai_prompt_tokens: 0,
+            ai_completion_tokens: 0,
+            ai_model: String::new(),
+            urls_found: 0,
+            pages_fetched: 0,
+            search_query: request.q.clone(),
+            results_count,
+            timestamp: time::OffsetDateTime::now_utc(),
+        };
+        let batcher = batcher.clone();
+        tokio::spawn(async move {
+            if let Err(e) = batcher.add(event).await {
+                debug!(error = %e, "Failed to add search request event to ClickHouse");
+            }
+        });
+    }
+
+    // Deduct 2 credits for search
+    if let (Some(ref pool), Some(ref ctx)) = (&state.db_pool, &account_ctx) {
+        if let Err(e) = billing::check_credits_and_deduct(
+            pool,
+            &ctx.account_id,
+            billing::SEARCH_CREDITS,
+            "search",
+            &format!("{} q={}", request.url, request.q),
+        )
+        .await
+        {
+            warn!(account_id = %ctx.account_id, error = ?e, "Failed to deduct credit for search");
+        }
+    }
+
+    Ok(Json(result))
 }
 
 /// Create a new async crawl job
@@ -4127,6 +4421,7 @@ pub async fn run_with_bus(
     let mut protected_routes = Router::new()
         .route("/scrape", post(scrape_url))
         .route("/map", post(map_url))
+        .route("/search", post(search_url))
         .route("/crawl", post(create_crawl))
         .route("/crawl/sync", post(create_crawl_sync))
         .route("/crawl/bulk", post(create_crawl_bulk))

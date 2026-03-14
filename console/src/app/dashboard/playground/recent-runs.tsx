@@ -7,7 +7,7 @@ import { formatDistanceToNow } from "date-fns";
 
 export interface RunEntry {
   id: string;
-  type: "scrape" | "crawl" | "map";
+  type: "scrape" | "crawl" | "map" | "search";
   url: string;
   status_code?: number;
   duration_ms?: number;
@@ -37,7 +37,7 @@ export function saveRun(run: RunEntry): RunEntry[] {
 interface HistoryPanelProps {
   runs: RunEntry[];
   onReplay: (run: RunEntry) => void;
-  typeFilter?: "scrape" | "crawl" | "map";
+  typeFilter?: "scrape" | "crawl" | "map" | "search";
 }
 
 export function HistoryPanel({ runs, onReplay, typeFilter }: HistoryPanelProps) {

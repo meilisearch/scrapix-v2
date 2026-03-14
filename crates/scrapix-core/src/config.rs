@@ -18,8 +18,8 @@ pub struct CrawlConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
 
-    /// Meilisearch index UID
-    #[validate(length(min = 1, message = "Index UID is required"))]
+    /// Meilisearch index UID (auto-generated from start_urls[0] if empty)
+    #[serde(default)]
     pub index_uid: String,
 
     /// Crawler type (http or browser)
@@ -65,7 +65,8 @@ pub struct CrawlConfig {
     #[serde(default)]
     pub features: FeaturesConfig,
 
-    /// Meilisearch settings
+    /// Meilisearch settings (optional — resolved from account's default engine when empty)
+    #[serde(default)]
     pub meilisearch: MeilisearchConfig,
 
     /// Webhook configurations
@@ -545,6 +546,19 @@ pub struct MeilisearchConfig {
     pub keep_settings: bool,
 }
 
+impl Default for MeilisearchConfig {
+    fn default() -> Self {
+        Self {
+            url: String::new(),
+            api_key: String::new(),
+            primary_key: None,
+            settings: None,
+            batch_size: default_batch_size(),
+            keep_settings: false,
+        }
+    }
+}
+
 fn default_batch_size() -> u32 {
     1000
 }
@@ -645,6 +659,43 @@ fn default_hmac_header() -> String {
     "X-Scrapix-Signature".to_string()
 }
 
+/// Normalize a URL into a valid Meilisearch index UID.
+///
+/// Strips the scheme, `www.` prefix, and trailing slashes, then replaces
+/// non-alphanumeric characters with hyphens and collapses consecutive hyphens.
+/// The result is truncated to 511 characters (Meilisearch max index UID length).
+pub fn url_to_index_uid(url: &str) -> String {
+    let stripped = url
+        .trim()
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .trim_start_matches("www.")
+        .trim_end_matches('/');
+
+    let mut result = String::with_capacity(stripped.len());
+    let mut last_was_hyphen = true; // prevent leading hyphen
+
+    for c in stripped.chars() {
+        if c.is_ascii_alphanumeric() {
+            result.push(c);
+            last_was_hyphen = false;
+        } else if !last_was_hyphen {
+            result.push('-');
+            last_was_hyphen = true;
+        }
+    }
+
+    // Trim trailing hyphen
+    let trimmed = result.trim_end_matches('-');
+
+    // Truncate to 511 chars
+    if trimmed.len() > 511 {
+        trimmed[..511].to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -699,5 +750,38 @@ mod tests {
         let config: CrawlConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.crawler_type, CrawlerType::Browser);
         assert_eq!(config.start_urls[0], "https://example.com");
+    }
+
+    #[test]
+    fn test_deserialize_config_without_index_uid() {
+        let json = r#"{
+            "start_urls": ["https://example.com"],
+            "meilisearch": {
+                "url": "http://localhost:7700",
+                "api_key": "masterKey"
+            }
+        }"#;
+
+        let config: CrawlConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.index_uid, "");
+    }
+
+    #[test]
+    fn test_url_to_index_uid_basic() {
+        assert_eq!(url_to_index_uid("https://docs.example.com"), "docs-example-com");
+        assert_eq!(url_to_index_uid("https://www.example.com/path/to/page"), "example-com-path-to-page");
+        assert_eq!(url_to_index_uid("http://example.com/"), "example-com");
+        assert_eq!(url_to_index_uid("https://en.wikipedia.org/wiki/Rust"), "en-wikipedia-org-wiki-Rust");
+    }
+
+    #[test]
+    fn test_url_to_index_uid_special_chars() {
+        assert_eq!(url_to_index_uid("https://example.com/a?q=1&b=2"), "example-com-a-q-1-b-2");
+        assert_eq!(url_to_index_uid("https://my-site.io"), "my-site-io");
+    }
+
+    #[test]
+    fn test_url_to_index_uid_empty() {
+        assert_eq!(url_to_index_uid(""), "");
     }
 }

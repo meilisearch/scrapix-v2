@@ -376,6 +376,9 @@ pub fn crawl_credits_per_page(crawler_type: &CrawlerType, features: &FeaturesCon
 /// Map credits: flat 2 per call.
 pub const MAP_CREDITS: i64 = 2;
 
+/// Search credits: flat 2 per call.
+pub const SEARCH_CREDITS: i64 = 2;
+
 // ============================================================================
 // Helpers
 // ============================================================================

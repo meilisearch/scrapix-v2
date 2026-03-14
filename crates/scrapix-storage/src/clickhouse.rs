@@ -106,6 +106,9 @@ pub struct RequestEvent {
     /// Account for billing attribution.
     #[serde(default)]
     pub account_id: String,
+    /// API key used for this request (empty if session-based).
+    #[serde(default)]
+    pub api_key_id: String,
     /// Job ID (UUID for crawl, empty for scrape/map).
     #[serde(default)]
     pub job_id: String,
@@ -144,6 +147,12 @@ pub struct RequestEvent {
     pub urls_found: u32,
     /// For map: number of internal HTTP requests made. 1 for scrape. pages_crawled for crawl.
     pub pages_fetched: u32,
+    /// Search query string (for search operations).
+    #[serde(default)]
+    pub search_query: String,
+    /// Number of search results returned (for search operations).
+    #[serde(default)]
+    pub results_count: u32,
     /// When the request occurred.
     #[serde(with = "clickhouse::serde::time::datetime")]
     pub timestamp: time::OffsetDateTime,
@@ -153,6 +162,7 @@ impl Default for RequestEvent {
     fn default() -> Self {
         Self {
             account_id: String::new(),
+            api_key_id: String::new(),
             job_id: String::new(),
             operation: String::new(),
             url: String::new(),
@@ -169,6 +179,8 @@ impl Default for RequestEvent {
             ai_model: String::new(),
             urls_found: 0,
             pages_fetched: 1,
+            search_query: String::new(),
+            results_count: 0,
             timestamp: time::OffsetDateTime::now_utc(),
         }
     }
@@ -354,6 +366,21 @@ pub struct AccountUsageStats {
     pub ai_completion_tokens: u64,
 }
 
+/// Per-API-key usage statistics.
+#[derive(Debug, Clone, Serialize, Deserialize, Row)]
+pub struct ApiKeyUsageStats {
+    pub api_key_id: String,
+    pub total_requests: u64,
+    pub successful_requests: u64,
+    pub failed_requests: u64,
+    pub total_bytes: u64,
+    pub avg_duration_ms: f64,
+    pub unique_domains: u64,
+    pub js_renders: u64,
+    pub ai_prompt_tokens: u64,
+    pub ai_completion_tokens: u64,
+}
+
 /// Daily usage statistics for billing breakdown.
 #[derive(Debug, Clone, Serialize, Deserialize, Row)]
 pub struct DailyUsageStats {
@@ -494,6 +521,7 @@ impl ClickHouseStorage {
                 r#"
                 CREATE TABLE IF NOT EXISTS {} (
                     account_id     LowCardinality(String),
+                    api_key_id     String,
                     job_id         String,
                     operation      LowCardinality(String),
                     url            String,
@@ -520,6 +548,31 @@ impl ClickHouseStorage {
                 ORDER BY (account_id, operation, domain, timestamp)
                 TTL timestamp + INTERVAL 90 DAY
                 "#,
+                request_events
+            ))
+            .execute()
+            .await?;
+
+        // Migrate: add api_key_id column if missing (for existing tables)
+        self.client
+            .query(&format!(
+                "ALTER TABLE {} ADD COLUMN IF NOT EXISTS api_key_id String DEFAULT '' AFTER account_id",
+                request_events
+            ))
+            .execute()
+            .await?;
+
+        // Migrate: add search_query and results_count columns (for /search analytics)
+        self.client
+            .query(&format!(
+                "ALTER TABLE {} ADD COLUMN IF NOT EXISTS search_query String DEFAULT '' AFTER pages_fetched",
+                request_events
+            ))
+            .execute()
+            .await?;
+        self.client
+            .query(&format!(
+                "ALTER TABLE {} ADD COLUMN IF NOT EXISTS results_count UInt32 DEFAULT 0 AFTER search_query",
                 request_events
             ))
             .execute()
@@ -976,6 +1029,46 @@ impl ClickHouseStorage {
             .bind(account_id)
             .bind(days)
             .fetch_all::<DailyOperationStats>()
+            .await?;
+        Ok(stats)
+    }
+
+    // ========================================================================
+    // Query Operations — per API key usage
+    // ========================================================================
+
+    #[instrument(skip(self))]
+    pub async fn get_api_key_usage(
+        &self,
+        account_id: &str,
+        hours: u32,
+    ) -> Result<Vec<ApiKeyUsageStats>, ClickHouseError> {
+        let table = self.table_name("request_events");
+        let stats = self
+            .client
+            .query(&format!(
+                r#"
+                SELECT
+                    api_key_id,
+                    sum(pages_fetched) as total_requests,
+                    sumIf(pages_fetched, status_code >= 200 AND status_code < 400) as successful_requests,
+                    sumIf(pages_fetched, status_code >= 400 OR status_code = 0 OR error != '') as failed_requests,
+                    sum(content_length) as total_bytes,
+                    avg(duration_ms) as avg_duration_ms,
+                    uniqExact(domain) as unique_domains,
+                    countIf(js_rendered) as js_renders,
+                    sum(ai_prompt_tokens) as ai_prompt_tokens,
+                    sum(ai_completion_tokens) as ai_completion_tokens
+                FROM {}
+                WHERE account_id = ? AND api_key_id != '' AND timestamp >= now() - INTERVAL ? HOUR
+                GROUP BY api_key_id
+                ORDER BY total_requests DESC
+                "#,
+                table
+            ))
+            .bind(account_id)
+            .bind(hours)
+            .fetch_all::<ApiKeyUsageStats>()
             .await?;
         Ok(stats)
     }

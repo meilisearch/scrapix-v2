@@ -155,6 +155,27 @@ export async function submitMap(opts: MapOptions): Promise<MapResult> {
 }
 
 // ============================================================================
+// Search
+// ============================================================================
+
+export interface SearchOptions {
+  url: string;
+  q: string;
+  limit?: number;
+  offset?: number;
+  filter?: unknown;
+  sort?: string[];
+}
+
+export async function submitSearch(opts: SearchOptions): Promise<MeilisearchSearchResponse> {
+  return request("/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(opts),
+  });
+}
+
+// ============================================================================
 // Saved Configs
 // ============================================================================
 

@@ -2,6 +2,34 @@ import type { CrawlState } from "@/app/dashboard/playground/crawl-options";
 import { defaultCrawlState } from "@/app/dashboard/playground/crawl-options";
 
 /**
+ * Normalize a URL into a valid Meilisearch index UID.
+ * Must match the Rust `url_to_index_uid()` in scrapix-core.
+ */
+export function urlToIndexUid(url: string): string {
+  const stripped = url
+    .trim()
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .replace(/\/+$/, "");
+
+  let result = "";
+  let lastWasHyphen = true; // prevent leading hyphen
+
+  for (const c of stripped) {
+    if (/[a-zA-Z0-9]/.test(c)) {
+      result += c;
+      lastWasHyphen = false;
+    } else if (!lastWasHyphen) {
+      result += "-";
+      lastWasHyphen = true;
+    }
+  }
+
+  // Trim trailing hyphen and truncate
+  return result.replace(/-+$/, "").slice(0, 511);
+}
+
+/**
  * Convert CrawlState form data to a crawl config JSON object.
  * Extracted from the crawl page's handleCrawl logic.
  */
@@ -36,11 +64,7 @@ export function crawlStateToConfig(
 
   const indexUid =
     crawlState.index_uid.trim() ||
-    startUrls[0]
-      ?.replace(/^https?:\/\//, "")
-      .replace(/\/+$/, "")
-      .replace(/[.\/:]/g, "-")
-      .replace(/-+/g, "-") ||
+    (startUrls[0] ? urlToIndexUid(startUrls[0]) : "") ||
     `crawl-${Date.now()}`;
 
   const maxDepth = optInt(crawlState.max_depth);
@@ -57,9 +81,11 @@ export function crawlStateToConfig(
 
   config.index_strategy = crawlState.index_strategy;
 
+  // Meilisearch URL/API key are resolved from account settings by the backend.
+  // Only send optional overrides (primary_key, batch_size, keep_settings).
   const ms: Record<string, unknown> = {
-    url: crawlState.meilisearch_url,
-    api_key: crawlState.meilisearch_api_key,
+    url: "",
+    api_key: "",
   };
   if (crawlState.meilisearch_primary_key.trim())
     ms.primary_key = crawlState.meilisearch_primary_key;

@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useState, useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMe } from "@/lib/hooks";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,9 +15,12 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
-import { Loader2 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Loader2, Database, CheckCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
+import { fetchEngines, createEngine, updateEngine } from "@/lib/api";
+import type { MeilisearchEngine } from "@/lib/api-types";
 
 const BASE = "/api/scrapix";
 
@@ -170,6 +173,9 @@ export default function SettingsPage() {
         </CardFooter>
       </Card>
 
+      {/* Meilisearch Engine */}
+      <MeilisearchEngineCard />
+
       <Separator />
 
       {/* Danger Zone */}
@@ -195,5 +201,129 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+function MeilisearchEngineCard() {
+  const queryClient = useQueryClient();
+  const { data: engines = [], isLoading } = useQuery({
+    queryKey: ["engines"],
+    queryFn: fetchEngines,
+    staleTime: 60_000,
+  });
+
+  const defaultEngine = engines.find((e: MeilisearchEngine) => e.is_default) || engines[0];
+
+  const [msUrl, setMsUrl] = useState("");
+  const [msApiKey, setMsApiKey] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [engineInitialized, setEngineInitialized] = useState(false);
+
+  useEffect(() => {
+    if (engineInitialized || !defaultEngine) return;
+    setMsUrl(defaultEngine.url);
+    setMsApiKey(defaultEngine.api_key);
+    setEngineInitialized(true);
+  }, [defaultEngine, engineInitialized]);
+
+  const hasChanges =
+    defaultEngine &&
+    (msUrl !== defaultEngine.url || msApiKey !== defaultEngine.api_key);
+
+  const isNew = engines.length === 0 && !isLoading;
+
+  const handleSave = async () => {
+    if (!msUrl.trim()) {
+      toast.error("Meilisearch URL is required");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      if (defaultEngine) {
+        await updateEngine(defaultEngine.id, {
+          url: msUrl.trim(),
+          api_key: msApiKey,
+        });
+      } else {
+        await createEngine({
+          name: "Default",
+          url: msUrl.trim(),
+          api_key: msApiKey || undefined,
+          is_default: true,
+        });
+      }
+      toast.success("Meilisearch engine saved");
+      queryClient.invalidateQueries({ queryKey: ["engines"] });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to save engine";
+      toast.error(msg);
+    }
+    setSaving(false);
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-2">
+          <Database className="h-5 w-5 text-muted-foreground" />
+          <CardTitle>Meilisearch</CardTitle>
+          {defaultEngine && (
+            <Badge variant="outline" className="ml-auto gap-1 text-xs">
+              <CheckCircle className="h-3 w-3 text-green-500" />
+              Connected
+            </Badge>
+          )}
+        </div>
+        <CardDescription>
+          Configure the Meilisearch instance used for indexing crawled content and serving search results.
+          All crawl jobs and search queries will use this engine.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {isLoading ? (
+          <div className="space-y-3">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+          </div>
+        ) : (
+          <>
+            <div className="space-y-2">
+              <Label htmlFor="ms-url">URL</Label>
+              <Input
+                id="ms-url"
+                placeholder="https://your-instance.meilisearch.com"
+                value={msUrl}
+                onChange={(e) => setMsUrl(e.target.value)}
+                className="font-mono text-sm"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="ms-api-key">API Key</Label>
+              <Input
+                id="ms-api-key"
+                type="password"
+                placeholder="Enter your Meilisearch API key"
+                value={msApiKey}
+                onChange={(e) => setMsApiKey(e.target.value)}
+                className="font-mono text-sm"
+              />
+              <p className="text-xs text-muted-foreground">
+                Use a key with read and write permissions on all indexes.
+              </p>
+            </div>
+          </>
+        )}
+      </CardContent>
+      <CardFooter>
+        <Button
+          onClick={handleSave}
+          disabled={saving || (!isNew && !hasChanges)}
+        >
+          {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+          {isNew ? "Connect Engine" : "Save Changes"}
+        </Button>
+      </CardFooter>
+    </Card>
   );
 }

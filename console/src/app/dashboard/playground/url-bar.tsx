@@ -11,7 +11,7 @@ import {
 import { Loader2, Play, History } from "lucide-react";
 
 interface UrlBarProps {
-  mode: "scrape" | "crawl" | "map";
+  mode: "scrape" | "crawl" | "map" | "search";
   url: string;
   onUrlChange: (url: string) => void;
   onSubmit: () => void;
@@ -79,7 +79,7 @@ export function UrlBar({
           ) : (
             <Play className="h-4 w-4" />
           )}
-          {mode === "scrape" ? "Scrape" : mode === "map" ? "Map" : "Start Crawl"}
+          {mode === "scrape" ? "Scrape" : mode === "map" ? "Map" : mode === "search" ? "Search" : "Start Crawl"}
         </Button>
       </div>
 
@@ -88,7 +88,9 @@ export function UrlBar({
           ? "Fetch and extract content from a single page."
           : mode === "map"
             ? "Discover all URLs on a website via sitemaps and crawling."
-            : "Crawl a website by following links. Add one URL per line for multiple start URLs."}
+            : mode === "search"
+              ? "Search indexed content from a previously crawled website."
+              : "Crawl a website by following links. Add one URL per line for multiple start URLs."}
       </p>
     </div>
   );

@@ -13,15 +13,14 @@ import {
   ListTodo,
   CreditCard,
   Settings,
-  LogOut,
   FolderCog,
-  Database,
   BarChart3,
   Network,
   Moon,
   Sun,
   Zap,
   Coins,
+  Search,
 } from "lucide-react";
 import { FeedbackDialog } from "@/components/dashboard/feedback-dialog";
 import { logout } from "@/lib/auth";
@@ -50,6 +49,7 @@ const navGroups = [
     items: [
       { name: "Scrape", href: "/dashboard/scrape", icon: Globe },
       { name: "Map", href: "/dashboard/map", icon: Network },
+      { name: "Search", href: "/dashboard/search", icon: Search },
       { name: "Crawl", href: "/dashboard/crawl", icon: Layers },
     ],
   },
@@ -58,7 +58,6 @@ const navGroups = [
     items: [
       { name: "Jobs", href: "/dashboard/jobs", icon: ListTodo },
       { name: "Configs", href: "/dashboard/configs", icon: FolderCog },
-      { name: "Engines", href: "/dashboard/engines", icon: Database },
     ],
   },
   {
