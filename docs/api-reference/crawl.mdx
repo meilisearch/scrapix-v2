@@ -44,6 +44,7 @@ Create an asynchronous crawl job. Returns immediately with a job ID that you can
 |-------|------|----------|-------------|
 | `start_urls` | string[] | Yes | Seed URLs to begin crawling from |
 | `index_uid` | string | Yes | Meilisearch index to write documents to |
+| `source` | string | No | Source identifier for multi-tenant indexing (defaults to domain) |
 | `max_depth` | integer | No | Maximum link depth from seed URLs |
 | `max_pages` | integer | No | Maximum number of pages to crawl |
 | `crawler_type` | string | No | `"http"` (default) or `"browser"` for JS rendering |
@@ -182,3 +183,126 @@ curl -X POST http://localhost:8080/crawl/sync \
     }
   }'
 ```
+
+---
+
+## POST /crawl/bulk
+
+Submit multiple crawl jobs in a single request. Each config in the array creates a separate job. Jobs that fail validation don't prevent other jobs from being created.
+
+### Request Body
+
+An array of crawl configs (same schema as `POST /crawl`):
+
+```json
+[
+  {
+    "start_urls": ["https://site-a.com"],
+    "index_uid": "shared-index",
+    "source": "site-a",
+    "meilisearch": { "url": "http://localhost:7700", "api_key": "masterKey" }
+  },
+  {
+    "start_urls": ["https://site-b.com"],
+    "index_uid": "shared-index",
+    "source": "site-b",
+    "meilisearch": { "url": "http://localhost:7700", "api_key": "masterKey" }
+  }
+]
+```
+
+### Response
+
+```json
+{
+  "jobs": [
+    {
+      "job_id": "550e8400-...",
+      "status": "running",
+      "index_uid": "shared-index",
+      "start_urls_count": 1,
+      "message": "Crawl job started with 1 seed URLs"
+    },
+    {
+      "job_id": "660f9500-...",
+      "status": "running",
+      "index_uid": "shared-index",
+      "start_urls_count": 1,
+      "message": "Crawl job started with 1 seed URLs"
+    }
+  ],
+  "errors": [],
+  "total": 2
+}
+```
+
+If some configs fail, they appear in the `errors` array with their index:
+
+```json
+{
+  "jobs": [{ "job_id": "...", "status": "running", "..." }],
+  "errors": [
+    { "index": 1, "error": "At least one start URL is required" }
+  ],
+  "total": 2
+}
+```
+
+### Use Cases
+
+- **Multi-tenant indexing** — crawl thousands of sites into a shared index, each tagged with a `source`
+- **Scheduled recrawls** — submit a manifest of sites to recrawl daily
+- **Portfolio monitoring** — crawl all sites in a portfolio with a single API call
+
+### Example
+
+```bash
+curl -X POST http://localhost:8080/crawl/bulk \
+  -H "Content-Type: application/json" \
+  -d '[
+    {
+      "start_urls": ["https://patagonia.com"],
+      "index_uid": "eco-products",
+      "source": "patagonia",
+      "max_pages": 500,
+      "meilisearch": { "url": "http://localhost:7700", "api_key": "masterKey" }
+    },
+    {
+      "start_urls": ["https://veja-store.com"],
+      "index_uid": "eco-products",
+      "source": "veja",
+      "max_pages": 500,
+      "meilisearch": { "url": "http://localhost:7700", "api_key": "masterKey" }
+    }
+  ]'
+```
+
+---
+
+## Multi-Tenant Indexing with `source`
+
+The `source` field tags all documents from a crawl job with an identifier, enabling multiple sites to share a single Meilisearch index while remaining independently manageable.
+
+When `source` is set, every document indexed by the job includes a `source` field. This field is automatically configured as **filterable** in Meilisearch.
+
+If `source` is omitted, it defaults to the document's domain.
+
+### Filtering by Source
+
+```bash
+# Search only within a specific source
+curl "http://localhost:7700/indexes/eco-products/search" \
+  -d '{"q": "recycled jacket", "filter": "source = patagonia"}'
+```
+
+### Deleting a Source
+
+To flush all documents from a specific source without affecting others:
+
+```bash
+curl -X POST "http://localhost:7700/indexes/eco-products/documents/delete" \
+  -H "Content-Type: application/json" \
+  -d '{"filter": "source = patagonia"}'
+```
+
+This is useful for re-crawling a single site — delete the old documents, then submit a new crawl job for that source.

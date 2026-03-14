@@ -366,6 +366,19 @@ pub struct DailyUsageStats {
     pub ai_completion_tokens: u64,
 }
 
+/// Per-operation daily usage stats for an account.
+#[derive(Debug, Clone, Serialize, Deserialize, Row)]
+pub struct DailyOperationStats {
+    #[serde(with = "clickhouse::serde::time::date")]
+    pub date: time::Date,
+    pub operation: String,
+    pub requests: u64,
+    pub bytes: u64,
+    pub js_renders: u64,
+    pub ai_prompt_tokens: u64,
+    pub ai_completion_tokens: u64,
+}
+
 /// Job-level statistics aggregated from request_events.
 #[derive(Debug, Clone, Serialize, Deserialize, Row)]
 pub struct JobStats {
@@ -930,6 +943,39 @@ impl ClickHouseStorage {
             .bind(account_id)
             .bind(days)
             .fetch_all::<DailyUsageStats>()
+            .await?;
+        Ok(stats)
+    }
+
+    #[instrument(skip(self))]
+    pub async fn get_account_daily_usage_by_operation(
+        &self,
+        account_id: &str,
+        days: u32,
+    ) -> Result<Vec<DailyOperationStats>, ClickHouseError> {
+        let table = self.table_name("request_events");
+        let stats = self
+            .client
+            .query(&format!(
+                r#"
+                SELECT
+                    toDate(timestamp) as date,
+                    operation,
+                    sum(pages_fetched) as requests,
+                    sum(content_length) as bytes,
+                    countIf(js_rendered) as js_renders,
+                    sum(ai_prompt_tokens) as ai_prompt_tokens,
+                    sum(ai_completion_tokens) as ai_completion_tokens
+                FROM {}
+                WHERE account_id = ? AND timestamp >= now() - INTERVAL ? DAY
+                GROUP BY date, operation
+                ORDER BY date, operation
+                "#,
+                table
+            ))
+            .bind(account_id)
+            .bind(days)
+            .fetch_all::<DailyOperationStats>()
             .await?;
         Ok(stats)
     }

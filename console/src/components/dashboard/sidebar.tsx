@@ -100,13 +100,13 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <div className="flex h-full flex-col">
       <div className="flex h-14 items-center px-6 border-b">
-        <Link href="/" className="flex items-center" onClick={onNavigate}>
+        <Link href="/" className="glitch-logo-wrapper flex items-center" onClick={onNavigate}>
           <Image
             src={isDark ? "/logotype_dark.svg" : "/logotype_light.svg"}
             alt="Scrapix"
-            width={120}
-            height={32}
-            className="h-7 w-auto"
+            width={140}
+            height={36}
+            className="h-8 w-auto glitch-logo"
           />
         </Link>
       </div>
@@ -120,7 +120,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                 href={item.href}
                 onClick={onNavigate}
                 className={cn(
-                  "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                  "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors glitch-nav-item",
                   isActive
                     ? "bg-primary/10 text-primary glitch-nav-active"
                     : "text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -147,7 +147,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                   href={item.href}
                   onClick={onNavigate}
                   className={cn(
-                    "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                    "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors glitch-nav-item",
                     isActive
                       ? "bg-primary/10 text-primary glitch-nav-active"
                       : "text-muted-foreground hover:bg-muted hover:text-foreground"

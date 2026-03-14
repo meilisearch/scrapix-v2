@@ -76,7 +76,8 @@ use tracing::{debug, error, info, warn};
 use scrapix_ai::{AiClient, AiService, FieldDefinition as AiFieldDefinition, SchemaBuilder};
 use scrapix_core::{CrawlConfig, CrawlUrl, CrawlerType, FeaturesConfig, JobState, JobStatus};
 use scrapix_crawler::{
-    is_non_page_url, HttpFetcher, HttpFetcherBuilder, RobotsCache, RobotsConfig, SitemapParser,
+    is_non_page_url, CdpRenderer, CdpRendererBuilder, HttpFetcher, HttpFetcherBuilder, RobotsCache,
+    RobotsConfig, SitemapParser, WaitUntil,
 };
 use scrapix_extractor::{
     ContentBlock, ExtractedMetadata, ExtractedSchema, Extractor, SelectorDefinition,
@@ -180,6 +181,8 @@ struct AppState {
     analytics: AnalyticsState,
     /// Shared HTTP fetcher for /scrape endpoint (connection pooling, retries, DNS cache)
     fetcher: Arc<HttpFetcher>,
+    /// Optional browser renderer for JS rendering in /scrape and /map
+    browser_renderer: Option<Arc<CdpRenderer>>,
     /// Optional AI service for /scrape enrichment
     ai_service: Option<Arc<AiService>>,
     /// PostgreSQL connection pool (for saved configs, cron scheduling)
@@ -200,6 +203,7 @@ impl AppState {
         ai_usage_batcher: Option<Arc<AiUsageBatcher>>,
         job_event_batcher: Option<Arc<JobEventBatcher>>,
         fetcher: Arc<HttpFetcher>,
+        browser_renderer: Option<Arc<CdpRenderer>>,
         ai_service: Option<Arc<AiService>>,
         db_pool: Option<sqlx::PgPool>,
     ) -> Self {
@@ -224,6 +228,7 @@ impl AppState {
                 job_event_batcher,
             },
             fetcher,
+            browser_renderer,
             ai_service,
             db_pool,
         }
@@ -338,14 +343,25 @@ impl AppState {
                 ..
             } = event
             {
-                // Look up the job to get the start URL and index_uid
-                let (url, domain) = {
+                // Look up the job to get the start URL, crawler_type, and AI feature flags
+                let (url, domain, is_js_rendered, has_ai_summary, has_ai_extraction) = {
                     let jobs = self.crawl.jobs.read();
                     jobs.get(job_id)
                         .map(|j| {
                             let url = j.start_urls.first().cloned().unwrap_or_default();
                             let domain = extract_domain(&url).unwrap_or_default();
-                            (url, domain)
+                            let cfg = j.config.as_ref()
+                                .and_then(|v| serde_json::from_value::<CrawlConfig>(v.clone()).ok());
+                            let is_js = cfg.as_ref()
+                                .map(|c| c.crawler_type == CrawlerType::Browser)
+                                .unwrap_or(false);
+                            let has_summary = cfg.as_ref()
+                                .map(|c| c.features.ai_summary.as_ref().map_or(false, |t| t.enabled))
+                                .unwrap_or(false);
+                            let has_extraction = cfg.as_ref()
+                                .map(|c| c.features.ai_extraction.as_ref().map_or(false, |t| t.enabled))
+                                .unwrap_or(false);
+                            (url, domain, is_js, has_summary, has_extraction)
                         })
                         .unwrap_or_default()
                 };
@@ -360,9 +376,9 @@ impl AppState {
                     duration_ms: (*duration_secs * 1000) as u32,
                     content_length: *bytes_downloaded,
                     error: String::new(),
-                    js_rendered: false,
-                    ai_summary: false,
-                    ai_extraction: false,
+                    js_rendered: is_js_rendered,
+                    ai_summary: has_ai_summary,
+                    ai_extraction: has_ai_extraction,
                     ai_prompt_tokens: 0,
                     ai_completion_tokens: 0,
                     ai_model: String::new(),
@@ -935,6 +951,10 @@ struct ScrapeRequest {
     #[serde(default)]
     include_links: bool,
 
+    /// Render JavaScript before extracting content (requires Chrome/Chromium)
+    #[serde(default)]
+    render_js: bool,
+
     /// Timeout in milliseconds (default: 30000)
     #[serde(default = "default_timeout")]
     timeout_ms: u64,
@@ -1429,12 +1449,31 @@ async fn scrape_url(
         ));
     }
 
-    info!(url = %request.url, "Scraping URL");
+    let use_browser = request.render_js;
+    if use_browser && state.browser_renderer.is_none() {
+        return Err(ApiError::new(
+            "JS rendering is not available (Chrome/Chromium not found on this server)",
+            "render_js_unavailable",
+        ));
+    }
 
-    // (a) Fetch using shared HttpFetcher or one-off fetcher for custom headers
+    info!(url = %request.url, render_js = use_browser, "Scraping URL");
+
+    // (a) Fetch using browser renderer or HTTP fetcher
     let crawl_url = CrawlUrl::seed(&request.url);
 
-    let raw_page = if request.headers.is_empty() {
+    let raw_page = if use_browser {
+        // Use browser renderer for JS rendering
+        state
+            .browser_renderer
+            .as_ref()
+            .unwrap()
+            .fetch(&crawl_url)
+            .await
+            .map_err(|e| {
+                ApiError::new(format!("Failed to render URL with browser: {}", e), "fetch_error")
+            })?
+    } else if request.headers.is_empty() {
         // Use the shared fetcher (connection pooling, DNS cache, retries)
         state
             .fetcher
@@ -1490,6 +1529,7 @@ async fn scrape_url(
             .await
             .map_err(|e| ApiError::new(format!("Failed to fetch URL: {}", e), "fetch_error"))?
     };
+    let js_rendered = raw_page.js_rendered;
 
     let status_code = raw_page.status;
     let final_url = raw_page.final_url.clone();
@@ -1510,8 +1550,12 @@ async fn scrape_url(
                 0,
                 account_id,
                 format!("HTTP {}", status_code),
+                js_rendered,
                 false,
                 false,
+                0,
+                0,
+                String::new(),
             );
         }
 
@@ -1655,6 +1699,9 @@ async fn scrape_url(
     // (e) AI enrichment (optional)
     let mut ai_result = None;
     let mut warning = None;
+    let mut total_prompt_tokens: u32 = 0;
+    let mut total_completion_tokens: u32 = 0;
+    let mut ai_model_name = String::new();
 
     if let Some(ref ai_opts) = request.ai {
         if let Some(ref ai_service) = state.ai_service {
@@ -1665,7 +1712,7 @@ async fn scrape_url(
                 // Run AI operations concurrently
                 let summary_fut = async {
                     if ai_opts.summary {
-                        ai_service.tldr(ai_text).await.ok()
+                        ai_service.summarize(ai_text).await.ok()
                     } else {
                         None
                     }
@@ -1687,18 +1734,10 @@ async fn scrape_url(
                                 });
                             }
                             let schema = builder.build();
-                            ai_service
-                                .extract_schema(ai_text, &schema)
-                                .await
-                                .ok()
-                                .map(|r| r.data)
+                            ai_service.extract_schema(ai_text, &schema).await.ok()
                         } else if !extract_opts.prompt.is_empty() {
                             // Prompt-based extraction
-                            ai_service
-                                .extract(ai_text, &extract_opts.prompt)
-                                .await
-                                .ok()
-                                .map(|r| r.data)
+                            ai_service.extract(ai_text, &extract_opts.prompt).await.ok()
                         } else {
                             None
                         }
@@ -1707,12 +1746,32 @@ async fn scrape_url(
                     }
                 };
 
-                let (ai_summary, ai_extract) = tokio::join!(summary_fut, extract_fut);
+                let (ai_summary_result, ai_extract_result) =
+                    tokio::join!(summary_fut, extract_fut);
 
-                if ai_summary.is_some() || ai_extract.is_some() {
+                // Accumulate AI token usage
+                if let Some(ref summary) = ai_summary_result {
+                    total_prompt_tokens += summary.prompt_tokens;
+                    total_completion_tokens += summary.completion_tokens;
+                    if ai_model_name.is_empty() {
+                        ai_model_name = summary.model.clone();
+                    }
+                }
+                if let Some(ref extraction) = ai_extract_result {
+                    total_prompt_tokens += extraction.prompt_tokens;
+                    total_completion_tokens += extraction.completion_tokens;
+                    if ai_model_name.is_empty() {
+                        ai_model_name = extraction.model.clone();
+                    }
+                }
+
+                let ai_summary_text = ai_summary_result.map(|r| r.summary);
+                let ai_extract_data = ai_extract_result.map(|r| r.data);
+
+                if ai_summary_text.is_some() || ai_extract_data.is_some() {
                     ai_result = Some(AiResult {
-                        summary: ai_summary,
-                        extract: ai_extract,
+                        summary: ai_summary_text,
+                        extract: ai_extract_data,
                     });
                 }
             }
@@ -1739,8 +1798,12 @@ async fn scrape_url(
             original_html_len,
             account_id,
             String::new(),
+            js_rendered,
             has_ai_summary,
             has_ai_extraction,
+            total_prompt_tokens,
+            total_completion_tokens,
+            ai_model_name.clone(),
         );
     }
 
@@ -1796,8 +1859,12 @@ fn log_scrape_request(
     content_length: u64,
     account_id: String,
     error: String,
+    js_rendered: bool,
     ai_summary: bool,
     ai_extraction: bool,
+    ai_prompt_tokens: u32,
+    ai_completion_tokens: u32,
+    ai_model: String,
 ) {
     let domain = extract_domain(url).unwrap_or_default();
     let event = ClickHouseRequestEvent {
@@ -1810,12 +1877,12 @@ fn log_scrape_request(
         duration_ms: duration_ms as u32,
         content_length,
         error,
-        js_rendered: false,
+        js_rendered,
         ai_summary,
         ai_extraction,
-        ai_prompt_tokens: 0,
-        ai_completion_tokens: 0,
-        ai_model: String::new(),
+        ai_prompt_tokens,
+        ai_completion_tokens,
+        ai_model,
         urls_found: 0,
         pages_fetched: 1,
         timestamp: time::OffsetDateTime::now_utc(),
@@ -2192,6 +2259,10 @@ struct MapRequest {
     #[serde(default)]
     search: Option<String>,
 
+    /// Render JavaScript before extracting metadata (requires Chrome/Chromium)
+    #[serde(default)]
+    render_js: bool,
+
     /// Whether to use sitemaps for discovery (default: true)
     #[serde(default = "default_true_bool")]
     sitemap: bool,
@@ -2299,6 +2370,7 @@ fn extract_page_links(html: &str, base_url: &url::Url) -> Vec<(String, Option<St
 /// Fetch a single URL and extract title, description, and child links.
 async fn map_fetch_page(
     fetcher: Arc<HttpFetcher>,
+    browser: Option<Arc<CdpRenderer>>,
     url: String,
     base_url: url::Url,
 ) -> Option<MapFetchResult> {
@@ -2324,8 +2396,17 @@ async fn map_fetch_page(
     });
 
     let crawl_url = CrawlUrl::seed(&url);
-    let page = match tokio::time::timeout(Duration::from_secs(10), fetcher.fetch(&crawl_url)).await
-    {
+    let fetch_fut = if let Some(ref renderer) = browser {
+        let renderer = renderer.clone();
+        let crawl_url = crawl_url.clone();
+        Box::pin(async move { renderer.fetch(&crawl_url).await })
+            as std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>>
+    } else {
+        let fetcher = fetcher.clone();
+        let crawl_url = crawl_url.clone();
+        Box::pin(async move { fetcher.fetch(&crawl_url).await })
+    };
+    let page = match tokio::time::timeout(Duration::from_secs(30), fetch_fut).await {
         Ok(Ok(page)) if (200..300).contains(&page.status) => page,
         _ => return None,
     };
@@ -2406,11 +2487,18 @@ async fn map_url(
         ));
     }
 
+    if request.render_js && state.browser_renderer.is_none() {
+        return Err(ApiError::new(
+            "JS rendering is not available (Chrome/Chromium not found on this server)",
+            "render_js_unavailable",
+        ));
+    }
+
     let limit = request.limit.min(10_000);
     let max_depth = request.depth.min(5);
     let needs_html_fetch = request.get_title || request.get_description;
 
-    info!(url = %request.url, limit, depth = max_depth, "Mapping website URLs");
+    info!(url = %request.url, limit, depth = max_depth, render_js = request.render_js, "Mapping website URLs");
 
     use futures::stream::FuturesUnordered;
 
@@ -2426,6 +2514,11 @@ async fn map_url(
     let base_domain = base_url.host_str().unwrap_or("").to_string();
     let semaphore = Arc::new(tokio::sync::Semaphore::new(50));
     let fetcher = state.fetcher.clone();
+    let browser: Option<Arc<CdpRenderer>> = if request.render_js {
+        state.browser_renderer.clone()
+    } else {
+        None
+    };
 
     // Total timeout
     let map_deadline = std::time::Instant::now() + Duration::from_secs(60);
@@ -2523,10 +2616,11 @@ async fn map_url(
             .map(|url| {
                 let semaphore = semaphore.clone();
                 let fetcher = fetcher.clone();
+                let browser = browser.clone();
                 let base_url = base_url.clone();
                 tokio::spawn(async move {
                     let _permit = semaphore.acquire().await.ok()?;
-                    map_fetch_page(fetcher, url, base_url).await
+                    map_fetch_page(fetcher, browser, url, base_url).await
                 })
             })
             .collect();
@@ -2588,10 +2682,11 @@ async fn map_url(
                 .map(|url| {
                     let semaphore = semaphore.clone();
                     let fetcher = fetcher.clone();
+                    let browser = browser.clone();
                     let base_url = base_url.clone();
                     tokio::spawn(async move {
                         let _permit = semaphore.acquire().await.ok()?;
-                        map_fetch_page(fetcher, url, base_url).await
+                        map_fetch_page(fetcher, browser, url, base_url).await
                     })
                 })
                 .collect();
@@ -2634,11 +2729,12 @@ async fn map_url(
                     .map(|url| {
                         let semaphore = semaphore.clone();
                         let fetcher = fetcher.clone();
+                        let browser = browser.clone();
                         let base_url = base_url.clone();
                         let url = url.clone();
                         tokio::spawn(async move {
                             let _permit = semaphore.acquire().await.ok()?;
-                            map_fetch_page(fetcher, url, base_url).await
+                            map_fetch_page(fetcher, browser, url, base_url).await
                         })
                     })
                     .collect();
@@ -2729,7 +2825,7 @@ async fn map_url(
             duration_ms: duration_ms as u32,
             content_length: 0,
             error: String::new(),
-            js_rendered: false,
+            js_rendered: request.render_js,
             ai_summary: false,
             ai_extraction: false,
             ai_prompt_tokens: 0,
@@ -3657,6 +3753,25 @@ pub async fn run_with_bus(
     );
     info!("Shared HTTP fetcher initialized for /scrape endpoint");
 
+    // Initialize browser renderer for JS rendering in /scrape and /map (optional)
+    let browser_renderer = match CdpRendererBuilder::new()
+        .headless(true)
+        .max_concurrent_pages(5)
+        .timeout(Duration::from_secs(30))
+        .wait_until(WaitUntil::Load)
+        .build()
+        .await
+    {
+        Ok(renderer) => {
+            info!("Browser renderer initialized for JS rendering");
+            Some(Arc::new(renderer))
+        }
+        Err(e) => {
+            info!(reason = %e, "Browser renderer unavailable (Chrome/Chromium not found). JS rendering disabled for /scrape and /map");
+            None
+        }
+    };
+
     // Initialize AI service from environment (supports multiple providers via AI_PROVIDER)
     // Use with_tracking when ClickHouse is available for per-call token tracking
     let (ai_service, ai_usage_rx) = if ai_usage_batcher.is_some() {
@@ -3699,6 +3814,7 @@ pub async fn run_with_bus(
         ai_usage_batcher.clone(),
         job_event_batcher.clone(),
         fetcher,
+        browser_renderer,
         ai_service,
         db_pool,
     ));

@@ -22,6 +22,7 @@ import type {
   KpisRow,
   AccountUsageRow,
   DailyUsageRow,
+  DailyUsageByOpRow,
   TopDomainRow,
   BillingInfo,
   TransactionsListResponse,
@@ -281,6 +282,10 @@ export async function fetchAccountUsage(accountId: string, hours: number = 24): 
 
 export async function fetchDailyUsage(accountId: string, days: number = 30): Promise<AnalyticsResponse<DailyUsageRow>> {
   return request(`/analytics/v0/pipes/account_daily_usage.json?account_id=${encodeURIComponent(accountId)}&days=${days}`);
+}
+
+export async function fetchDailyUsageByOperation(accountId: string, days: number = 30): Promise<AnalyticsResponse<DailyUsageByOpRow>> {
+  return request(`/analytics/v0/pipes/account_daily_usage_by_operation.json?account_id=${encodeURIComponent(accountId)}&days=${days}`);
 }
 
 export async function fetchTopDomains(hours: number = 24, limit: number = 10): Promise<AnalyticsResponse<TopDomainRow>> {

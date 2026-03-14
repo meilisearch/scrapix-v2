@@ -15,16 +15,16 @@ export default function AuthLayout({
           <Image
             src="/icon_dark_transparent.svg"
             alt="Scrapix"
-            width={32}
-            height={32}
-            className="h-8 w-8"
+            width={40}
+            height={40}
+            className="h-10 w-10"
           />
           <Image
             src="/logotype_dark.svg"
             alt="Scrapix"
-            width={100}
-            height={28}
-            className="h-5 w-auto"
+            width={140}
+            height={36}
+            className="h-7 w-auto"
           />
         </div>
         <div className="relative z-20 mt-auto">

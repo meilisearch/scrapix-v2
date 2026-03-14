@@ -19,7 +19,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { cn } from "@/lib/utils";
 import { Globe, HardDrive, Sparkles, Monitor } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import {
   fetchKpis,
   fetchHourlyStats,
@@ -27,7 +29,9 @@ import {
   fetchTopDomains,
   fetchAccountUsage,
   fetchDailyUsage,
+  fetchDailyUsageByOperation,
 } from "@/lib/api";
+import type { DailyUsageByOpRow } from "@/lib/api-types";
 import { useMe } from "@/lib/hooks";
 import {
   Bar,
@@ -226,6 +230,13 @@ export default function UsagePage() {
     refetchInterval: 30_000,
   });
 
+  const { data: opDaily, isLoading: opDailyLoading } = useQuery({
+    queryKey: ["analytics", "opDaily", accountId, range.days],
+    queryFn: () => fetchDailyUsageByOperation(accountId!, range.days),
+    enabled: !!accountId,
+    refetchInterval: 30_000,
+  });
+
   // --- Derived data ---
 
   const usage = accountUsage?.data?.[0];
@@ -243,6 +254,26 @@ export default function UsagePage() {
 
   const domainData = topDomains?.data?.slice(0, 10) ?? [];
   const billingData = fillBillingDailyGaps(billingDaily?.data ?? [], range.days);
+
+  // Aggregate per-operation totals from the by-operation daily data
+  const opSummary = (opDaily?.data ?? []).reduce<
+    Record<string, { requests: number; bytes: number; ai_tokens: number; js_renders: number }>
+  >((acc, row) => {
+    const op = row.operation || "unknown";
+    if (!acc[op]) acc[op] = { requests: 0, bytes: 0, ai_tokens: 0, js_renders: 0 };
+    acc[op].requests += row.requests;
+    acc[op].bytes += row.bytes;
+    acc[op].ai_tokens += (row.ai_prompt_tokens ?? 0) + (row.ai_completion_tokens ?? 0);
+    acc[op].js_renders += row.js_renders;
+    return acc;
+  }, {});
+
+  const OPERATION_ORDER = ["scrape", "map", "crawl"] as const;
+  const opColors: Record<string, string> = {
+    scrape: "bg-blue-500/10 text-blue-700 border-blue-200",
+    map: "bg-violet-500/10 text-violet-700 border-violet-200",
+    crawl: "bg-emerald-500/10 text-emerald-700 border-emerald-200",
+  };
 
   const chartSubtitle = useDaily
     ? "Requests, successes, and failures per day"
@@ -469,6 +500,77 @@ export default function UsagePage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Calls Per Route */}
+      {accountId && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Calls Per Route</CardTitle>
+            <CardDescription>Usage breakdown by API endpoint</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {opDailyLoading ? (
+              <div className="space-y-2">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <Skeleton key={i} className="h-8 w-full" />
+                ))}
+              </div>
+            ) : Object.keys(opSummary).length > 0 ? (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Route</TableHead>
+                    <TableHead className="text-right">Requests</TableHead>
+                    <TableHead className="text-right">Bandwidth</TableHead>
+                    <TableHead className="text-right">AI Tokens</TableHead>
+                    <TableHead className="text-right">JS Renders</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {OPERATION_ORDER.filter((op) => opSummary[op]).map((op) => {
+                    const s = opSummary[op];
+                    return (
+                      <TableRow key={op}>
+                        <TableCell>
+                          <Badge variant="outline" className={cn("font-mono text-xs", opColors[op])}>
+                            /{op}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">{formatNumber(s.requests)}</TableCell>
+                        <TableCell className="text-right">{formatBytes(s.bytes)}</TableCell>
+                        <TableCell className="text-right">{formatNumber(s.ai_tokens)}</TableCell>
+                        <TableCell className="text-right">{formatNumber(s.js_renders)}</TableCell>
+                      </TableRow>
+                    );
+                  })}
+                  {/* Totals row */}
+                  {Object.keys(opSummary).length > 1 && (
+                    <TableRow className="font-medium border-t-2">
+                      <TableCell>Total</TableCell>
+                      <TableCell className="text-right">
+                        {formatNumber(Object.values(opSummary).reduce((a, s) => a + s.requests, 0))}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {formatBytes(Object.values(opSummary).reduce((a, s) => a + s.bytes, 0))}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {formatNumber(Object.values(opSummary).reduce((a, s) => a + s.ai_tokens, 0))}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {formatNumber(Object.values(opSummary).reduce((a, s) => a + s.js_renders, 0))}
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            ) : (
+              <p className="text-sm text-muted-foreground py-8 text-center">
+                No usage data for this period
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Daily Breakdown Table */}
       {accountId && (

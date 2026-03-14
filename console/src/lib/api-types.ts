@@ -358,6 +358,16 @@ export interface DailyUsageRow {
   ai_completion_tokens: number;
 }
 
+export interface DailyUsageByOpRow {
+  date: string;
+  operation: string;
+  requests: number;
+  bytes: number;
+  js_renders: number;
+  ai_prompt_tokens: number;
+  ai_completion_tokens: number;
+}
+
 export interface TopDomainRow {
   domain: string;
   total_requests: number;

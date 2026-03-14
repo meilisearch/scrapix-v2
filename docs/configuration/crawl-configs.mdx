@@ -30,6 +30,7 @@ The simplest crawl config only needs `start_urls` and `index_uid`:
 |-------|------|---------|-------------|
 | `start_urls` | `string[]` | **required** | Seed URLs to begin crawling |
 | `index_uid` | `string` | **required** | Meilisearch index name |
+| `source` | `string` | — | Source identifier for multi-tenant indexing (defaults to domain) |
 | `crawler_type` | `"http"` or `"browser"` | `"http"` | HTTP-only or headless browser |
 | `max_depth` | `integer` | — | Maximum link depth from start URLs |
 | `max_pages` | `integer` | — | Maximum pages to crawl |
@@ -335,3 +336,52 @@ Auth methods:
   }
 }
 ```
+
+### Multi-Tenant: Many Sites into One Index
+
+Use the `source` field to tag documents from each site, allowing per-source filtering and deletion within a shared index. Submit via `POST /crawl/bulk`:
+
+```json
+[
+  {
+    "start_urls": ["https://patagonia.com/shop"],
+    "index_uid": "sustainable-ecommerce",
+    "source": "patagonia",
+    "max_pages": 1000,
+    "features": {
+      "schema": { "enabled": true, "only_types": ["Product"] },
+      "custom_selectors": {
+        "enabled": true,
+        "selectors": { "price": ".product-price", "brand": ".brand-name" }
+      }
+    },
+    "meilisearch": {
+      "url": "http://localhost:7700",
+      "api_key": "masterKey"
+    }
+  },
+  {
+    "start_urls": ["https://veja-store.com"],
+    "index_uid": "sustainable-ecommerce",
+    "source": "veja",
+    "max_pages": 1000,
+    "features": {
+      "schema": { "enabled": true, "only_types": ["Product"] },
+      "custom_selectors": {
+        "enabled": true,
+        "selectors": { "price": ".product-price", "brand": ".brand-name" }
+      }
+    },
+    "meilisearch": {
+      "url": "http://localhost:7700",
+      "api_key": "masterKey"
+    }
+  }
+]
+```
+
+All documents end up in the `sustainable-ecommerce` index with a `source` field (`"patagonia"` or `"veja"`). The `source` field is automatically filterable, so you can:
+
+- **Search within a source:** `"filter": "source = patagonia"`
+- **Delete a source:** `POST /indexes/sustainable-ecommerce/documents/delete` with `{"filter": "source = veja"}`
+- **Recrawl a source:** delete old docs, then submit a new crawl for that source

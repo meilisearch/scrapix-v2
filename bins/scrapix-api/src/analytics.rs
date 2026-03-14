@@ -1327,6 +1327,104 @@ async fn pipe_account_daily_usage(
 }
 
 // ============================================================================
+// Pipe: account_daily_usage_by_operation
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct AccountDailyUsageByOpParams {
+    account_id: String,
+    #[serde(default = "default_days")]
+    days: u32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AccountDailyUsageByOpRow {
+    pub date: String,
+    pub operation: String,
+    pub requests: u64,
+    pub bytes: u64,
+    pub js_renders: u64,
+    pub ai_prompt_tokens: u64,
+    pub ai_completion_tokens: u64,
+}
+
+async fn pipe_account_daily_usage_by_operation(
+    State(state): State<Arc<AnalyticsState>>,
+    Query(params): Query<AccountDailyUsageByOpParams>,
+) -> Result<Json<AnalyticsResponse<AccountDailyUsageByOpRow>>, (StatusCode, Json<AnalyticsError>)> {
+    let start = Instant::now();
+
+    let stats = state
+        .storage
+        .get_account_daily_usage_by_operation(&params.account_id, params.days)
+        .await
+        .map_err(|e| {
+            error!("account_daily_usage_by_operation query failed: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(AnalyticsError {
+                    error: e.to_string(),
+                    code: "QUERY_ERROR".to_string(),
+                }),
+            )
+        })?;
+
+    let data: Vec<AccountDailyUsageByOpRow> = stats
+        .into_iter()
+        .map(|s| AccountDailyUsageByOpRow {
+            date: s.date.to_string(),
+            operation: s.operation,
+            requests: s.requests,
+            bytes: s.bytes,
+            js_renders: s.js_renders,
+            ai_prompt_tokens: s.ai_prompt_tokens,
+            ai_completion_tokens: s.ai_completion_tokens,
+        })
+        .collect();
+
+    let rows = data.len();
+    Ok(Json(AnalyticsResponse {
+        meta: vec![
+            ColumnMeta {
+                name: "date".into(),
+                col_type: "Date".into(),
+            },
+            ColumnMeta {
+                name: "operation".into(),
+                col_type: "String".into(),
+            },
+            ColumnMeta {
+                name: "requests".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "bytes".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "js_renders".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "ai_prompt_tokens".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "ai_completion_tokens".into(),
+                col_type: "UInt64".into(),
+            },
+        ],
+        data,
+        rows,
+        statistics: QueryStats {
+            elapsed: start.elapsed().as_secs_f64(),
+            rows_read: rows,
+            bytes_read: 0,
+        },
+    }))
+}
+
+// ============================================================================
 // Pipes List
 // ============================================================================
 
@@ -1530,6 +1628,26 @@ async fn list_pipes() -> Json<Vec<PipeInfo>> {
             ],
             endpoint: "/analytics/v0/pipes/account_daily_usage.json".into(),
         },
+        PipeInfo {
+            name: "account_daily_usage_by_operation".into(),
+            description: "Daily usage breakdown per operation (scrape/map/crawl) for an account"
+                .into(),
+            parameters: vec![
+                ParamInfo {
+                    name: "account_id".into(),
+                    param_type: "string".into(),
+                    required: true,
+                    default: None,
+                },
+                ParamInfo {
+                    name: "days".into(),
+                    param_type: "integer".into(),
+                    required: false,
+                    default: Some("30".into()),
+                },
+            ],
+            endpoint: "/analytics/v0/pipes/account_daily_usage_by_operation.json".into(),
+        },
     ])
 }
 
@@ -1566,6 +1684,10 @@ pub fn create_analytics_router(state: Arc<AnalyticsState>) -> Router {
         .route(
             "/pipes/account_daily_usage.json",
             get(pipe_account_daily_usage),
+        )
+        .route(
+            "/pipes/account_daily_usage_by_operation.json",
+            get(pipe_account_daily_usage_by_operation),
         )
         .with_state(state)
 }

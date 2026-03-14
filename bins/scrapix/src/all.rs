@@ -56,6 +56,27 @@ pub struct AllArgs {
     #[arg(long, env = "JWT_SECRET", default_value = "scrapix-dev-secret")]
     pub jwt_secret: String,
 
+    // === Browser rendering ===
+    /// Enable browser rendering for JavaScript-heavy pages
+    #[arg(long, env = "BROWSER_RENDER")]
+    pub browser_render: bool,
+
+    /// URL patterns that require browser rendering (regex, comma-separated)
+    #[arg(long, env = "BROWSER_RENDER_PATTERNS")]
+    pub browser_render_patterns: Option<String>,
+
+    /// Chrome/Chromium executable path
+    #[arg(long, env = "CHROME_PATH")]
+    pub chrome_path: Option<String>,
+
+    /// Browser rendering timeout in seconds
+    #[arg(long, env = "BROWSER_TIMEOUT", default_value = "30")]
+    pub browser_timeout: u64,
+
+    /// Max concurrent browser instances
+    #[arg(long, env = "BROWSER_CONCURRENCY", default_value = "5")]
+    pub browser_concurrency: usize,
+
     /// Enable verbose logging
     #[arg(short, long)]
     pub verbose: bool,
@@ -151,11 +172,11 @@ async fn run_all_channels(args: &AllArgs) -> anyhow::Result<()> {
         publish_links: false,
         incremental_crawl: true,
         redis_url: std::env::var("REDIS_URL").ok(),
-        browser_render: false,
-        browser_render_patterns: None,
-        chrome_path: None,
-        browser_timeout: 30,
-        browser_concurrency: 5,
+        browser_render: args.browser_render,
+        browser_render_patterns: args.browser_render_patterns.clone(),
+        chrome_path: args.chrome_path.clone(),
+        browser_timeout: args.browser_timeout,
+        browser_concurrency: args.browser_concurrency,
         browser_headless: true,
         verbose: args.verbose,
         rocksdb_path: "./data/crawler-rocksdb".to_string(),
@@ -392,11 +413,11 @@ async fn run_all_kafka(args: &AllArgs, brokers: &str) -> anyhow::Result<()> {
         publish_links: false,
         incremental_crawl: true,
         redis_url: std::env::var("REDIS_URL").ok(),
-        browser_render: false,
-        browser_render_patterns: None,
-        chrome_path: None,
-        browser_timeout: 30,
-        browser_concurrency: 5,
+        browser_render: args.browser_render,
+        browser_render_patterns: args.browser_render_patterns.clone(),
+        chrome_path: args.chrome_path.clone(),
+        browser_timeout: args.browser_timeout,
+        browser_concurrency: args.browser_concurrency,
         browser_headless: true,
         verbose: args.verbose,
         rocksdb_path: "./data/crawler-rocksdb".to_string(),

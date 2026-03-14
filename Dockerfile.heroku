@@ -65,7 +65,7 @@ RUN mkdir -p crates/scrapix-core/src && echo "" > crates/scrapix-core/src/lib.rs
     && mkdir -p tests/src && echo "" > tests/src/lib.rs
 
 # Build dependencies only (this layer is cached until Cargo.toml/Cargo.lock change)
-RUN cargo build --release --workspace 2>&1 || true
+RUN cargo build --release --workspace --features browser 2>&1 || true
 
 # Remove stub artifacts so cargo detects the real source as changed
 RUN find target/release/.fingerprint \
@@ -78,20 +78,21 @@ COPY benches/ benches/
 COPY tests/ tests/
 COPY deploy/ deploy/
 
-# Build workspace (only recompiles workspace crates, deps are cached)
-RUN cargo build --release --workspace
+# Build workspace with browser rendering support
+RUN cargo build --release --workspace --features browser
 
 # -----------------------------------------------------------------------------
 # Stage 2: Runtime
 # -----------------------------------------------------------------------------
 FROM debian:bookworm-slim
 
-# Install runtime dependencies
+# Install runtime dependencies + Chromium for browser rendering
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
     libsasl2-2 \
     libcurl4 \
+    chromium \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
@@ -104,4 +105,4 @@ COPY --from=builder --chown=scrapix:scrapix /app/target/release/scrapix /app/scr
 ENV RUST_LOG=info
 
 # CMD (not ENTRYPOINT) so Heroku injects $PORT via shell expansion
-CMD /app/scrapix all --port $PORT
+CMD /app/scrapix all --port $PORT --browser-render --chrome-path /usr/bin/chromium

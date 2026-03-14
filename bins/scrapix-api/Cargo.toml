@@ -20,7 +20,7 @@ scrapix-queue = { path = "../../crates/scrapix-queue" }
 scrapix-storage = { path = "../../crates/scrapix-storage" }
 scrapix-parser = { path = "../../crates/scrapix-parser" }
 scrapix-extractor = { path = "../../crates/scrapix-extractor" }
-scrapix-crawler = { path = "../../crates/scrapix-crawler" }
+scrapix-crawler = { path = "../../crates/scrapix-crawler", features = ["browser-cdp"] }
 scrapix-ai = { path = "../../crates/scrapix-ai" }
 
 # HTTP client for /scrape endpoint
