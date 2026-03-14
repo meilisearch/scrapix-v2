@@ -139,17 +139,6 @@ export default function BillingPage() {
     },
   });
 
-  if (isLoading) {
-    return (
-      <div className="space-y-6">
-        <Skeleton className="h-8 w-48" />
-        <Skeleton className="h-64 w-full" />
-      </div>
-    );
-  }
-
-  const creditsBalance = billing?.credits_balance ?? user?.account?.credits_balance ?? 0;
-
   const dailyCostData = useMemo(() => {
     if (!allTxData?.transactions.length) return [];
 
@@ -175,6 +164,17 @@ export default function BillingPage() {
       };
     });
   }, [allTxData]);
+
+  if (isLoading) {
+    return (
+      <div className="space-y-6">
+        <Skeleton className="h-8 w-48" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    );
+  }
+
+  const creditsBalance = billing?.credits_balance ?? user?.account?.credits_balance ?? 0;
 
   return (
     <div className="space-y-6">
