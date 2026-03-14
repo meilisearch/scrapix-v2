@@ -30,8 +30,6 @@ import {
 } from "@/lib/api";
 import { useMe } from "@/lib/hooks";
 import {
-  Area,
-  AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
@@ -358,46 +356,34 @@ export default function UsagePage() {
             <Skeleton className="h-[300px] w-full" />
           ) : (
             <ResponsiveContainer width="100%" height={300}>
-              <AreaChart data={chartData}>
-                <defs>
-                  <linearGradient id="gradSuccess" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={colors.success} stopOpacity={0.4} />
-                    <stop offset="95%" stopColor={colors.success} stopOpacity={0.05} />
-                  </linearGradient>
-                  <linearGradient id="gradFailure" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={colors.failure} stopOpacity={0.4} />
-                    <stop offset="95%" stopColor={colors.failure} stopOpacity={0.05} />
-                  </linearGradient>
-                </defs>
+              <BarChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                 <XAxis
                   dataKey="label"
                   tick={{ fontSize: 12 }}
                   className="text-muted-foreground"
                   interval="preserveStartEnd"
+                  tickLine={false}
+                  axisLine={false}
                 />
-                <YAxis tick={{ fontSize: 12 }} className="text-muted-foreground" />
+                <YAxis tick={{ fontSize: 12 }} className="text-muted-foreground" tickLine={false} axisLine={false} />
                 <Tooltip contentStyle={tooltipStyle} />
                 <Legend />
-                <Area
-                  type="monotone"
+                <Bar
                   dataKey="successes"
                   stackId="1"
-                  stroke={colors.success}
-                  fill="url(#gradSuccess)"
-                  strokeWidth={2}
+                  fill={colors.success}
+                  radius={[0, 0, 0, 0]}
                   name="Successes"
                 />
-                <Area
-                  type="monotone"
+                <Bar
                   dataKey="failures"
                   stackId="1"
-                  stroke={colors.failure}
-                  fill="url(#gradFailure)"
-                  strokeWidth={2}
+                  fill={colors.failure}
+                  radius={[4, 4, 0, 0]}
                   name="Failures"
                 />
-              </AreaChart>
+              </BarChart>
             </ResponsiveContainer>
           )}
         </CardContent>
@@ -415,38 +401,34 @@ export default function UsagePage() {
               <Skeleton className="h-[250px] w-full" />
             ) : (
               <ResponsiveContainer width="100%" height={250}>
-                <AreaChart data={chartData}>
-                  <defs>
-                    <linearGradient id="gradBandwidth" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor={colors.bandwidth} stopOpacity={0.4} />
-                      <stop offset="95%" stopColor={colors.bandwidth} stopOpacity={0.05} />
-                    </linearGradient>
-                  </defs>
+                <BarChart data={chartData}>
                   <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                   <XAxis
                     dataKey="label"
                     tick={{ fontSize: 12 }}
                     className="text-muted-foreground"
                     interval="preserveStartEnd"
+                    tickLine={false}
+                    axisLine={false}
                   />
                   <YAxis
                     tick={{ fontSize: 12 }}
                     className="text-muted-foreground"
                     tickFormatter={(v: number) => formatBytes(v)}
+                    tickLine={false}
+                    axisLine={false}
                   />
                   <Tooltip
                     contentStyle={tooltipStyle}
                     formatter={(value: number) => [formatBytes(value), "Bandwidth"]}
                   />
-                  <Area
-                    type="monotone"
+                  <Bar
                     dataKey="total_bytes"
-                    stroke={colors.bandwidth}
-                    fill="url(#gradBandwidth)"
-                    strokeWidth={2}
+                    fill={colors.bandwidth}
+                    radius={[4, 4, 0, 0]}
                     name="Bandwidth"
                   />
-                </AreaChart>
+                </BarChart>
               </ResponsiveContainer>
             )}
           </CardContent>

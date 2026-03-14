@@ -46,7 +46,7 @@ export default function DailyCostChart({
             );
           }}
         />
-        <Bar dataKey="cost" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+        <Bar dataKey="cost" fill="#3b82f6" radius={[4, 4, 0, 0]} />
       </BarChart>
     </ResponsiveContainer>
   );
