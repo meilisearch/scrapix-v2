@@ -1,5 +1,5 @@
-import type { CrawlState } from "@/app/(dashboard)/playground/crawl-options";
-import { defaultCrawlState } from "@/app/(dashboard)/playground/crawl-options";
+import type { CrawlState } from "@/app/dashboard/playground/crawl-options";
+import { defaultCrawlState } from "@/app/dashboard/playground/crawl-options";
 
 /**
  * Convert CrawlState form data to a crawl config JSON object.

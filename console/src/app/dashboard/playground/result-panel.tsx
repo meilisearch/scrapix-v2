@@ -240,7 +240,7 @@ function CrawlResultState({
 
       {/* Details link */}
       <Button variant="outline" asChild>
-        <Link href={`/jobs/${result.job_id}`}>
+        <Link href={`/dashboard/jobs/${result.job_id}`}>
           View details
           <ArrowRight className="ml-1.5 h-4 w-4" />
         </Link>

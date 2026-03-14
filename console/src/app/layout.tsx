@@ -21,8 +21,12 @@ const rubikGlitch = Rubik_Glitch({
 });
 
 export const metadata: Metadata = {
-  title: "Scrapix Console",
-  description: "Manage your Scrapix web crawling and scraping",
+  title: {
+    default: "Scrapix - Web Scraping API",
+    template: "%s | Scrapix",
+  },
+  description:
+    "High-performance web scraping and crawling API. Turn any website into structured data with a single API call.",
 };
 
 export default function RootLayout({

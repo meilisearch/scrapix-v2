@@ -122,7 +122,7 @@ export default function ConfigsPage() {
       toast.success(
         <span>
           Crawl started.{" "}
-          <Link href={`/jobs/${result.job_id}`} className="underline">
+          <Link href={`/dashboard/jobs/${result.job_id}`} className="underline">
             View job
           </Link>
         </span>
@@ -216,7 +216,7 @@ export default function ConfigsPage() {
                   <TableRow key={config.id}>
                     <TableCell>
                       <Link
-                        href={`/configs/${config.id}`}
+                        href={`/dashboard/configs/${config.id}`}
                         className="hover:underline text-primary font-medium text-sm"
                       >
                         {config.name}
@@ -294,7 +294,7 @@ export default function ConfigsPage() {
                           <TooltipContent>Trigger crawl</TooltipContent>
                         </Tooltip>
                         <Button variant="ghost" size="icon" asChild>
-                          <Link href={`/configs/${config.id}`}>
+                          <Link href={`/dashboard/configs/${config.id}`}>
                             <ExternalLink className="h-4 w-4" />
                           </Link>
                         </Button>

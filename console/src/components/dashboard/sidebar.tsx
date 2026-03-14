@@ -41,33 +41,33 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 const topNav = [
-  { name: "Dashboard", href: "/", icon: LayoutDashboard },
+  { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
 ];
 
 const navGroups = [
   {
     label: "Playground",
     items: [
-      { name: "Scrape", href: "/scrape", icon: Globe },
-      { name: "Map", href: "/map", icon: Network },
-      { name: "Crawl", href: "/crawl", icon: Layers },
+      { name: "Scrape", href: "/dashboard/scrape", icon: Globe },
+      { name: "Map", href: "/dashboard/map", icon: Network },
+      { name: "Crawl", href: "/dashboard/crawl", icon: Layers },
     ],
   },
   {
     label: "Management",
     items: [
-      { name: "Jobs", href: "/jobs", icon: ListTodo },
-      { name: "Configs", href: "/configs", icon: FolderCog },
-      { name: "Engines", href: "/engines", icon: Database },
+      { name: "Jobs", href: "/dashboard/jobs", icon: ListTodo },
+      { name: "Configs", href: "/dashboard/configs", icon: FolderCog },
+      { name: "Engines", href: "/dashboard/engines", icon: Database },
     ],
   },
   {
     label: "Account",
     items: [
-      { name: "API Keys", href: "/api-keys", icon: Key },
-      { name: "Billing", href: "/billing", icon: CreditCard },
-      { name: "Usage", href: "/usage", icon: BarChart3 },
-      { name: "Settings", href: "/settings", icon: Settings },
+      { name: "API Keys", href: "/dashboard/api-keys", icon: Key },
+      { name: "Billing", href: "/dashboard/billing", icon: CreditCard },
+      { name: "Usage", href: "/dashboard/usage", icon: BarChart3 },
+      { name: "Settings", href: "/dashboard/settings", icon: Settings },
     ],
   },
 ];
@@ -100,7 +100,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <div className="flex h-full flex-col">
       <div className="flex h-14 items-center px-6 border-b">
-        <Link href="/" className="glitch-logo-wrapper flex items-center" onClick={onNavigate}>
+        <Link href="/dashboard" className="glitch-logo-wrapper flex items-center" onClick={onNavigate}>
           <Image
             src={isDark ? "/logotype_dark.svg" : "/logotype_light.svg"}
             alt="Scrapix"
@@ -140,7 +140,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             {group.items.map((item) => {
               const isActive =
                 pathname === item.href ||
-                (item.href !== "/" && pathname.startsWith(item.href));
+                pathname.startsWith(item.href + "/");
               return (
                 <Link
                   key={item.name}
@@ -164,7 +164,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       <Separator className="glitch-separator" />
       <div className="p-3 space-y-1">
         <Link
-          href="/billing"
+          href="/dashboard/billing"
           onClick={onNavigate}
           className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors hover:bg-muted"
         >
@@ -219,7 +219,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
               </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => { router.push("/settings"); onNavigate?.(); }}>
+            <DropdownMenuItem onClick={() => { router.push("/dashboard/settings"); onNavigate?.(); }}>
               Settings
             </DropdownMenuItem>
             <DropdownMenuSeparator />

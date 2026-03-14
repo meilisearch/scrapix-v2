@@ -13,23 +13,23 @@ import { Menu } from "lucide-react";
 import { SidebarContent } from "./sidebar";
 
 const pageTitles: Record<string, string> = {
-  "/": "Dashboard",
-  "/scrape": "Scrape",
-  "/crawl": "Crawl",
-  "/map": "Map",
-  "/jobs": "Jobs",
-  "/configs": "Configs",
-  "/engines": "Engines",
-  "/api-keys": "API Keys",
-  "/billing": "Billing",
-  "/usage": "Usage",
-  "/settings": "Settings",
+  "/dashboard": "Dashboard",
+  "/dashboard/scrape": "Scrape",
+  "/dashboard/crawl": "Crawl",
+  "/dashboard/map": "Map",
+  "/dashboard/jobs": "Jobs",
+  "/dashboard/configs": "Configs",
+  "/dashboard/engines": "Engines",
+  "/dashboard/api-keys": "API Keys",
+  "/dashboard/billing": "Billing",
+  "/dashboard/usage": "Usage",
+  "/dashboard/settings": "Settings",
 };
 
 function getPageTitle(pathname: string): string {
   if (pageTitles[pathname]) return pageTitles[pathname];
-  if (pathname.startsWith("/jobs/")) return "Job Details";
-  if (pathname.startsWith("/configs/")) return "Config Details";
+  if (pathname.startsWith("/dashboard/jobs/")) return "Job Details";
+  if (pathname.startsWith("/dashboard/configs/")) return "Config Details";
   return "Console";
 }
 

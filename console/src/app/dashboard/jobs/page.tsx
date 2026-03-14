@@ -195,7 +195,7 @@ export default function JobsPage() {
             </div>
           )}
           <Button asChild>
-            <Link href="/playground">
+            <Link href="/dashboard/playground">
               <Plus className="h-4 w-4 mr-2" />
               New Crawl
             </Link>
@@ -255,7 +255,7 @@ export default function JobsPage() {
                 message="No jobs yet"
                 action={
                   <Button asChild variant="outline">
-                    <Link href="/playground">
+                    <Link href="/dashboard/playground">
                       <Plus className="h-4 w-4 mr-2" />
                       Start your first crawl
                     </Link>
@@ -299,7 +299,7 @@ export default function JobsPage() {
                       <TableRow key={job.job_id}>
                         <TableCell>
                           <Link
-                            href={`/jobs/${job.job_id}`}
+                            href={`/dashboard/jobs/${job.job_id}`}
                             className="hover:underline text-primary font-medium text-sm"
                           >
                             {jobLabel(job)}
@@ -377,7 +377,7 @@ export default function JobsPage() {
                         <TableCell>
                           <div className="flex items-center gap-1">
                             <Button variant="ghost" size="icon" asChild>
-                              <Link href={`/jobs/${job.job_id}`}>
+                              <Link href={`/dashboard/jobs/${job.job_id}`}>
                                 <ExternalLink className="h-4 w-4" />
                               </Link>
                             </Button>

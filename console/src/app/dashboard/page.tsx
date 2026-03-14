@@ -96,7 +96,7 @@ export default function DashboardPage() {
           name: "Active Jobs",
           value: stats.jobs.running.toLocaleString(),
           icon: Zap,
-          href: "/jobs",
+          href: "/dashboard/jobs",
         },
         {
           name: "Domains Tracked",
@@ -125,7 +125,7 @@ export default function DashboardPage() {
           </p>
         </div>
         <Button asChild className="glitch-btn-primary">
-          <Link href="/playground">
+          <Link href="/dashboard/playground">
             <Play className="h-4 w-4 mr-2" />
             New Crawl
           </Link>
@@ -220,19 +220,19 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent className="space-y-3">
             <Button asChild variant="outline" className="w-full justify-between">
-              <Link href="/playground">
+              <Link href="/dashboard/playground">
                 Start a Crawl
                 <ArrowRight className="h-4 w-4" />
               </Link>
             </Button>
             <Button asChild variant="outline" className="w-full justify-between">
-              <Link href="/jobs">
+              <Link href="/dashboard/jobs">
                 View Jobs
                 <ArrowRight className="h-4 w-4" />
               </Link>
             </Button>
             <Button asChild variant="outline" className="w-full justify-between">
-              <Link href="/api-keys">
+              <Link href="/dashboard/api-keys">
                 Manage API Keys
                 <ArrowRight className="h-4 w-4" />
               </Link>

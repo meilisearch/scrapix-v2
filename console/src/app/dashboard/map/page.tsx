@@ -28,9 +28,9 @@ import {
   Download,
 } from "lucide-react";
 import { submitMap } from "@/lib/api";
-import { CodeBlock } from "@/app/(dashboard)/playground/result-panel";
-import { UrlBar } from "@/app/(dashboard)/playground/url-bar";
-import { HistoryPanel, loadRuns, saveRun, type RunEntry } from "@/app/(dashboard)/playground/recent-runs";
+import { CodeBlock } from "@/app/dashboard/playground/result-panel";
+import { UrlBar } from "@/app/dashboard/playground/url-bar";
+import { HistoryPanel, loadRuns, saveRun, type RunEntry } from "@/app/dashboard/playground/recent-runs";
 import type { MapResult, MapLink } from "@/lib/api-types";
 
 const MAP_EXAMPLE = `curl -X POST https://scrapix.meilisearch.dev/map \\

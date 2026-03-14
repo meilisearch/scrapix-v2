@@ -35,7 +35,7 @@ export default function LoginPage() {
 
     try {
       await login(email, password);
-      router.push("/");
+      router.push("/dashboard");
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
@@ -51,12 +51,12 @@ export default function LoginPage() {
 
     try {
       await login(devEmail, devPassword);
-      router.push("/");
+      router.push("/dashboard");
       router.refresh();
     } catch {
       try {
         await signup(devEmail, devPassword, "Dev User");
-        router.push("/");
+        router.push("/dashboard");
         router.refresh();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Dev login failed");

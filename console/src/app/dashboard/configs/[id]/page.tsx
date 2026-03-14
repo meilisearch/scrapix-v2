@@ -259,7 +259,7 @@ export default function ConfigDetailPage() {
       toast.success(
         <span>
           Crawl started.{" "}
-          <Link href={`/jobs/${result.job_id}`} className="underline">
+          <Link href={`/dashboard/jobs/${result.job_id}`} className="underline">
             View job
           </Link>
         </span>
@@ -278,7 +278,7 @@ export default function ConfigDetailPage() {
       await deleteConfig(id);
       queryClient.invalidateQueries({ queryKey: ["configs"] });
       toast.success("Config deleted");
-      router.push("/configs");
+      router.push("/dashboard/configs");
     } catch {
       toast.error("Failed to delete config");
     } finally {
@@ -314,7 +314,7 @@ export default function ConfigDetailPage() {
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="icon" asChild>
-            <Link href="/configs">
+            <Link href="/dashboard/configs">
               <ArrowLeft className="h-4 w-4" />
             </Link>
           </Button>
@@ -417,7 +417,7 @@ export default function ConfigDetailPage() {
               </code>
             </div>
             <Button variant="ghost" size="sm" asChild>
-              <Link href={`/jobs/${config.last_job_id}`}>
+              <Link href={`/dashboard/jobs/${config.last_job_id}`}>
                 <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
                 View Job
               </Link>

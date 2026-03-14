@@ -372,7 +372,7 @@ export default function JobDetailPage() {
       await deleteJob(id);
       toast.success("Job deleted");
       queryClient.invalidateQueries({ queryKey: ["jobs"] });
-      router.push("/jobs");
+      router.push("/dashboard/jobs");
     } catch {
       toast.error("Failed to delete job");
     } finally {
@@ -386,7 +386,7 @@ export default function JobDetailPage() {
       const { job_id } = await createCrawl(status.config);
       toast.success(`New job created: ${job_id.slice(0, 8)}...`);
       queryClient.invalidateQueries({ queryKey: ["jobs"] });
-      router.push(`/jobs/${job_id}`);
+      router.push(`/dashboard/jobs/${job_id}`);
     } catch {
       toast.error("Failed to retry job");
     }
@@ -428,7 +428,7 @@ export default function JobDetailPage() {
       <div className="flex items-start justify-between">
         <div className="flex items-start gap-3">
           <Button variant="ghost" size="icon" className="mt-0.5" asChild>
-            <Link href="/jobs">
+            <Link href="/dashboard/jobs">
               <ArrowLeft className="h-4 w-4" />
             </Link>
           </Button>

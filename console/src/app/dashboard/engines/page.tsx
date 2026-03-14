@@ -329,7 +329,7 @@ function EngineRow({
                   size="icon"
                   asChild
                 >
-                  <Link href={`/engines/${engine.id}/preview`}>
+                  <Link href={`/dashboard/engines/${engine.id}/preview`}>
                     <Eye className="h-4 w-4" />
                   </Link>
                 </Button>
