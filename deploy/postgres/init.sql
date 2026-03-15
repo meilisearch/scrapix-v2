@@ -244,6 +244,57 @@ CREATE INDEX IF NOT EXISTS idx_transactions_created_at ON transactions (created_
 CREATE INDEX IF NOT EXISTS idx_transactions_account_created ON transactions (account_id, created_at DESC);
 
 -- ============================================================================
+-- OAuth 2.1 Clients (Dynamic Client Registration — RFC 7591)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS oauth_clients (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    client_id VARCHAR(64) UNIQUE NOT NULL,
+    client_name VARCHAR(255),
+    redirect_uris TEXT[] NOT NULL,
+    scope VARCHAR(255) DEFAULT 'mcp',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ============================================================================
+-- OAuth 2.1 Authorization Codes (short-lived, single-use)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
+    code VARCHAR(128) PRIMARY KEY,
+    client_id VARCHAR(64) NOT NULL REFERENCES oauth_clients(client_id),
+    user_id UUID NOT NULL REFERENCES users(id),
+    redirect_uri TEXT NOT NULL,
+    scope VARCHAR(255) DEFAULT 'mcp',
+    code_challenge VARCHAR(128) NOT NULL,
+    code_challenge_method VARCHAR(10) NOT NULL DEFAULT 'S256',
+    expires_at TIMESTAMPTZ NOT NULL,
+    used BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_oauth_codes_expires ON oauth_authorization_codes(expires_at);
+
+-- ============================================================================
+-- OAuth 2.1 Tokens (access + refresh, stored as SHA-256 hashes)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS oauth_tokens (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    token_hash VARCHAR(64) UNIQUE NOT NULL,
+    token_type VARCHAR(16) NOT NULL CHECK (token_type IN ('access', 'refresh')),
+    client_id VARCHAR(64) NOT NULL REFERENCES oauth_clients(client_id),
+    user_id UUID NOT NULL REFERENCES users(id),
+    scope VARCHAR(255) DEFAULT 'mcp',
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked BOOLEAN NOT NULL DEFAULT false,
+    parent_token_id UUID REFERENCES oauth_tokens(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_oauth_tokens_hash ON oauth_tokens(token_hash) WHERE revoked = false;
+
+-- ============================================================================
 -- Idempotent migrations for existing databases
 -- ============================================================================
 

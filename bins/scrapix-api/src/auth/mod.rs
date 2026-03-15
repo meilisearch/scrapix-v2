@@ -2,9 +2,10 @@
 //!
 //! Provides password-based auth with JWT sessions and API key validation.
 
-mod handlers;
+pub(crate) mod handlers;
 mod jwt;
 mod middleware;
+pub(crate) mod oauth;
 mod password;
 
 pub use handlers::auth_routes;
@@ -12,6 +13,7 @@ pub(crate) use handlers::get_user_account_id;
 pub use handlers::session_routes;
 pub(crate) use middleware::validate_api_key_or_session;
 pub(crate) use middleware::validate_session;
+pub use oauth::oauth_routes;
 
 use sqlx::{postgres::PgPoolOptions, PgPool};
 

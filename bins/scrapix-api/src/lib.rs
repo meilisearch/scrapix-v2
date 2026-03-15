@@ -46,6 +46,9 @@ pub mod billing;
 pub mod configs;
 pub mod engines;
 pub mod jobs_db;
+pub mod mcp;
+pub mod openapi;
+pub mod rate_limit;
 
 use axum::{
     extract::{
@@ -117,13 +120,13 @@ pub struct Args {
     #[arg(long, env = "DATABASE_URL")]
     pub database_url: Option<String>,
 
-    /// JWT secret for session tokens
-    #[arg(
-        long,
-        env = "JWT_SECRET",
-        default_value = "dev-jwt-secret-change-in-production"
-    )]
-    pub jwt_secret: String,
+    /// JWT secret for session tokens (required when DATABASE_URL is set)
+    #[arg(long, env = "JWT_SECRET")]
+    pub jwt_secret: Option<String>,
+
+    /// Redis URL for rate limiting (optional, disables rate limiting if not set)
+    #[arg(long, env = "REDIS_URL")]
+    pub redis_url: Option<String>,
 
     /// Maximum jobs to keep in memory
     #[arg(long, env = "MAX_JOBS", default_value = "10000")]
@@ -366,17 +369,12 @@ impl AppState {
                                 .unwrap_or(false);
                             let has_summary = cfg
                                 .as_ref()
-                                .map(|c| {
-                                    c.features.ai_summary.as_ref().is_some_and(|t| t.enabled)
-                                })
+                                .map(|c| c.features.ai_summary.as_ref().is_some_and(|t| t.enabled))
                                 .unwrap_or(false);
                             let has_extraction = cfg
                                 .as_ref()
                                 .map(|c| {
-                                    c.features
-                                        .ai_extraction
-                                        .as_ref()
-                                        .is_some_and(|t| t.enabled)
+                                    c.features.ai_extraction.as_ref().is_some_and(|t| t.enabled)
                                 })
                                 .unwrap_or(false);
                             let api_key_id = j.api_key_id.clone().unwrap_or_default();
@@ -742,7 +740,7 @@ fn crawl_event_to_job_event(job_id: &str, event: &CrawlEvent) -> Option<ClickHou
 }
 
 /// API error response
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct ApiError {
     error: String,
     code: String,
@@ -791,6 +789,7 @@ use crate::auth::{AuthenticatedAccount, AuthenticatedUser};
 pub(crate) struct AccountContext {
     pub account_id: String,
     pub api_key_id: Option<String>,
+    pub tier: String,
 }
 
 /// Extract account context from request extensions.
@@ -805,13 +804,14 @@ async fn extract_account_context(
         return Some(AccountContext {
             account_id: acct.account_id.clone(),
             api_key_id: acct.api_key_id.clone(),
+            tier: acct.tier.clone(),
         });
     }
 
-    // Session path: look up account_id via DB
+    // Session path: look up account_id + tier via DB
     if let (Some(Extension(user)), Some(pool)) = (user_ext, db_pool) {
         let row = sqlx::query(
-            "SELECT a.id FROM account_members m \
+            "SELECT a.id, a.tier FROM account_members m \
              JOIN accounts a ON a.id = m.account_id \
              WHERE m.user_id = $1 LIMIT 1",
         )
@@ -824,9 +824,11 @@ async fn extract_account_context(
         if let Some(row) = row {
             use sqlx::Row;
             let account_id: uuid::Uuid = row.get("id");
+            let tier: String = row.get("tier");
             return Some(AccountContext {
                 account_id: account_id.to_string(),
                 api_key_id: None,
+                tier,
             });
         }
     }
@@ -853,7 +855,7 @@ fn check_job_ownership(
 }
 
 /// Create crawl response
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct CreateCrawlResponse {
     job_id: String,
     status: String,
@@ -863,7 +865,7 @@ struct CreateCrawlResponse {
 }
 
 /// Bulk crawl response
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct BulkCrawlResponse {
     /// Successfully created jobs
     jobs: Vec<CreateCrawlResponse>,
@@ -874,14 +876,14 @@ struct BulkCrawlResponse {
 }
 
 /// Error for a single config in a bulk submission
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct BulkCrawlError {
     index: usize,
     error: String,
 }
 
 /// Job status response
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct JobStatusResponse {
     job_id: String,
     status: String,
@@ -934,7 +936,7 @@ impl From<JobState> for JobStatusResponse {
 }
 
 /// List jobs query parameters
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 struct ListJobsQuery {
     #[serde(default = "default_limit")]
     limit: usize,
@@ -947,7 +949,7 @@ fn default_limit() -> usize {
 }
 
 /// Health check response
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct HealthResponse {
     status: String,
     version: String,
@@ -959,7 +961,7 @@ struct HealthResponse {
 // ============================================================================
 
 /// Request body for /scrape endpoint
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 struct ScrapeRequest {
     /// URL to scrape
     url: String,
@@ -1006,7 +1008,7 @@ struct ScrapeRequest {
 }
 
 /// AI enrichment options for /scrape
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 struct AiOptions {
     /// Generate a TL;DR summary
     #[serde(default)]
@@ -1018,7 +1020,7 @@ struct AiOptions {
 }
 
 /// AI extraction options
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 struct AiExtractOptions {
     /// Natural language prompt for extraction
     #[serde(default)]
@@ -1030,7 +1032,7 @@ struct AiExtractOptions {
 }
 
 /// Field definition for AI schema-based extraction
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 struct AiFieldDef {
     name: String,
     description: String,
@@ -1053,7 +1055,7 @@ fn default_timeout() -> u64 {
 }
 
 /// Output formats for scrape
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum ScrapeFormat {
     Markdown,
@@ -1068,7 +1070,7 @@ pub(crate) enum ScrapeFormat {
 }
 
 /// Response for /scrape endpoint
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct ScrapeResponse {
     /// Whether the scrape was successful
     success: bool,
@@ -1132,7 +1134,7 @@ struct ScrapeResponse {
 }
 
 /// AI enrichment results
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct AiResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     summary: Option<String>,
@@ -1141,7 +1143,7 @@ struct AiResult {
 }
 
 /// Metadata from scraped page
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct ScrapeMetadata {
     title: Option<String>,
     description: Option<String>,
@@ -1177,7 +1179,7 @@ impl From<ExtractedMetadata> for ScrapeMetadata {
 // ============================================================================
 
 /// System stats response
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct SystemStatsResponse {
     meilisearch: Option<MeilisearchStats>,
     jobs: JobSummary,
@@ -1185,13 +1187,13 @@ struct SystemStatsResponse {
     collected_at: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct MeilisearchStats {
     available: bool,
     url: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct JobSummary {
     total: usize,
     running: usize,
@@ -1200,7 +1202,7 @@ struct JobSummary {
     pending: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct DiagnosticsStats {
     recent_errors_count: usize,
     tracked_domains: usize,
@@ -1210,7 +1212,7 @@ struct DiagnosticsStats {
 }
 
 /// Errors response
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct ErrorsResponse {
     errors: Vec<ErrorRecord>,
     total_count: usize,
@@ -1220,7 +1222,7 @@ struct ErrorsResponse {
 }
 
 /// Error record for tracking
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 struct ErrorRecord {
     url: String,
     domain: String,
@@ -1232,7 +1234,7 @@ struct ErrorRecord {
 }
 
 /// Errors query parameters
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 struct ErrorsQuery {
     #[serde(default = "default_last")]
     last: usize,
@@ -1244,14 +1246,14 @@ fn default_last() -> usize {
 }
 
 /// Domains response
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct DomainsResponse {
     domains: Vec<DomainInfo>,
     total_domains: usize,
     source: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct DomainInfo {
     domain: String,
     total_requests: u64,
@@ -1261,7 +1263,7 @@ struct DomainInfo {
 }
 
 /// Domains query parameters
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 struct DomainsQuery {
     #[serde(default = "default_top")]
     top: usize,
@@ -1286,6 +1288,7 @@ struct DomainCounter {
 // ============================================================================
 
 /// Health check endpoint
+#[utoipa::path(get, path = "/health", tag = "health", responses((status = 200, body = HealthResponse)))]
 async fn health(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
     let kafka_connected = state.producer.is_healthy();
     let status = if kafka_connected { "ok" } else { "degraded" };
@@ -1298,7 +1301,7 @@ async fn health(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
 }
 
 /// Service health status for each component
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct ServiceStatus {
     name: String,
     status: String, // "up", "idle", "down"
@@ -1306,12 +1309,13 @@ struct ServiceStatus {
     last_seen_secs_ago: Option<u64>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct ServiceHealthResponse {
     services: Vec<ServiceStatus>,
 }
 
 /// Service health endpoint — reports liveness of each component
+#[utoipa::path(get, path = "/health/services", tag = "health", responses((status = 200, body = ServiceHealthResponse)))]
 async fn health_services(State(state): State<Arc<AppState>>) -> Json<ServiceHealthResponse> {
     let now = std::time::Instant::now();
     let seen = state.diagnostics.service_last_seen.read();
@@ -1425,6 +1429,7 @@ fn preprocess_html(
 
 /// Scrape a single URL and return content immediately
 /// This bypasses the job queue for instant results
+#[utoipa::path(post, path = "/scrape", tag = "scrape", request_body = ScrapeRequest, responses((status = 200, body = ScrapeResponse), (status = 400, body = ApiError)), security(("api_key" = [])))]
 async fn scrape_url(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
@@ -2045,6 +2050,27 @@ pub(crate) async fn do_create_crawl(
     // Pre-flight credit check (1 credit minimum to start a crawl)
     if let (Some(ref pool), Some(ctx)) = (&state.db_pool, account_ctx) {
         billing::check_credits(pool, &ctx.account_id, 1).await?;
+
+        // Enforce max concurrent jobs per billing tier
+        let tier: scrapix_core::BillingTier = ctx.tier.parse().unwrap_or_default();
+        let max_concurrent = tier.max_concurrent_jobs() as i64;
+        let active_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM jobs WHERE account_id = $1 AND status IN ('pending', 'running')",
+        )
+        .bind(uuid::Uuid::parse_str(&ctx.account_id).ok())
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+
+        if active_count >= max_concurrent {
+            return Err(ApiError::new(
+                format!(
+                    "Maximum concurrent jobs reached ({}/{}). Upgrade your plan for more.",
+                    active_count, max_concurrent
+                ),
+                "quota_exceeded",
+            ));
+        }
     }
 
     // Generate job ID
@@ -2332,7 +2358,7 @@ pub(crate) async fn do_create_crawl(
 // ============================================================================
 
 /// Request body for POST /map
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 struct MapRequest {
     /// Website URL to map
     url: String,
@@ -2383,7 +2409,7 @@ fn default_map_limit() -> usize {
 }
 
 /// A discovered link with optional metadata
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 struct MapLink {
     url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2399,7 +2425,7 @@ struct MapLink {
 }
 
 /// Response for POST /map
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct MapResponse {
     success: bool,
     links: Vec<MapLink>,
@@ -2539,6 +2565,7 @@ async fn map_fetch_page(
 ///
 /// Each URL can be enriched with title, description (from HTML head) and
 /// lastmod, priority, changefreq (from sitemap data) depending on `get_*` flags.
+#[utoipa::path(post, path = "/map", tag = "map", request_body = MapRequest, responses((status = 200, body = MapResponse), (status = 400, body = ApiError)), security(("api_key" = [])))]
 async fn map_url(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
@@ -2967,7 +2994,7 @@ async fn map_url(
 // Search endpoint
 // ============================================================================
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 struct SearchRequest {
     url: String,
     q: String,
@@ -2982,6 +3009,7 @@ struct SearchRequest {
 }
 
 /// Proxy search to the account's default Meilisearch engine.
+#[utoipa::path(post, path = "/search", tag = "search", request_body = SearchRequest, responses((status = 200, description = "Meilisearch search results"), (status = 400, body = ApiError)), security(("api_key" = [])))]
 async fn search_url(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
@@ -3185,6 +3213,7 @@ async fn search_url(
 }
 
 /// Create a new async crawl job
+#[utoipa::path(post, path = "/crawl", tag = "crawl", request_body = scrapix_core::CrawlConfig, responses((status = 200, body = CreateCrawlResponse), (status = 400, body = ApiError)), security(("api_key" = [])))]
 async fn create_crawl(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
@@ -3199,6 +3228,7 @@ async fn create_crawl(
 }
 
 /// Create a sync crawl job (waits for completion)
+#[utoipa::path(post, path = "/crawl/sync", tag = "crawl", request_body = scrapix_core::CrawlConfig, responses((status = 200, body = CreateCrawlResponse), (status = 400, body = ApiError)), security(("api_key" = [])))]
 async fn create_crawl_sync(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
@@ -3263,6 +3293,7 @@ async fn create_crawl_sync(
 }
 
 /// Create multiple crawl jobs from a batch of configs
+#[utoipa::path(post, path = "/crawl/bulk", tag = "crawl", request_body = Vec<scrapix_core::CrawlConfig>, responses((status = 200, body = BulkCrawlResponse), (status = 400, body = ApiError)), security(("api_key" = [])))]
 async fn create_crawl_bulk(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
@@ -3301,6 +3332,7 @@ async fn create_crawl_bulk(
 }
 
 /// Get job status
+#[utoipa::path(get, path = "/job/{id}/status", tag = "jobs", params(("id" = String, Path, description = "Job ID")), responses((status = 200, body = JobStatusResponse), (status = 404, body = ApiError)), security(("api_key" = [])))]
 async fn job_status(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
@@ -3370,6 +3402,7 @@ async fn job_events(
 // ============================================================================
 
 /// System stats endpoint
+#[utoipa::path(get, path = "/stats", tag = "health", responses((status = 200, body = SystemStatsResponse)))]
 async fn handle_stats(State(state): State<Arc<AppState>>) -> Json<SystemStatsResponse> {
     // Compute job summary
     let jobs = state.crawl.jobs.read();
@@ -3438,6 +3471,7 @@ async fn handle_stats(State(state): State<Arc<AppState>>) -> Json<SystemStatsRes
 }
 
 /// Errors endpoint
+#[utoipa::path(get, path = "/errors", tag = "health", params(ErrorsQuery), responses((status = 200, body = ErrorsResponse)))]
 async fn handle_errors(
     State(state): State<Arc<AppState>>,
     Query(params): Query<ErrorsQuery>,
@@ -3488,6 +3522,7 @@ async fn handle_errors(
 }
 
 /// Domains endpoint
+#[utoipa::path(get, path = "/domains", tag = "health", params(DomainsQuery), responses((status = 200, body = DomainsResponse)))]
 async fn handle_domains(
     State(state): State<Arc<AppState>>,
     Query(params): Query<DomainsQuery>,
@@ -3709,10 +3744,23 @@ async fn ws_job_handler(
     ws: WebSocketUpgrade,
     Path(job_id): Path<String>,
     State(state): State<Arc<AppState>>,
+    account_ext: Option<Extension<AuthenticatedAccount>>,
+    user_ext: Option<Extension<AuthenticatedUser>>,
 ) -> Result<impl IntoResponse, ApiError> {
     // Check if job exists
-    if state.get_job(&job_id).is_none() {
-        return Err(ApiError::new("Job not found", "not_found"));
+    let job = state
+        .get_job(&job_id)
+        .ok_or_else(|| ApiError::new("Job not found", "not_found"))?;
+
+    // Verify account ownership if auth is enabled
+    let account_ctx =
+        extract_account_context(state.db_pool.as_ref(), &account_ext, &user_ext).await;
+    if let Some(ref ctx) = account_ctx {
+        if let Some(ref job_account_id) = job.account_id {
+            if job_account_id != &ctx.account_id {
+                return Err(ApiError::new("Job not found", "not_found"));
+            }
+        }
     }
 
     Ok(ws.on_upgrade(move |socket| handle_job_ws_connection(socket, state, job_id)))
@@ -3797,6 +3845,7 @@ async fn handle_job_ws_connection(socket: WebSocket, state: Arc<AppState>, job_i
 }
 
 /// Cancel a job
+#[utoipa::path(delete, path = "/job/{id}", tag = "jobs", params(("id" = String, Path, description = "Job ID")), responses((status = 200), (status = 404, body = ApiError)), security(("api_key" = [])))]
 async fn cancel_job(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
@@ -3833,6 +3882,7 @@ async fn cancel_job(
 }
 
 /// List all jobs
+#[utoipa::path(get, path = "/jobs", tag = "jobs", params(ListJobsQuery), responses((status = 200, description = "List of jobs")), security(("api_key" = [])))]
 async fn list_jobs(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
@@ -4035,7 +4085,14 @@ pub async fn run_with_bus(
 
     // Initialize auth state if DATABASE_URL is provided
     let auth_state = if let Some(ref db_url) = args.database_url {
-        match auth::AuthState::new(db_url, args.jwt_secret.clone()).await {
+        let jwt_secret = args.jwt_secret.clone().unwrap_or_else(|| {
+            if std::env::var("ENVIRONMENT").as_deref() == Ok("production") {
+                panic!("JWT_SECRET is required in production. Set the JWT_SECRET environment variable.");
+            }
+            warn!("JWT_SECRET not set — using insecure default. Set JWT_SECRET in production!");
+            "dev-jwt-secret-change-in-production".to_string()
+        });
+        match auth::AuthState::new(db_url, jwt_secret).await {
             Ok(state) => {
                 // Auto-apply schema (idempotent — safe to run on every startup)
                 let schema_sql = include_str!("../../../deploy/postgres/init.sql");
@@ -4053,6 +4110,23 @@ pub async fn run_with_bus(
         }
     } else {
         info!("Authentication disabled (DATABASE_URL not set)");
+        None
+    };
+
+    // Initialize Redis-backed rate limiter (optional)
+    let rate_limit_state = if let Some(ref redis_url) = args.redis_url {
+        match rate_limit::RateLimitState::new(redis_url).await {
+            Some(rl) => {
+                info!("Rate limiting enabled via Redis");
+                Some(Arc::new(rl))
+            }
+            None => {
+                warn!("Rate limiting disabled (Redis connection failed)");
+                None
+            }
+        }
+    } else {
+        info!("Rate limiting disabled (REDIS_URL not set)");
         None
     };
 
@@ -4496,6 +4570,16 @@ pub async fn run_with_bus(
         protected_routes
     };
 
+    // Apply per-account rate limiting on protected routes (runs after auth)
+    let protected_routes = if let Some(ref rl) = rate_limit_state {
+        protected_routes.layer(middleware::from_fn_with_state(
+            rl.clone(),
+            rate_limit::rate_limit_middleware,
+        ))
+    } else {
+        protected_routes
+    };
+
     let mut app = Router::new()
         .merge(public_routes)
         .merge(protected_routes)
@@ -4504,10 +4588,71 @@ pub async fn run_with_bus(
 
     // Add auth and session routes if database is configured
     if let Some(ref auth) = auth_state {
+        // Apply stricter rate limiting on auth endpoints (login/signup brute-force protection)
+        let auth_public = if let Some(ref rl) = rate_limit_state {
+            auth::auth_routes(auth.clone()).layer(middleware::from_fn_with_state(
+                rl.clone(),
+                rate_limit::auth_rate_limit_middleware,
+            ))
+        } else {
+            auth::auth_routes(auth.clone())
+        };
         app = app
-            .merge(auth::auth_routes(auth.clone()))
-            .merge(auth::session_routes(auth.clone()));
-        info!("Auth routes enabled (/auth/signup, /auth/login, /auth/me, /account/*)");
+            .merge(auth_public)
+            .merge(auth::session_routes(auth.clone()))
+            .merge(auth::oauth_routes(auth.clone()));
+        info!("Auth routes enabled (/auth/signup, /auth/login, /auth/me, /account/*, /oauth/*)");
+
+        // MCP HTTP endpoint with Bearer token auth
+        let mcp_base_url = format!("http://{}:{}", args.host, args.port);
+        match mcp::build_mcp_service(&mcp_base_url) {
+            Ok(mcp_service) => {
+                let mcp_router = Router::new().route_service("/mcp", mcp_service).layer(
+                    middleware::from_fn_with_state(auth.clone(), mcp::validate_mcp_bearer),
+                );
+                app = app.merge(mcp_router);
+                info!("MCP HTTP endpoint enabled at /mcp (Bearer auth)");
+            }
+            Err(e) => {
+                warn!("Failed to initialize MCP HTTP service: {e}");
+            }
+        }
+
+        // Spawn OAuth token cleanup background task
+        auth::oauth::spawn_token_cleanup(auth.pool.clone());
+    }
+
+    // OpenAPI spec + Scalar docs UI
+    {
+        use utoipa::OpenApi;
+        let spec = openapi::ScrapixApi::openapi();
+        let spec_json = spec.to_json().expect("OpenAPI JSON serialization");
+        app = app
+            .route(
+                "/openapi.json",
+                get(|| async move {
+                    (
+                        [(axum::http::header::CONTENT_TYPE, "application/json")],
+                        spec_json,
+                    )
+                }),
+            )
+            .route(
+                "/docs",
+                get(|| async {
+                    axum::response::Html(
+                        r#"<!doctype html>
+<html>
+<head><title>Scrapix API Reference</title><meta charset="utf-8"/></head>
+<body>
+<script id="api-reference" data-url="/openapi.json"></script>
+<script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
+</body>
+</html>"#,
+                    )
+                }),
+            );
+        info!("OpenAPI spec at /openapi.json, docs UI at /docs");
     }
 
     // Add analytics routes if ClickHouse is available
@@ -4520,6 +4665,11 @@ pub async fn run_with_bus(
     } else {
         info!("Analytics API disabled (ClickHouse not available)");
     }
+
+    // Request body size limit (2 MB default, prevents DoS via large payloads)
+    app = app.layer(tower_http::limit::RequestBodyLimitLayer::new(
+        2 * 1024 * 1024,
+    ));
 
     // CORS: credential-aware
     // When CORS_ORIGINS is set (comma-separated URLs), use those + *.meilisearch.com wildcard.
