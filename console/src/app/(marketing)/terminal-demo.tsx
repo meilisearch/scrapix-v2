@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { cn } from "@/lib/utils";
-import { Globe, Network, Layers } from "lucide-react";
+import { Globe, Network, Layers, Search } from "lucide-react";
 
 const tabs = [
   {
@@ -127,6 +127,63 @@ const tabs = [
           <Key>index_uid</Key>
           <Punct>: </Punct>
           <Str>&quot;docs&quot;</Str>
+        </Line>
+        <Line>{`}`}</Line>
+      </>
+    ),
+  },
+  {
+    id: "search",
+    label: "Search",
+    icon: Search,
+    comment: "# Search any website instantly",
+    endpoint: "/search",
+    body: '{"url": "https://docs.example.com", "q": "getting started"}',
+    response: (
+      <>
+        <Line>{`{`}</Line>
+        <Line indent>
+          <Key>hits</Key>
+          <Punct>{`: [`}</Punct>
+        </Line>
+        <Line indent={2}>
+          <Punct>{`{ `}</Punct>
+          <Key>title</Key>
+          <Punct>: </Punct>
+          <Str>&quot;Getting Started Guide&quot;</Str>
+          <Punct>, </Punct>
+          <Key>url</Key>
+          <Punct>: </Punct>
+          <Str>&quot;https://docs.example.com/getting-started&quot;</Str>
+          <Punct>{` },`}</Punct>
+        </Line>
+        <Line indent={2}>
+          <Punct>{`{ `}</Punct>
+          <Key>title</Key>
+          <Punct>: </Punct>
+          <Str>&quot;Quick Start Tutorial&quot;</Str>
+          <Punct>, </Punct>
+          <Key>url</Key>
+          <Punct>: </Punct>
+          <Str>&quot;https://docs.example.com/quick-start&quot;</Str>
+          <Punct>{` },`}</Punct>
+        </Line>
+        <Line indent={2}>
+          <Punct>...</Punct>
+        </Line>
+        <Line indent>
+          <Punct>{`],`}</Punct>
+        </Line>
+        <Line indent>
+          <Key>estimatedTotalHits</Key>
+          <Punct>: </Punct>
+          <Num>23</Num>
+          <Punct>,</Punct>
+        </Line>
+        <Line indent>
+          <Key>processingTimeMs</Key>
+          <Punct>: </Punct>
+          <Num>4</Num>
         </Line>
         <Line>{`}`}</Line>
       </>

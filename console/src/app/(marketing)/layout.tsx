@@ -1,7 +1,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
-import { Globe, Layers, Network } from "lucide-react";
+import { Globe, Layers, Network, Search } from "lucide-react";
 
 export default function MarketingLayout({
   children,
@@ -59,6 +59,16 @@ export default function MarketingLayout({
                     <div>
                       <div className="font-medium">Crawl</div>
                       <div className="text-xs text-zinc-500">Crawl sites and index everything</div>
+                    </div>
+                  </Link>
+                  <Link
+                    href="/products/search"
+                    className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-zinc-300 hover:bg-white/5 hover:text-white transition-colors"
+                  >
+                    <Search className="h-4 w-4 text-emerald-400" />
+                    <div>
+                      <div className="font-medium">Search</div>
+                      <div className="text-xs text-zinc-500">Search any website instantly</div>
                     </div>
                   </Link>
                 </div>
@@ -136,6 +146,14 @@ export default function MarketingLayout({
                     className="hover:text-white transition-colors"
                   >
                     Crawl API
+                  </Link>
+                </li>
+                <li>
+                  <Link
+                    href="/products/search"
+                    className="hover:text-white transition-colors"
+                  >
+                    Search API
                   </Link>
                 </li>
                 <li>
