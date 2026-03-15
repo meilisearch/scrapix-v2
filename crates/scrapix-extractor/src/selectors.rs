@@ -21,7 +21,7 @@ pub enum SelectorError {
 }
 
 /// How to extract the value from matched elements
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ExtractionMode {
     /// Extract text content (default)
@@ -44,7 +44,7 @@ pub enum ExtractionMode {
 }
 
 /// Definition for a single selector extraction
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct SelectorDefinition {
     /// CSS selector(s) to match
     #[serde(flatten)]
@@ -60,6 +60,7 @@ pub struct SelectorDefinition {
 
     /// Default value if no match found
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Object)]
     pub default: Option<Value>,
 
     /// Transform the extracted value (trim, lowercase, etc.)
@@ -72,7 +73,7 @@ pub struct SelectorDefinition {
 }
 
 /// Input selector format
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(untagged)]
 pub enum SelectorInput {
     /// Single CSS selector
@@ -91,7 +92,7 @@ impl SelectorInput {
 }
 
 /// Field definition for ListOfObjects mode
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct FieldDefinition {
     /// CSS selector relative to parent element
     pub selector: String,
@@ -106,7 +107,7 @@ pub struct FieldDefinition {
 }
 
 /// Value transformations
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Transform {
     /// Trim whitespace
@@ -540,13 +541,27 @@ impl SelectorExtractor {
                 }
                 Transform::Regex(pattern) => {
                     if let Value::String(s) = &value {
-                        if let Ok(re) = regex::Regex::new(pattern) {
-                            if let Some(caps) = re.captures(s) {
-                                if let Some(m) = caps.get(1) {
-                                    return Value::String(m.as_str().to_string());
-                                } else if let Some(m) = caps.get(0) {
-                                    return Value::String(m.as_str().to_string());
+                        // Limit regex pattern length to prevent ReDoS
+                        if pattern.len() > 1024 {
+                            warn!("Regex pattern too long ({} chars), skipping", pattern.len());
+                            return Value::Null;
+                        }
+                        match regex::RegexBuilder::new(pattern)
+                            .size_limit(1 << 20) // 1 MB compiled size limit
+                            .dfa_size_limit(1 << 20)
+                            .build()
+                        {
+                            Ok(re) => {
+                                if let Some(caps) = re.captures(s) {
+                                    if let Some(m) = caps.get(1) {
+                                        return Value::String(m.as_str().to_string());
+                                    } else if let Some(m) = caps.get(0) {
+                                        return Value::String(m.as_str().to_string());
+                                    }
                                 }
+                            }
+                            Err(e) => {
+                                warn!("Invalid or too complex regex pattern: {}", e);
                             }
                         }
                         Value::Null

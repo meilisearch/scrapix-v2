@@ -19,29 +19,29 @@ use super::{jwt, password, AuthState, AuthenticatedUser};
 // Request / Response types
 // ============================================================================
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct SignupRequest {
     email: String,
     password: String,
     full_name: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct LoginRequest {
     email: String,
     password: String,
 }
 
-#[derive(Serialize)]
-struct UserResponse {
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct UserResponse {
     id: String,
     email: String,
     full_name: Option<String>,
     account: Option<AccountResponse>,
 }
 
-#[derive(Serialize)]
-struct AccountResponse {
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct AccountResponse {
     id: String,
     name: String,
     tier: String,
@@ -50,18 +50,18 @@ struct AccountResponse {
     credits_balance: i64,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct UpdateMeRequest {
     full_name: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct UpdateAccountRequest {
     name: Option<String>,
 }
 
-#[derive(Serialize)]
-struct ApiKeyResponse {
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct ApiKeyResponse {
     id: String,
     name: String,
     prefix: String,
@@ -70,21 +70,21 @@ struct ApiKeyResponse {
     created_at: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateApiKeyRequest {
     name: String,
 }
 
-#[derive(Serialize)]
-struct CreatedApiKeyResponse {
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct CreatedApiKeyResponse {
     id: String,
     name: String,
     prefix: String,
     key: String,
 }
 
-#[derive(Serialize)]
-struct BillingResponse {
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct BillingResponse {
     tier: String,
     stripe_customer_id: Option<String>,
     credits_balance: i64,
@@ -94,30 +94,30 @@ struct BillingResponse {
     monthly_spend_limit: Option<i64>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct UpdateBillingRequest {
     tier: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct TopupRequest {
     amount: i64,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct AutoTopupRequest {
     enabled: bool,
     amount: Option<i64>,
     threshold: Option<i64>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct SpendLimitRequest {
     monthly_spend_limit: Option<i64>,
 }
 
-#[derive(Serialize)]
-struct TransactionResponse {
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct TransactionResponse {
     id: String,
     #[serde(rename = "type")]
     tx_type: String,
@@ -127,26 +127,26 @@ struct TransactionResponse {
     created_at: String,
 }
 
-#[derive(Serialize)]
-struct TransactionsListResponse {
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct TransactionsListResponse {
     transactions: Vec<TransactionResponse>,
     total: i64,
 }
 
-#[derive(Serialize)]
-struct TopupResponse {
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct TopupResponse {
     credits_balance: i64,
     transaction_id: String,
     message: String,
 }
 
-#[derive(Serialize)]
-struct MessageResponse {
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct MessageResponse {
     message: String,
 }
 
-#[derive(Serialize)]
-struct ErrorBody {
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct ErrorBody {
     error: String,
     code: String,
 }
@@ -158,10 +158,14 @@ type ApiError = (StatusCode, Json<ErrorBody>);
 // ============================================================================
 
 fn build_session_cookie(token: String) -> Cookie<'static> {
+    let secure = std::env::var("ENVIRONMENT")
+        .map(|e| e != "development")
+        .unwrap_or(true);
     Cookie::build(("scrapix_session", token))
         .path("/")
         .http_only(true)
         .same_site(SameSite::Lax)
+        .secure(secure)
         .max_age(time::Duration::days(7))
         .build()
 }
@@ -204,15 +208,26 @@ pub(crate) async fn get_user_account_id(
 // Auth handlers (no auth required)
 // ============================================================================
 
-async fn signup(
+#[utoipa::path(
+    post,
+    path = "/auth/signup",
+    tag = "auth",
+    request_body = SignupRequest,
+    responses(
+        (status = 200, description = "User created successfully", body = UserResponse),
+        (status = 400, description = "Validation error", body = ErrorBody),
+        (status = 409, description = "Email already taken", body = ErrorBody),
+    )
+)]
+pub(crate) async fn signup(
     State(state): State<Arc<AuthState>>,
     jar: CookieJar,
     Json(req): Json<SignupRequest>,
 ) -> Result<(CookieJar, Json<UserResponse>), ApiError> {
-    if req.email.is_empty() || req.password.len() < 6 {
+    if req.email.is_empty() || req.password.len() < 12 {
         return Err(err(
             StatusCode::BAD_REQUEST,
-            "Email required and password must be at least 6 characters",
+            "Email required and password must be at least 12 characters",
             "validation_error",
         ));
     }
@@ -347,7 +362,17 @@ async fn signup(
     ))
 }
 
-async fn login(
+#[utoipa::path(
+    post,
+    path = "/auth/login",
+    tag = "auth",
+    request_body = LoginRequest,
+    responses(
+        (status = 200, description = "Login successful", body = UserResponse),
+        (status = 401, description = "Invalid credentials", body = ErrorBody),
+    )
+)]
+pub(crate) async fn login(
     State(state): State<Arc<AuthState>>,
     jar: CookieJar,
     Json(req): Json<LoginRequest>,
@@ -428,7 +453,15 @@ async fn login(
     ))
 }
 
-async fn logout(jar: CookieJar) -> (CookieJar, Json<MessageResponse>) {
+#[utoipa::path(
+    post,
+    path = "/auth/logout",
+    tag = "auth",
+    responses(
+        (status = 200, description = "Logged out successfully", body = MessageResponse),
+    )
+)]
+pub(crate) async fn logout(jar: CookieJar) -> (CookieJar, Json<MessageResponse>) {
     let jar = jar.add(clear_session_cookie());
     (
         jar,
@@ -442,7 +475,17 @@ async fn logout(jar: CookieJar) -> (CookieJar, Json<MessageResponse>) {
 // Session-protected handlers
 // ============================================================================
 
-async fn get_me(
+#[utoipa::path(
+    get,
+    path = "/auth/me",
+    tag = "auth",
+    responses(
+        (status = 200, description = "Current user info", body = UserResponse),
+        (status = 404, description = "User not found", body = ErrorBody),
+    ),
+    security(("api_key" = []))
+)]
+pub(crate) async fn get_me(
     State(state): State<Arc<AuthState>>,
     Extension(user): Extension<AuthenticatedUser>,
 ) -> Result<Json<UserResponse>, ApiError> {
@@ -486,7 +529,17 @@ async fn get_me(
     }))
 }
 
-async fn update_me(
+#[utoipa::path(
+    patch,
+    path = "/auth/me",
+    tag = "auth",
+    request_body = UpdateMeRequest,
+    responses(
+        (status = 200, description = "User updated", body = MessageResponse),
+    ),
+    security(("api_key" = []))
+)]
+pub(crate) async fn update_me(
     State(state): State<Arc<AuthState>>,
     Extension(user): Extension<AuthenticatedUser>,
     Json(req): Json<UpdateMeRequest>,
@@ -510,7 +563,17 @@ async fn update_me(
     }))
 }
 
-async fn get_account(
+#[utoipa::path(
+    get,
+    path = "/account",
+    tag = "auth",
+    responses(
+        (status = 200, description = "Account details", body = AccountResponse),
+        (status = 404, description = "Account not found", body = ErrorBody),
+    ),
+    security(("api_key" = []))
+)]
+pub(crate) async fn get_account(
     State(state): State<Arc<AuthState>>,
     Extension(user): Extension<AuthenticatedUser>,
 ) -> Result<Json<AccountResponse>, ApiError> {
@@ -541,7 +604,18 @@ async fn get_account(
     }))
 }
 
-async fn update_account(
+#[utoipa::path(
+    patch,
+    path = "/account",
+    tag = "auth",
+    request_body = UpdateAccountRequest,
+    responses(
+        (status = 200, description = "Account updated", body = MessageResponse),
+        (status = 404, description = "Account not found", body = ErrorBody),
+    ),
+    security(("api_key" = []))
+)]
+pub(crate) async fn update_account(
     State(state): State<Arc<AuthState>>,
     Extension(user): Extension<AuthenticatedUser>,
     Json(req): Json<UpdateAccountRequest>,
@@ -569,7 +643,17 @@ async fn update_account(
     }))
 }
 
-async fn list_api_keys(
+#[utoipa::path(
+    get,
+    path = "/account/api-keys",
+    tag = "auth",
+    responses(
+        (status = 200, description = "List of API keys", body = Vec<ApiKeyResponse>),
+        (status = 404, description = "Account not found", body = ErrorBody),
+    ),
+    security(("api_key" = []))
+)]
+pub(crate) async fn list_api_keys(
     State(state): State<Arc<AuthState>>,
     Extension(user): Extension<AuthenticatedUser>,
 ) -> Result<Json<Vec<ApiKeyResponse>>, ApiError> {
@@ -611,7 +695,19 @@ async fn list_api_keys(
     Ok(Json(keys))
 }
 
-async fn create_api_key(
+#[utoipa::path(
+    post,
+    path = "/account/api-keys",
+    tag = "auth",
+    request_body = CreateApiKeyRequest,
+    responses(
+        (status = 200, description = "API key created", body = CreatedApiKeyResponse),
+        (status = 400, description = "Validation error", body = ErrorBody),
+        (status = 404, description = "Account not found", body = ErrorBody),
+    ),
+    security(("api_key" = []))
+)]
+pub(crate) async fn create_api_key(
     State(state): State<Arc<AuthState>>,
     Extension(user): Extension<AuthenticatedUser>,
     Json(req): Json<CreateApiKeyRequest>,
@@ -672,7 +768,21 @@ async fn create_api_key(
     }))
 }
 
-async fn revoke_api_key(
+#[utoipa::path(
+    patch,
+    path = "/account/api-keys/{id}",
+    tag = "auth",
+    params(
+        ("id" = String, Path, description = "API key ID to revoke"),
+    ),
+    responses(
+        (status = 200, description = "API key revoked", body = MessageResponse),
+        (status = 400, description = "Invalid key ID", body = ErrorBody),
+        (status = 404, description = "Key not found", body = ErrorBody),
+    ),
+    security(("api_key" = []))
+)]
+pub(crate) async fn revoke_api_key(
     State(state): State<Arc<AuthState>>,
     Extension(user): Extension<AuthenticatedUser>,
     Path(key_id): Path<String>,
@@ -712,7 +822,17 @@ async fn revoke_api_key(
     }))
 }
 
-async fn get_billing(
+#[utoipa::path(
+    get,
+    path = "/account/billing",
+    tag = "auth",
+    responses(
+        (status = 200, description = "Billing information", body = BillingResponse),
+        (status = 404, description = "Account not found", body = ErrorBody),
+    ),
+    security(("api_key" = []))
+)]
+pub(crate) async fn get_billing(
     State(state): State<Arc<AuthState>>,
     Extension(user): Extension<AuthenticatedUser>,
 ) -> Result<Json<BillingResponse>, ApiError> {
@@ -748,7 +868,19 @@ async fn get_billing(
     }))
 }
 
-async fn update_billing(
+#[utoipa::path(
+    patch,
+    path = "/account/billing",
+    tag = "auth",
+    request_body = UpdateBillingRequest,
+    responses(
+        (status = 200, description = "Billing tier updated", body = MessageResponse),
+        (status = 400, description = "Invalid tier", body = ErrorBody),
+        (status = 404, description = "Account not found", body = ErrorBody),
+    ),
+    security(("api_key" = []))
+)]
+pub(crate) async fn update_billing(
     State(state): State<Arc<AuthState>>,
     Extension(user): Extension<AuthenticatedUser>,
     Json(req): Json<UpdateBillingRequest>,
@@ -788,7 +920,20 @@ async fn update_billing(
 // Billing: top-up, auto top-up, spend limit, transactions
 // ============================================================================
 
-async fn topup_credits(
+#[utoipa::path(
+    post,
+    path = "/account/billing/topup",
+    tag = "auth",
+    request_body = TopupRequest,
+    responses(
+        (status = 200, description = "Credits topped up", body = TopupResponse),
+        (status = 400, description = "Invalid amount", body = ErrorBody),
+        (status = 403, description = "Spend limit exceeded", body = ErrorBody),
+        (status = 404, description = "Account not found", body = ErrorBody),
+    ),
+    security(("api_key" = []))
+)]
+pub(crate) async fn topup_credits(
     State(state): State<Arc<AuthState>>,
     Extension(user): Extension<AuthenticatedUser>,
     Json(req): Json<TopupRequest>,
@@ -861,7 +1006,19 @@ async fn topup_credits(
     }))
 }
 
-async fn update_auto_topup(
+#[utoipa::path(
+    patch,
+    path = "/account/billing/auto-topup",
+    tag = "auth",
+    request_body = AutoTopupRequest,
+    responses(
+        (status = 200, description = "Auto top-up settings updated", body = MessageResponse),
+        (status = 400, description = "Validation error", body = ErrorBody),
+        (status = 404, description = "Account not found", body = ErrorBody),
+    ),
+    security(("api_key" = []))
+)]
+pub(crate) async fn update_auto_topup(
     State(state): State<Arc<AuthState>>,
     Extension(user): Extension<AuthenticatedUser>,
     Json(req): Json<AutoTopupRequest>,
@@ -914,7 +1071,19 @@ async fn update_auto_topup(
     }))
 }
 
-async fn update_spend_limit(
+#[utoipa::path(
+    patch,
+    path = "/account/billing/spend-limit",
+    tag = "auth",
+    request_body = SpendLimitRequest,
+    responses(
+        (status = 200, description = "Spend limit updated", body = MessageResponse),
+        (status = 400, description = "Invalid limit", body = ErrorBody),
+        (status = 404, description = "Account not found", body = ErrorBody),
+    ),
+    security(("api_key" = []))
+)]
+pub(crate) async fn update_spend_limit(
     State(state): State<Arc<AuthState>>,
     Extension(user): Extension<AuthenticatedUser>,
     Json(req): Json<SpendLimitRequest>,
@@ -954,7 +1123,21 @@ async fn update_spend_limit(
     }))
 }
 
-async fn list_transactions(
+#[utoipa::path(
+    get,
+    path = "/account/billing/transactions",
+    tag = "auth",
+    params(
+        ("limit" = Option<i64>, Query, description = "Maximum number of transactions to return (default 50, max 200)"),
+        ("offset" = Option<i64>, Query, description = "Offset for pagination (default 0)"),
+    ),
+    responses(
+        (status = 200, description = "List of transactions", body = TransactionsListResponse),
+        (status = 404, description = "Account not found", body = ErrorBody),
+    ),
+    security(("api_key" = []))
+)]
+pub(crate) async fn list_transactions(
     State(state): State<Arc<AuthState>>,
     Extension(user): Extension<AuthenticatedUser>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
@@ -1065,10 +1248,7 @@ async fn check_spend_limit(
         if spent + amount > limit {
             return Err(err(
                 StatusCode::FORBIDDEN,
-                &format!(
-                    "Monthly spend limit reached ({} of {} used this month)",
-                    spent, limit
-                ),
+                "Monthly spend limit reached",
                 "spend_limit_exceeded",
             ));
         }

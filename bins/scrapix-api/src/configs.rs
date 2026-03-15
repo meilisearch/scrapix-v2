@@ -23,7 +23,7 @@ use crate::{do_create_crawl, AccountContext, ApiError, AppState};
 // Types
 // ============================================================================
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CrawlConfigRecord {
     pub id: String,
     pub account_id: String,
@@ -39,7 +39,7 @@ pub struct CrawlConfigRecord {
     pub updated_at: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateConfigRequest {
     pub name: String,
     #[serde(default)]
@@ -51,7 +51,7 @@ pub struct CreateConfigRequest {
     pub cron_enabled: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateConfigRequest {
     #[serde(default)]
     pub name: Option<String>,
@@ -65,7 +65,7 @@ pub struct UpdateConfigRequest {
     pub cron_enabled: Option<bool>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub struct ListConfigsQuery {
     #[serde(default = "default_limit")]
     pub limit: i64,
@@ -77,7 +77,7 @@ fn default_limit() -> i64 {
     50
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct TriggerResponse {
     pub job_id: String,
     pub config_id: String,
@@ -147,6 +147,7 @@ fn row_to_record(row: &sqlx::postgres::PgRow) -> CrawlConfigRecord {
 // CRUD Handlers
 // ============================================================================
 
+#[utoipa::path(post, path = "/configs", tag = "configs", request_body = CreateConfigRequest, responses((status = 201, body = CrawlConfigRecord), (status = 400, body = crate::ApiError)), security(("api_key" = [])))]
 pub(crate) async fn create_config(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
@@ -218,6 +219,7 @@ pub(crate) async fn create_config(
     Ok((StatusCode::CREATED, Json(record)))
 }
 
+#[utoipa::path(get, path = "/configs", tag = "configs", params(ListConfigsQuery), responses((status = 200, body = Vec<CrawlConfigRecord>)), security(("api_key" = [])))]
 pub(crate) async fn list_configs(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
@@ -250,6 +252,7 @@ pub(crate) async fn list_configs(
     Ok(Json(records))
 }
 
+#[utoipa::path(get, path = "/configs/{id}", tag = "configs", params(("id" = String, Path, description = "Config ID")), responses((status = 200, body = CrawlConfigRecord), (status = 404, body = crate::ApiError)), security(("api_key" = [])))]
 pub(crate) async fn get_config(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
@@ -283,6 +286,7 @@ pub(crate) async fn get_config(
     Ok(Json(row_to_record(&row)))
 }
 
+#[utoipa::path(patch, path = "/configs/{id}", tag = "configs", params(("id" = String, Path, description = "Config ID")), request_body = UpdateConfigRequest, responses((status = 200, body = CrawlConfigRecord), (status = 404, body = crate::ApiError)), security(("api_key" = [])))]
 pub(crate) async fn update_config(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
@@ -382,6 +386,7 @@ pub(crate) async fn update_config(
     Ok(Json(record))
 }
 
+#[utoipa::path(delete, path = "/configs/{id}", tag = "configs", params(("id" = String, Path, description = "Config ID")), responses((status = 204), (status = 404, body = crate::ApiError)), security(("api_key" = [])))]
 pub(crate) async fn delete_config(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
@@ -423,6 +428,7 @@ pub(crate) async fn delete_config(
 // Trigger Handler
 // ============================================================================
 
+#[utoipa::path(post, path = "/configs/{id}/trigger", tag = "configs", params(("id" = String, Path, description = "Config ID")), responses((status = 200, body = TriggerResponse), (status = 404, body = crate::ApiError)), security(("api_key" = [])))]
 pub(crate) async fn trigger_config(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
@@ -457,9 +463,17 @@ pub(crate) async fn trigger_config(
     let crawl_config: CrawlConfig = serde_json::from_value(config_json)
         .map_err(|e| ApiError::new(format!("Invalid stored config: {e}"), "internal_error"))?;
 
+    let tier: String = sqlx::query_scalar("SELECT tier FROM accounts WHERE id = $1")
+        .bind(account_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| ApiError::new(format!("Database error: {e}"), "internal_error"))?
+        .unwrap_or_else(|| "free".to_string());
+
     let account_ctx = AccountContext {
         account_id: account_id.to_string(),
         api_key_id: None,
+        tier,
     };
 
     let response = do_create_crawl(&state, crawl_config, Some(&account_ctx)).await?;
@@ -556,9 +570,17 @@ async fn run_cron_tick(state: &Arc<AppState>, pool: &PgPool) -> Result<(), sqlx:
             }
         };
 
+        let tier: String = sqlx::query_scalar("SELECT tier FROM accounts WHERE id = $1")
+            .bind(account_id)
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None)
+            .unwrap_or_else(|| "free".to_string());
+
         let account_ctx = AccountContext {
             account_id: account_id.to_string(),
             api_key_id: None,
+            tier,
         };
 
         // Trigger crawl

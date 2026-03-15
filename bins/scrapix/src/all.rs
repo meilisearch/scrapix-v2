@@ -52,9 +52,9 @@ pub struct AllArgs {
     #[arg(long, env = "DATABASE_URL")]
     pub database_url: Option<String>,
 
-    /// JWT secret for auth
-    #[arg(long, env = "JWT_SECRET", default_value = "scrapix-dev-secret")]
-    pub jwt_secret: String,
+    /// JWT secret for auth (required when DATABASE_URL is set)
+    #[arg(long, env = "JWT_SECRET")]
+    pub jwt_secret: Option<String>,
 
     // === Browser rendering ===
     /// Enable browser rendering for JavaScript-heavy pages
@@ -125,6 +125,7 @@ async fn run_all_channels(args: &AllArgs) -> anyhow::Result<()> {
         brokers: String::new(), // unused with channel bus
         database_url: args.database_url.clone(),
         jwt_secret: args.jwt_secret.clone(),
+        redis_url: std::env::var("REDIS_URL").ok(),
         max_jobs: 1000,
         verbose: args.verbose,
     };
@@ -366,6 +367,7 @@ async fn run_all_kafka(args: &AllArgs, brokers: &str) -> anyhow::Result<()> {
         brokers: brokers.to_string(),
         database_url: args.database_url.clone(),
         jwt_secret: args.jwt_secret.clone(),
+        redis_url: std::env::var("REDIS_URL").ok(),
         max_jobs: 1000,
         verbose: args.verbose,
     };

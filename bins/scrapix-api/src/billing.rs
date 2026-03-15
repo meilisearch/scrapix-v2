@@ -22,15 +22,16 @@ pub(crate) async fn check_credits(
 ) -> Result<i64, ApiError> {
     let account_uuid = parse_uuid(account_id)?;
 
-    let balance: i64 = sqlx::query_scalar("SELECT credits_balance FROM accounts WHERE id = $1")
-        .bind(account_uuid)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| {
-            error!(error = %e, "Failed to query credits balance");
-            ApiError::new("Database error", "internal_error")
-        })?
-        .ok_or_else(|| ApiError::new("Account not found", "not_found"))?;
+    let balance: i64 =
+        sqlx::query_scalar("SELECT credits_balance FROM accounts WHERE id = $1 AND active = true")
+            .bind(account_uuid)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "Failed to query credits balance");
+                ApiError::new("Database error", "internal_error")
+            })?
+            .ok_or_else(|| ApiError::new("Account not found or inactive", "not_found"))?;
 
     if balance < required_amount {
         return Err(ApiError::new(
@@ -123,8 +124,8 @@ pub(crate) async fn deduct_credits(
     Ok(new_balance)
 }
 
-/// Combined atomic check-and-deduct, with auto-topup spawned as a background
-/// task if the balance drops below the threshold.
+/// Combined atomic check-and-deduct, with auto-topup triggered synchronously
+/// (with timeout) if the balance drops below the threshold.
 ///
 /// Returns the new balance on success.
 pub(crate) async fn check_credits_and_deduct(
@@ -136,12 +137,18 @@ pub(crate) async fn check_credits_and_deduct(
 ) -> Result<i64, ApiError> {
     let new_balance = deduct_credits(pool, account_id, amount, operation, description).await?;
 
-    // Fire-and-forget auto-topup check
-    let pool = pool.clone();
-    let account_id = account_id.to_string();
-    tokio::spawn(async move {
-        maybe_auto_topup(&pool, &account_id).await;
-    });
+    // Synchronous auto-topup with timeout to prevent blocking on DB issues
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        maybe_auto_topup(pool, account_id),
+    )
+    .await
+    {
+        Ok(()) => {}
+        Err(_) => {
+            warn!(account_id, "Auto-topup timed out after 5s");
+        }
+    }
 
     Ok(new_balance)
 }
@@ -281,10 +288,7 @@ pub(crate) async fn check_spend_limit(
 
         if spent + amount > limit {
             return Err(ApiError::new(
-                format!(
-                    "Monthly spend limit reached ({} of {} used this month)",
-                    spent, limit
-                ),
+                "Monthly spend limit reached",
                 "spend_limit_exceeded",
             ));
         }

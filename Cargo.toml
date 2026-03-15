@@ -17,6 +17,7 @@ members = [
     "bins/scrapix-frontier-service",
     "bins/scrapix-cli",
     "bins/scrapix",
+    "bins/scrapix-mcp",
     "benches",
     "tests",
 ]
@@ -43,7 +44,7 @@ hyper = { version = "1.8", features = ["full"] }
 # Web framework
 axum = { version = "0.8", features = ["macros", "ws"] }
 tower = { version = "0.5", features = ["full"] }
-tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip", "limit"] }
 
 # HTML parsing
 scraper = "0.22"
@@ -112,6 +113,9 @@ anyhow = "1.0"
 
 # CLI
 clap = { version = "4.5", features = ["derive", "env"] }
+
+# OpenAPI
+utoipa = { version = "5", features = ["chrono", "uuid"] }
 
 # Utilities
 uuid = { version = "1.16", features = ["v4", "serde"] }
