@@ -367,7 +367,7 @@ impl AppState {
                             let has_summary = cfg
                                 .as_ref()
                                 .map(|c| {
-                                    c.features.ai_summary.as_ref().map_or(false, |t| t.enabled)
+                                    c.features.ai_summary.as_ref().is_some_and(|t| t.enabled)
                                 })
                                 .unwrap_or(false);
                             let has_extraction = cfg
@@ -376,7 +376,7 @@ impl AppState {
                                     c.features
                                         .ai_extraction
                                         .as_ref()
-                                        .map_or(false, |t| t.enabled)
+                                        .is_some_and(|t| t.enabled)
                                 })
                                 .unwrap_or(false);
                             let api_key_id = j.api_key_id.clone().unwrap_or_default();
