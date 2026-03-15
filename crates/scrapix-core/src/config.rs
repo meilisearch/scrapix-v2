@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use validator::Validate;
 
 /// Main configuration for a crawl job
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, utoipa::ToSchema)]
 pub struct CrawlConfig {
     /// Starting URLs for the crawl
     #[validate(length(min = 1, message = "At least one start URL is required"))]
@@ -95,7 +95,7 @@ pub struct CrawlConfig {
 }
 
 /// Indexing strategy for a crawl job.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum IndexStrategy {
     /// Add/update documents in the existing index.
@@ -149,7 +149,7 @@ where
 }
 
 /// Type of crawler to use
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CrawlerType {
     /// Fast HTTP-only crawler using reqwest
@@ -160,7 +160,7 @@ pub enum CrawlerType {
 }
 
 /// URL filtering patterns
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct UrlPatterns {
     /// Glob patterns for URLs to include
     #[serde(default)]
@@ -182,7 +182,7 @@ pub struct UrlPatterns {
 }
 
 /// Sitemap discovery settings
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct SitemapConfig {
     /// Whether to discover and use sitemaps
     #[serde(default)]
@@ -194,7 +194,7 @@ pub struct SitemapConfig {
 }
 
 /// Concurrency settings
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ConcurrencyConfig {
     /// Maximum concurrent HTTP requests
     #[serde(default = "default_max_concurrent")]
@@ -230,7 +230,7 @@ impl Default for ConcurrencyConfig {
 }
 
 /// Rate limiting configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct RateLimitConfig {
     /// Maximum requests per second (global)
     #[serde(default)]
@@ -276,7 +276,7 @@ impl Default for RateLimitConfig {
 }
 
 /// Proxy configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ProxyConfig {
     /// List of proxy URLs
     pub urls: Vec<String>,
@@ -291,7 +291,7 @@ pub struct ProxyConfig {
 }
 
 /// Proxy rotation strategy
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ProxyRotation {
     /// Round-robin through proxies
@@ -304,7 +304,7 @@ pub enum ProxyRotation {
 }
 
 /// Feature extraction configuration
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct FeaturesConfig {
     /// Extract meta tags
     #[serde(default)]
@@ -445,7 +445,7 @@ impl FeaturesConfig {
 }
 
 /// Simple feature toggle with page filters
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct FeatureToggle {
     /// Whether the feature is enabled
     pub enabled: bool,
@@ -460,7 +460,7 @@ pub struct FeatureToggle {
 }
 
 /// Schema.org extraction settings
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct SchemaFeatureConfig {
     pub enabled: bool,
 
@@ -480,7 +480,7 @@ pub struct SchemaFeatureConfig {
 }
 
 /// Custom CSS selector extraction
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CustomSelectorsConfig {
     pub enabled: bool,
 
@@ -495,7 +495,7 @@ pub struct CustomSelectorsConfig {
 }
 
 /// CSS selector definition
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(untagged)]
 pub enum SelectorDef {
     /// Single selector
@@ -505,7 +505,7 @@ pub enum SelectorDef {
 }
 
 /// AI extraction configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct AiExtractionConfig {
     pub enabled: bool,
 
@@ -520,7 +520,7 @@ pub struct AiExtractionConfig {
 }
 
 /// Meilisearch configuration
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, utoipa::ToSchema)]
 pub struct MeilisearchConfig {
     /// Meilisearch URL
     #[validate(url)]
@@ -564,7 +564,7 @@ fn default_batch_size() -> u32 {
 }
 
 /// Meilisearch index settings
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct MeilisearchSettings {
     #[serde(default)]
     pub searchable_attributes: Option<Vec<String>>,
@@ -589,7 +589,7 @@ pub struct MeilisearchSettings {
 }
 
 /// Webhook configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct WebhookConfig {
     /// Webhook URL
     pub url: String,
@@ -619,7 +619,7 @@ fn default_webhook_timeout() -> u64 {
 }
 
 /// Webhook events
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WebhookEvent {
     CrawlStarted,
@@ -633,7 +633,7 @@ pub enum WebhookEvent {
 }
 
 /// Webhook authentication
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WebhookAuth {
     /// Bearer token authentication

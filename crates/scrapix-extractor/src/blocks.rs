@@ -58,7 +58,7 @@ impl Default for BlockConfig {
 }
 
 /// A single content block extracted from the document
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ContentBlock {
     /// Block index (0-based)
     pub index: u32,

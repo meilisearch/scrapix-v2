@@ -21,7 +21,7 @@ use crate::{ApiError, AppState};
 // Types
 // ============================================================================
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct EngineRecord {
     pub id: String,
     pub account_id: String,
@@ -33,7 +33,7 @@ pub struct EngineRecord {
     pub updated_at: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateEngineRequest {
     pub name: String,
     pub url: String,
@@ -43,7 +43,7 @@ pub struct CreateEngineRequest {
     pub is_default: Option<bool>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateEngineRequest {
     #[serde(default)]
     pub name: Option<String>,
@@ -53,7 +53,7 @@ pub struct UpdateEngineRequest {
     pub api_key: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct EngineIndex {
     pub uid: String,
     #[serde(rename = "primaryKey")]
@@ -131,6 +131,7 @@ fn get_pool(state: &AppState) -> Result<&sqlx::PgPool, ApiError> {
 // CRUD Handlers
 // ============================================================================
 
+#[utoipa::path(post, path = "/engines", tag = "engines", request_body = CreateEngineRequest, responses((status = 201, body = EngineRecord), (status = 400, body = crate::ApiError)), security(("api_key" = [])))]
 pub(crate) async fn create_engine(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
@@ -192,6 +193,7 @@ pub(crate) async fn create_engine(
     Ok((StatusCode::CREATED, Json(record)))
 }
 
+#[utoipa::path(get, path = "/engines", tag = "engines", responses((status = 200, body = Vec<EngineRecord>)), security(("api_key" = [])))]
 pub(crate) async fn list_engines(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
@@ -217,6 +219,7 @@ pub(crate) async fn list_engines(
     Ok(Json(records))
 }
 
+#[utoipa::path(get, path = "/engines/{id}", tag = "engines", params(("id" = String, Path, description = "Engine ID")), responses((status = 200, body = EngineRecord), (status = 404, body = crate::ApiError)), security(("api_key" = [])))]
 pub(crate) async fn get_engine(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
@@ -246,6 +249,7 @@ pub(crate) async fn get_engine(
     Ok(Json(row_to_record(&row)))
 }
 
+#[utoipa::path(patch, path = "/engines/{id}", tag = "engines", params(("id" = String, Path, description = "Engine ID")), request_body = UpdateEngineRequest, responses((status = 200, body = EngineRecord), (status = 404, body = crate::ApiError)), security(("api_key" = [])))]
 pub(crate) async fn update_engine(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
@@ -314,6 +318,7 @@ pub(crate) async fn update_engine(
     Ok(Json(record))
 }
 
+#[utoipa::path(delete, path = "/engines/{id}", tag = "engines", params(("id" = String, Path, description = "Engine ID")), responses((status = 204), (status = 404, body = crate::ApiError)), security(("api_key" = [])))]
 pub(crate) async fn delete_engine(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
@@ -347,6 +352,7 @@ pub(crate) async fn delete_engine(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[utoipa::path(post, path = "/engines/{id}/default", tag = "engines", params(("id" = String, Path, description = "Engine ID")), responses((status = 200, body = EngineRecord), (status = 404, body = crate::ApiError)), security(("api_key" = [])))]
 pub(crate) async fn set_default_engine(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
@@ -399,6 +405,7 @@ pub(crate) async fn set_default_engine(
     Ok(Json(record))
 }
 
+#[utoipa::path(get, path = "/engines/{id}/indexes", tag = "engines", params(("id" = String, Path, description = "Engine ID")), responses((status = 200, body = Vec<EngineIndex>), (status = 404, body = crate::ApiError)), security(("api_key" = [])))]
 pub(crate) async fn list_engine_indexes(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,
@@ -475,6 +482,7 @@ pub(crate) async fn list_engine_indexes(
 }
 
 /// Proxy a search request to a Meilisearch engine index.
+#[utoipa::path(post, path = "/engines/{id}/indexes/{index_uid}/search", tag = "engines", params(("id" = String, Path, description = "Engine ID"), ("index_uid" = String, Path, description = "Index UID")), responses((status = 200, description = "Search results from Meilisearch"), (status = 404, body = crate::ApiError)), security(("api_key" = [])))]
 pub(crate) async fn search_engine_index(
     State(state): State<Arc<AppState>>,
     account_ext: Option<Extension<AuthenticatedAccount>>,

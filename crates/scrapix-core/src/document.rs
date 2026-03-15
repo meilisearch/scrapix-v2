@@ -283,7 +283,7 @@ impl CrawlUrl {
 }
 
 /// Crawl job status
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum JobStatus {
     Pending,
@@ -295,7 +295,7 @@ pub enum JobStatus {
 }
 
 /// Crawl job state
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct JobState {
     /// Job ID
     pub job_id: String,
@@ -355,6 +355,7 @@ pub struct JobState {
 
     /// Original crawl config (for display in UI)
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Object)]
     pub config: Option<serde_json::Value>,
 
     /// If set, this job uses atomic index swap. Contains the temp index name.

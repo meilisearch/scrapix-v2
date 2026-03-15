@@ -117,7 +117,7 @@ pub struct AnalyticsResponse<T> {
 }
 
 /// Column metadata
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ColumnMeta {
     pub name: String,
     #[serde(rename = "type")]
@@ -125,7 +125,7 @@ pub struct ColumnMeta {
 }
 
 /// Query statistics
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct QueryStats {
     pub elapsed: f64,
     pub rows_read: usize,
@@ -133,7 +133,7 @@ pub struct QueryStats {
 }
 
 /// Error response
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct AnalyticsError {
     pub error: String,
     pub code: String,
@@ -143,7 +143,7 @@ pub struct AnalyticsError {
 // Pipe: top_domains
 // ============================================================================
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub struct TopDomainsParams {
     #[serde(default = "default_hours")]
     hours: u32,
@@ -151,7 +151,7 @@ pub struct TopDomainsParams {
     limit: u32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct TopDomainRow {
     pub domain: String,
     pub total_requests: u64,
@@ -162,6 +162,7 @@ pub struct TopDomainRow {
     pub total_bytes: u64,
 }
 
+#[utoipa::path(get, path = "/analytics/v0/pipes/top_domains.json", tag = "analytics", params(TopDomainsParams), responses((status = 200, description = "Analytics data")))]
 async fn pipe_top_domains(
     State(state): State<Arc<AnalyticsState>>,
     Query(params): Query<TopDomainsParams>,
@@ -249,13 +250,14 @@ async fn pipe_top_domains(
 // Pipe: domain_stats
 // ============================================================================
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub struct DomainStatsParams {
     domain: String,
     #[serde(default = "default_hours")]
     hours: u32,
 }
 
+#[utoipa::path(get, path = "/analytics/v0/pipes/domain_stats.json", tag = "analytics", params(DomainStatsParams), responses((status = 200, description = "Analytics data")))]
 async fn pipe_domain_stats(
     State(state): State<Arc<AnalyticsState>>,
     Query(params): Query<DomainStatsParams>,
@@ -338,13 +340,13 @@ async fn pipe_domain_stats(
 // Pipe: hourly_stats
 // ============================================================================
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub struct HourlyStatsParams {
     #[serde(default = "default_hours")]
     hours: u32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct HourlyStatsRow {
     pub hour: String,
     pub requests: u64,
@@ -355,6 +357,7 @@ pub struct HourlyStatsRow {
     pub total_bytes: u64,
 }
 
+#[utoipa::path(get, path = "/analytics/v0/pipes/hourly_stats.json", tag = "analytics", params(HourlyStatsParams), responses((status = 200, description = "Analytics data")))]
 async fn pipe_hourly_stats(
     State(state): State<Arc<AnalyticsState>>,
     Query(params): Query<HourlyStatsParams>,
@@ -445,13 +448,13 @@ async fn pipe_hourly_stats(
 // Pipe: daily_stats
 // ============================================================================
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub struct DailyStatsParams {
     #[serde(default = "default_days")]
     days: u32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct DailyStatsRow {
     pub date: String,
     pub requests: u64,
@@ -462,6 +465,7 @@ pub struct DailyStatsRow {
     pub total_bytes: u64,
 }
 
+#[utoipa::path(get, path = "/analytics/v0/pipes/daily_stats.json", tag = "analytics", params(DailyStatsParams), responses((status = 200, description = "Analytics data")))]
 async fn pipe_daily_stats(
     State(state): State<Arc<AnalyticsState>>,
     Query(params): Query<DailyStatsParams>,
@@ -549,13 +553,14 @@ async fn pipe_daily_stats(
 // Pipe: error_distribution
 // ============================================================================
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ErrorDistributionRow {
     pub status_code: u16,
     pub count: u64,
     pub percentage: f64,
 }
 
+#[utoipa::path(get, path = "/analytics/v0/pipes/error_distribution.json", tag = "analytics", params(HourlyStatsParams), responses((status = 200, description = "Analytics data")))]
 async fn pipe_error_distribution(
     State(state): State<Arc<AnalyticsState>>,
     Query(params): Query<HourlyStatsParams>,
@@ -624,12 +629,12 @@ async fn pipe_error_distribution(
 // Pipe: job_stats
 // ============================================================================
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub struct JobStatsParams {
     job_id: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct JobStatsRow {
     pub job_id: String,
     pub total_requests: u64,
@@ -644,6 +649,7 @@ pub struct JobStatsRow {
     pub duration_seconds: i64,
 }
 
+#[utoipa::path(get, path = "/analytics/v0/pipes/job_stats.json", tag = "analytics", params(JobStatsParams), responses((status = 200, description = "Analytics data")))]
 async fn pipe_job_stats(
     State(state): State<Arc<AnalyticsState>>,
     Query(params): Query<JobStatsParams>,
@@ -752,7 +758,7 @@ async fn pipe_job_stats(
 // Pipe: kpis (Key Performance Indicators)
 // ============================================================================
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct KpisRow {
     pub total_crawls: u64,
     pub total_bytes: u64,
@@ -762,6 +768,7 @@ pub struct KpisRow {
     pub errors_count: u64,
 }
 
+#[utoipa::path(get, path = "/analytics/v0/pipes/kpis.json", tag = "analytics", params(HourlyStatsParams), responses((status = 200, description = "Analytics data")))]
 async fn pipe_kpis(
     State(state): State<Arc<AnalyticsState>>,
     Query(params): Query<HourlyStatsParams>,
@@ -860,7 +867,7 @@ async fn pipe_kpis(
 // Pipe: ai_usage
 // ============================================================================
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub struct AiUsageParams {
     #[serde(default = "default_hours")]
     hours: u32,
@@ -868,7 +875,7 @@ pub struct AiUsageParams {
     account_id: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct AiUsageRow {
     pub model: String,
     pub total_calls: u64,
@@ -878,6 +885,7 @@ pub struct AiUsageRow {
     pub avg_duration_ms: f64,
 }
 
+#[utoipa::path(get, path = "/analytics/v0/pipes/ai_usage.json", tag = "analytics", params(AiUsageParams), responses((status = 200, description = "Analytics data")))]
 async fn pipe_ai_usage(
     State(state): State<Arc<AnalyticsState>>,
     Query(params): Query<AiUsageParams>,
@@ -953,7 +961,7 @@ async fn pipe_ai_usage(
 // Pipe: job_timeline
 // ============================================================================
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub struct JobTimelineParams {
     job_id: String,
     #[serde(default = "default_timeline_limit")]
@@ -964,7 +972,7 @@ fn default_timeline_limit() -> u32 {
     100
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct JobTimelineRow {
     pub event_type: String,
     pub job_id: String,
@@ -980,6 +988,7 @@ pub struct JobTimelineRow {
     pub timestamp: String,
 }
 
+#[utoipa::path(get, path = "/analytics/v0/pipes/job_timeline.json", tag = "analytics", params(JobTimelineParams), responses((status = 200, description = "Analytics data")))]
 async fn pipe_job_timeline(
     State(state): State<Arc<AnalyticsState>>,
     Query(params): Query<JobTimelineParams>,
@@ -1049,7 +1058,7 @@ async fn pipe_job_timeline(
 // Pipe: job_event_summary
 // ============================================================================
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct JobEventSummaryRow {
     pub event_type: String,
     pub event_count: u64,
@@ -1057,6 +1066,7 @@ pub struct JobEventSummaryRow {
     pub last_seen: String,
 }
 
+#[utoipa::path(get, path = "/analytics/v0/pipes/job_event_summary.json", tag = "analytics", params(JobStatsParams), responses((status = 200, description = "Analytics data")))]
 async fn pipe_job_event_summary(
     State(state): State<Arc<AnalyticsState>>,
     Query(params): Query<JobStatsParams>,
@@ -1122,14 +1132,14 @@ async fn pipe_job_event_summary(
 // Pipe: account_usage
 // ============================================================================
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub struct AccountUsageParams {
     account_id: String,
     #[serde(default = "default_hours")]
     hours: u32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct AccountUsageRow {
     pub account_id: String,
     pub total_requests: u64,
@@ -1143,6 +1153,7 @@ pub struct AccountUsageRow {
     pub ai_completion_tokens: u64,
 }
 
+#[utoipa::path(get, path = "/analytics/v0/pipes/account_usage.json", tag = "analytics", params(AccountUsageParams), responses((status = 200, description = "Analytics data")))]
 async fn pipe_account_usage(
     State(state): State<Arc<AnalyticsState>>,
     Query(params): Query<AccountUsageParams>,
@@ -1234,7 +1245,7 @@ async fn pipe_account_usage(
 // Pipe: account_daily_usage
 // ============================================================================
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub struct AccountDailyUsageParams {
     account_id: String,
     #[serde(default = "default_days")]
@@ -1245,7 +1256,7 @@ fn default_days() -> u32 {
     30
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct AccountDailyUsageRow {
     pub date: String,
     pub requests: u64,
@@ -1255,6 +1266,7 @@ pub struct AccountDailyUsageRow {
     pub ai_completion_tokens: u64,
 }
 
+#[utoipa::path(get, path = "/analytics/v0/pipes/account_daily_usage.json", tag = "analytics", params(AccountDailyUsageParams), responses((status = 200, description = "Analytics data")))]
 async fn pipe_account_daily_usage(
     State(state): State<Arc<AnalyticsState>>,
     Query(params): Query<AccountDailyUsageParams>,
@@ -1330,14 +1342,14 @@ async fn pipe_account_daily_usage(
 // Pipe: account_daily_usage_by_operation
 // ============================================================================
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub struct AccountDailyUsageByOpParams {
     account_id: String,
     #[serde(default = "default_days")]
     days: u32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct AccountDailyUsageByOpRow {
     pub date: String,
     pub operation: String,
@@ -1348,6 +1360,7 @@ pub struct AccountDailyUsageByOpRow {
     pub ai_completion_tokens: u64,
 }
 
+#[utoipa::path(get, path = "/analytics/v0/pipes/account_daily_usage_by_operation.json", tag = "analytics", params(AccountDailyUsageByOpParams), responses((status = 200, description = "Analytics data")))]
 async fn pipe_account_daily_usage_by_operation(
     State(state): State<Arc<AnalyticsState>>,
     Query(params): Query<AccountDailyUsageByOpParams>,
@@ -1428,14 +1441,14 @@ async fn pipe_account_daily_usage_by_operation(
 // Pipe: api_key_usage
 // ============================================================================
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub struct ApiKeyUsageParams {
     account_id: String,
     #[serde(default = "default_hours")]
     hours: u32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ApiKeyUsageRow {
     pub api_key_id: String,
     pub total_requests: u64,
@@ -1449,6 +1462,7 @@ pub struct ApiKeyUsageRow {
     pub ai_completion_tokens: u64,
 }
 
+#[utoipa::path(get, path = "/analytics/v0/pipes/api_key_usage.json", tag = "analytics", params(ApiKeyUsageParams), responses((status = 200, description = "Analytics data")))]
 async fn pipe_api_key_usage(
     State(state): State<Arc<AnalyticsState>>,
     Query(params): Query<ApiKeyUsageParams>,
@@ -1544,7 +1558,7 @@ async fn pipe_api_key_usage(
 // Pipes List
 // ============================================================================
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct PipeInfo {
     pub name: String,
     pub description: String,
@@ -1552,7 +1566,7 @@ pub struct PipeInfo {
     pub endpoint: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ParamInfo {
     pub name: String,
     #[serde(rename = "type")]
@@ -1561,6 +1575,7 @@ pub struct ParamInfo {
     pub default: Option<String>,
 }
 
+#[utoipa::path(get, path = "/analytics/v0/pipes", tag = "analytics", responses((status = 200, description = "List of available analytics pipes")))]
 async fn list_pipes() -> Json<Vec<PipeInfo>> {
     Json(vec![
         PipeInfo {

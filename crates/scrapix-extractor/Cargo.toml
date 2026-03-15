@@ -24,3 +24,6 @@ chrono = { workspace = true }
 
 # Tracing
 tracing = { workspace = true }
+
+# OpenAPI schema generation
+utoipa = { workspace = true }

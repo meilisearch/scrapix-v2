@@ -10,6 +10,18 @@ When creating a plan or proposing any major addition/feature to the project, **a
 
 The issue should contain the plan summary, scope of changes, and affected files. Do this before starting implementation.
 
+## Pre-Commit Checks
+
+Before every commit, **always** run these commands in order and fix any issues:
+
+```bash
+cargo fmt
+cargo check
+cargo clippy
+```
+
+All three must pass with no errors before committing.
+
 ## Project Overview
 
 Scrapix is a high-performance, distributed web crawler and search indexer built in Rust. It's designed for internet-scale crawling with three main use cases: global internet indexing, targeted site crawling, and real-time information retrieval.

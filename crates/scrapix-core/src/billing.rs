@@ -177,7 +177,7 @@ impl ApiKey {
 // ============================================================================
 
 /// Billing tier/plan definition
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum BillingTier {
     /// Free tier with limited usage

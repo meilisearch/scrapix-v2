@@ -30,3 +30,6 @@ tracing-subscriber = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 url = { workspace = true }
+
+# OpenAPI schema generation
+utoipa = { workspace = true }

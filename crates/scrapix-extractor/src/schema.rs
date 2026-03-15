@@ -39,10 +39,11 @@ pub struct SchemaConfig {
 }
 
 /// Extracted schema data from an HTML document
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ExtractedSchema {
     /// All JSON-LD data found (may be array or object)
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Object)]
     pub json_ld: Option<Value>,
 
     /// Individual schema items by type
@@ -61,7 +62,7 @@ pub struct ExtractedSchema {
 }
 
 /// A single schema.org item
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct SchemaItem {
     /// Schema type (e.g., "Article", "Product", "Organization")
     #[serde(rename = "@type")]
@@ -69,6 +70,7 @@ pub struct SchemaItem {
 
     /// Full schema data
     #[serde(flatten)]
+    #[schema(value_type = Object)]
     pub data: Value,
 }
 
