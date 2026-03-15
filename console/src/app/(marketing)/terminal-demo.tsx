@@ -205,7 +205,7 @@ export function TerminalDemo() {
               <div className="mt-1">
                 <span className="text-emerald-400">$</span>{" "}
                 <span className="text-zinc-300">
-                  curl -X POST https://api.scrapix.meilisearch.com{tab.endpoint}
+                  curl -X POST https://scrapix.meilisearch.dev{tab.endpoint}
                 </span>{" "}
                 <span className="text-zinc-600">\</span>
               </div>

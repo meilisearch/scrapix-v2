@@ -85,7 +85,7 @@ export default function ScrapePage() {
                     <div>
                       <span className="text-emerald-400">$</span>{" "}
                       <span className="text-zinc-300">
-                        curl -X POST https://api.scrapix.meilisearch.com/scrape
+                        curl -X POST https://scrapix.meilisearch.dev/scrape
                       </span>{" "}
                       <span className="text-zinc-600">\</span>
                     </div>

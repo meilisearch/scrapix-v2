@@ -535,7 +535,7 @@ export default function ConfigDetailPage() {
         </CardHeader>
         <CardContent>
           <pre className="bg-muted rounded-lg p-4 overflow-x-auto text-xs font-mono">
-{`curl -X POST https://api.scrapix.meilisearch.com/configs/${config.id}/trigger \\
+{`curl -X POST https://scrapix.meilisearch.dev/configs/${config.id}/trigger \\
   -H "X-API-Key: sk_live_YOUR_KEY"`}
           </pre>
         </CardContent>

@@ -272,7 +272,7 @@ export default function ApiKeysPage() {
         <CardContent>
           <div className="bg-muted rounded-lg p-4">
             <code className="text-sm">
-              curl -X POST https://api.scrapix.meilisearch.dev/scrape \<br />
+              curl -X POST https://scrapix.meilisearch.dev/scrape \<br />
               &nbsp;&nbsp;-H &quot;X-API-Key: sk_live_...&quot; \<br />
               &nbsp;&nbsp;-H &quot;Content-Type: application/json&quot; \<br />
               &nbsp;&nbsp;-d &apos;{`{"url": "https://scrapix.meilisearch.dev"}`}&apos;

@@ -44,9 +44,9 @@ function getWsBase(): string {
     const { protocol, hostname } = window.location;
     const wsProtocol = protocol === "https:" ? "wss:" : "ws:";
 
-    // Production: scrapix.meilisearch.com → api.scrapix.meilisearch.com
+    // Production: scrapix.meilisearch.com → scrapix.meilisearch.dev
     if (hostname.includes("meilisearch")) {
-      return `${wsProtocol}//api.scrapix.meilisearch.com`;
+      return `${wsProtocol}//scrapix.meilisearch.dev`;
     }
 
     // Local dev: API on port 8080

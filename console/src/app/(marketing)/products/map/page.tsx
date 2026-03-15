@@ -84,7 +84,7 @@ export default function MapPage() {
                     <div>
                       <span className="text-emerald-400">$</span>{" "}
                       <span className="text-zinc-300">
-                        curl -X POST https://api.scrapix.meilisearch.com/map
+                        curl -X POST https://scrapix.meilisearch.dev/map
                       </span>{" "}
                       <span className="text-zinc-600">\</span>
                     </div>
