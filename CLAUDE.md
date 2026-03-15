@@ -279,6 +279,37 @@ The frontier uses dual locality-sensitive hashing:
 - **SimHash:** 64-bit fingerprints for quick similarity checks (Hamming distance threshold ~10 bits)
 - **MinHash:** 128 hash functions for accurate Jaccard similarity estimation (threshold ~0.8)
 
+## Marketing Product Pages
+
+Product landing pages live in `console/src/app/(marketing)/products/{scrape,map,crawl,search}/page.tsx`. All pages follow a consistent section structure and visual pattern.
+
+### Section Order
+
+1. **Hero** — Badge with icon + endpoint name, h1 with glitch-font highlighted word, subtitle, CTA buttons (Try it free / See pricing)
+2. **Code example** — Faux-terminal with three dot header, curl command, and inline JSON response preview
+3. **How it works** — Numbered steps (`"01"`, `"02"`, etc.) using Rubik Glitch font (`var(--font-rubik-glitch)`) at `text-3xl` with gradient text
+4. **Features grid** — 6 cards in a 3-col grid, each with a 10x10 icon container (`rounded-xl bg-gradient-to-br ... ring-1 ring-white/10`)
+5. **Checklist** — Two-column grid of features with green checkmark icons
+6. **Pricing summary** — Simple label/value rows in a bordered card, link to full pricing
+7. **CTA** — Centered heading + subtitle + single button, background glow
+
+### Color Themes Per Product
+
+| Product | Primary | Gradient | Glow |
+|---------|---------|----------|------|
+| Scrape | `indigo-400` | `from-indigo-400 to-cyan-400` | `bg-indigo-500/10` |
+| Map | `cyan-400` | `from-cyan-400 to-indigo-400` | `bg-cyan-500/10` |
+| Crawl | `violet-400` | `from-violet-400 to-indigo-400` | `bg-violet-500/10` |
+| Search | `emerald-400` | `from-emerald-400 to-cyan-400` | `bg-emerald-500/10` |
+
+### Key Conventions
+
+- All API URLs in examples use `https://scrapix.meilisearch.dev`
+- Hero highlighted word uses `style={{ fontFamily: "var(--font-rubik-glitch), var(--font-geist-sans), sans-serif" }}`
+- Step numbers use the same glitch font with gradient `bg-clip-text text-transparent`
+- Terminal response uses color classes: `text-indigo-400` for keys, `text-emerald-400` for strings, `text-cyan-400` for numbers, `text-zinc-600` for punctuation
+- Navigation links exist in both the header dropdown and footer in `console/src/app/(marketing)/layout.tsx`
+
 ## Billing Data Model
 
 The system tracks usage data for pricing/billing purposes.

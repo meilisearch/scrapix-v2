@@ -9,6 +9,7 @@ import {
   Brain,
   Code,
   Zap,
+  Shield,
 } from "lucide-react";
 
 export const metadata: Metadata = {
@@ -101,6 +102,40 @@ export default function ScrapePage() {
   }`}&apos;</span>
                     </div>
                   </div>
+                  <div className="border-t border-white/5 pt-4">
+                    <p className="text-zinc-600 mb-2"># Response — extracted content</p>
+                    <div className="text-zinc-400">
+                      <span className="text-zinc-600">{`{`}</span>
+                      <br />
+                      <span className="pl-4 inline-block">
+                        <span className="text-indigo-400">&quot;markdown&quot;</span>
+                        <span className="text-zinc-600">: </span>
+                        <span className="text-emerald-400">&quot;# Example Domain\nThis domain is for use in...&quot;</span>
+                        <span className="text-zinc-600">,</span>
+                      </span>
+                      <br />
+                      <span className="pl-4 inline-block">
+                        <span className="text-indigo-400">&quot;metadata&quot;</span>
+                        <span className="text-zinc-600">{`: { `}</span>
+                        <span className="text-indigo-400">&quot;title&quot;</span>
+                        <span className="text-zinc-600">: </span>
+                        <span className="text-emerald-400">&quot;Example Domain&quot;</span>
+                        <span className="text-zinc-600">{`, `}</span>
+                        <span className="text-indigo-400">&quot;language&quot;</span>
+                        <span className="text-zinc-600">: </span>
+                        <span className="text-emerald-400">&quot;en&quot;</span>
+                        <span className="text-zinc-600">{` },`}</span>
+                      </span>
+                      <br />
+                      <span className="pl-4 inline-block">
+                        <span className="text-indigo-400">&quot;credits_used&quot;</span>
+                        <span className="text-zinc-600">: </span>
+                        <span className="text-cyan-400">1</span>
+                      </span>
+                      <br />
+                      <span className="text-zinc-600">{`}`}</span>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -108,76 +143,45 @@ export default function ScrapePage() {
         </div>
       </section>
 
-      {/* Output formats */}
+      {/* How it works */}
       <section className="border-t border-white/5">
         <div className="mx-auto max-w-6xl px-6 py-20">
           <h2 className="mb-2 text-center text-2xl font-bold text-white">
-            Multiple output formats
+            From URL to structured data
           </h2>
           <p className="mb-12 text-center text-zinc-400">
-            Choose exactly what you need. Combine multiple formats in a single request.
+            A single API call handles fetching, parsing, and extraction.
           </p>
 
-          <div className="mx-auto grid max-w-5xl gap-4 md:grid-cols-2 lg:grid-cols-3">
+          <div className="mx-auto grid max-w-5xl gap-6 md:grid-cols-3">
             {[
               {
-                icon: FileText,
-                name: "Markdown",
-                description:
-                  "Clean, readable markdown with preserved heading structure, links, and formatting.",
-                cost: "1 credit",
+                step: "01",
+                title: "Fetch",
+                description: "The page is fetched via HTTP or rendered with a headless browser for JS-heavy sites.",
               },
               {
-                icon: Code,
-                name: "HTML",
-                description:
-                  "Raw or cleaned HTML. Great for custom parsing pipelines or archival.",
-                cost: "1 credit",
+                step: "02",
+                title: "Parse",
+                description: "HTML is cleaned, content extracted, and metadata/schemas parsed automatically.",
               },
               {
-                icon: Globe,
-                name: "Metadata",
-                description:
-                  "Title, description, language, Open Graph tags, Twitter cards, and more.",
-                cost: "1 credit",
+                step: "03",
+                title: "Return",
+                description: "Clean markdown, metadata, schemas, and optional AI enrichments are returned instantly.",
               },
-              {
-                icon: Code,
-                name: "JSON-LD / Schema",
-                description:
-                  "Structured data extracted from JSON-LD, microdata, and RDFa embedded in the page.",
-                cost: "1 credit",
-              },
-              {
-                icon: Brain,
-                name: "AI Summary",
-                description:
-                  "LLM-generated summary of the page content. Concise and accurate.",
-                cost: "5 credits",
-              },
-              {
-                icon: Brain,
-                name: "AI Extraction",
-                description:
-                  "Extract structured data using a custom prompt. Define your own schema.",
-                cost: "5 credits",
-              },
-            ].map(({ icon: Icon, name, description, cost }) => (
+            ].map(({ step, title, description }) => (
               <div
-                key={name}
-                className="rounded-2xl border border-white/5 bg-white/[0.02] p-6"
+                key={step}
+                className="relative rounded-2xl border border-white/5 bg-white/[0.02] p-6"
               >
-                <div className="mb-3 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Icon className="h-4 w-4 text-indigo-400" />
-                    <h3 className="font-semibold text-white">{name}</h3>
-                  </div>
-                  <span
-                    className={`text-xs font-mono ${cost === "Free" ? "text-emerald-400" : "text-zinc-500"}`}
-                  >
-                    {cost}
-                  </span>
-                </div>
+                <span
+                  className="text-3xl font-bold bg-gradient-to-br from-indigo-400 to-cyan-400 bg-clip-text text-transparent"
+                  style={{ fontFamily: "var(--font-rubik-glitch), var(--font-geist-sans), sans-serif" }}
+                >
+                  {step}
+                </span>
+                <h3 className="mt-3 mb-2 font-semibold text-white">{title}</h3>
                 <p className="text-sm text-zinc-400 leading-relaxed">
                   {description}
                 </p>
@@ -187,7 +191,63 @@ export default function ScrapePage() {
         </div>
       </section>
 
-      {/* Features */}
+      {/* Features grid */}
+      <section className="border-t border-white/5">
+        <div className="mx-auto max-w-6xl px-6 py-20">
+          <h2 className="mb-12 text-center text-2xl font-bold text-white">
+            Multiple output formats
+          </h2>
+          <div className="mx-auto grid max-w-4xl gap-6 md:grid-cols-2 lg:grid-cols-3">
+            {[
+              {
+                icon: FileText,
+                title: "Markdown",
+                description: "Clean, readable markdown with preserved heading structure, links, and formatting.",
+              },
+              {
+                icon: Code,
+                title: "HTML",
+                description: "Raw or cleaned HTML. Great for custom parsing pipelines or archival.",
+              },
+              {
+                icon: Globe,
+                title: "Metadata",
+                description: "Title, description, language, Open Graph tags, Twitter cards, and more.",
+              },
+              {
+                icon: Code,
+                title: "JSON-LD / Schema",
+                description: "Structured data extracted from JSON-LD, microdata, and RDFa embedded in the page.",
+              },
+              {
+                icon: Brain,
+                title: "AI Summary",
+                description: "LLM-generated summary of the page content. Concise and accurate.",
+              },
+              {
+                icon: Brain,
+                title: "AI Extraction",
+                description: "Extract structured data using a custom prompt. Define your own schema.",
+              },
+            ].map(({ icon: Icon, title, description }) => (
+              <div
+                key={title}
+                className="rounded-2xl border border-white/5 bg-white/[0.02] p-6"
+              >
+                <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500/20 to-cyan-500/20 ring-1 ring-white/10">
+                  <Icon className="h-5 w-5 text-indigo-400" />
+                </div>
+                <h3 className="mb-2 font-semibold text-white">{title}</h3>
+                <p className="text-sm text-zinc-400 leading-relaxed">
+                  {description}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Checklist */}
       <section className="border-t border-white/5">
         <div className="mx-auto max-w-6xl px-6 py-20">
           <div className="mx-auto max-w-3xl">
@@ -214,6 +274,36 @@ export default function ScrapePage() {
                 </div>
               ))}
             </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Pricing summary */}
+      <section className="border-t border-white/5">
+        <div className="mx-auto max-w-6xl px-6 py-20">
+          <div className="mx-auto max-w-2xl">
+            <h2 className="mb-8 text-center text-2xl font-bold text-white">
+              Scrape pricing
+            </h2>
+            <div className="rounded-2xl border border-white/5 bg-white/[0.02] p-6 space-y-3 text-sm">
+              {[
+                { label: "HTTP scrape (per page)", value: "1 cr" },
+                { label: "JS rendering (per page)", value: "2 cr" },
+                { label: "+ each feature (metadata, schema...)", value: "+1 cr" },
+                { label: "+ AI extraction (per page)", value: "+5 cr" },
+                { label: "+ AI summary (per page)", value: "+5 cr" },
+              ].map(({ label, value }) => (
+                <div key={label} className="flex justify-between">
+                  <span className="text-zinc-400">{label}</span>
+                  <span className="font-mono text-white">{value}</span>
+                </div>
+              ))}
+            </div>
+            <p className="mt-4 text-center text-sm text-zinc-600">
+              <Link href="/pricing" className="text-zinc-400 hover:text-white transition-colors underline underline-offset-4">
+                View full pricing details
+              </Link>
+            </p>
           </div>
         </div>
       </section>

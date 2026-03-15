@@ -1,13 +1,16 @@
 import Link from "next/link";
 import Image from "next/image";
+import { cookies } from "next/headers";
 import { Button } from "@/components/ui/button";
 import { Globe, Layers, Network, Search } from "lucide-react";
 
-export default function MarketingLayout({
+export default async function MarketingLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const cookieStore = await cookies();
+  const isLoggedIn = cookieStore.has("scrapix_session");
   return (
     <div className="min-h-screen flex flex-col bg-zinc-950 text-zinc-100">
       <header className="sticky top-0 z-50 border-b border-white/5 bg-zinc-950/80 backdrop-blur-xl">
@@ -82,21 +85,33 @@ export default function MarketingLayout({
             </Link>
           </nav>
           <div className="flex items-center gap-3">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-zinc-400 hover:text-white hover:bg-white/5"
-              asChild
-            >
-              <Link href="/login">Sign in</Link>
-            </Button>
-            <Button
-              size="sm"
-              className="bg-white text-zinc-950 hover:bg-zinc-200"
-              asChild
-            >
-              <Link href="/signup">Get started</Link>
-            </Button>
+            {isLoggedIn ? (
+              <Button
+                size="sm"
+                className="bg-white text-zinc-950 hover:bg-zinc-200"
+                asChild
+              >
+                <Link href="/dashboard">Console</Link>
+              </Button>
+            ) : (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-zinc-400 hover:text-white hover:bg-white/5"
+                  asChild
+                >
+                  <Link href="/login">Sign in</Link>
+                </Button>
+                <Button
+                  size="sm"
+                  className="bg-white text-zinc-950 hover:bg-zinc-200"
+                  asChild
+                >
+                  <Link href="/signup">Get started</Link>
+                </Button>
+              </>
+            )}
           </div>
         </div>
       </header>
