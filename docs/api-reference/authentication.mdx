@@ -254,6 +254,27 @@ Get the account's billing tier and Stripe customer ID.
 
 ---
 
+## OAuth 2.1
+
+Scrapix also supports OAuth 2.1 with PKCE for third-party integrations and MCP clients. OAuth provides:
+
+- **Dynamic client registration** — Clients register themselves automatically
+- **PKCE (S256)** — Secure authorization code flow without client secrets
+- **Refresh token rotation** — Automatic token renewal with revocation on reuse
+- **Bearer tokens** — For authenticating MCP and API requests
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /.well-known/oauth-authorization-server` | OAuth metadata discovery |
+| `POST /oauth/register` | Register an OAuth client |
+| `GET/POST /oauth/authorize` | Authorization code flow |
+| `POST /oauth/token` | Exchange code or refresh token |
+| `POST /oauth/revoke` | Revoke a token |
+
+See the [OAuth 2.1 Guide](/guides/oauth) for the complete flow and integration details.
+
+---
+
 ## Session Cookie Details
 
 | Property | Value |

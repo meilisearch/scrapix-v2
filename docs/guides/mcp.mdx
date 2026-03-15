@@ -1,0 +1,187 @@
+---
+title: MCP Server
+description: Connect AI assistants to Scrapix via the Model Context Protocol
+---
+
+# MCP Server
+
+Scrapix exposes all its API capabilities as MCP (Model Context Protocol) tools, allowing AI assistants like Claude to scrape, crawl, map, and search the web directly.
+
+Two deployment modes are available:
+
+| Mode | Transport | Auth | Use Case |
+|------|-----------|------|----------|
+| **Standalone** (`scrapix-mcp`) | stdio | API key | Claude Code, Cursor, local IDE integrations |
+| **HTTP** (`/mcp` endpoint) | Streamable HTTP | OAuth Bearer token | Claude App, remote MCP clients |
+
+## Standalone MCP Server
+
+The `scrapix-mcp` binary connects to a Scrapix API server and exposes its endpoints as MCP tools over stdio.
+
+### Configuration
+
+| Flag | Environment Variable | Default | Description |
+|------|---------------------|---------|-------------|
+| `--api-url` | `SCRAPIX_API_URL` | `http://localhost:8080` | Scrapix API server URL |
+| `--api-key` | `SCRAPIX_API_KEY` | — | API key for authentication |
+| `--spec-file` | `SCRAPIX_SPEC_FILE` | — | Path to local OpenAPI JSON (optional) |
+
+### Usage with Claude Code
+
+Add to your Claude Code MCP configuration:
+
+```json
+{
+  "mcpServers": {
+    "scrapix": {
+      "command": "scrapix-mcp",
+      "args": ["--api-url", "https://scrapix.meilisearch.dev", "--api-key", "sk_live_..."]
+    }
+  }
+}
+```
+
+Or using environment variables:
+
+```json
+{
+  "mcpServers": {
+    "scrapix": {
+      "command": "scrapix-mcp",
+      "env": {
+        "SCRAPIX_API_URL": "https://scrapix.meilisearch.dev",
+        "SCRAPIX_API_KEY": "sk_live_..."
+      }
+    }
+  }
+}
+```
+
+### Usage with Cursor
+
+Add to `.cursor/mcp.json` in your project:
+
+```json
+{
+  "mcpServers": {
+    "scrapix": {
+      "command": "scrapix-mcp",
+      "args": ["--api-url", "https://scrapix.meilisearch.dev", "--api-key", "sk_live_..."]
+    }
+  }
+}
+```
+
+### Local Development
+
+```bash
+# With a running local API server
+scrapix-mcp --api-url http://localhost:8080
+
+# With a local OpenAPI spec file (no running server needed for tool discovery)
+scrapix-mcp --spec-file ./docs/openapi.json --api-url http://localhost:8080
+```
+
+## HTTP MCP Endpoint
+
+The `/mcp` endpoint on the API server provides MCP over Streamable HTTP, authenticated via OAuth 2.1 Bearer tokens.
+
+This is used by Claude App and other remote MCP clients that support the OAuth discovery flow.
+
+### How It Works
+
+1. The client discovers OAuth endpoints via `GET /.well-known/oauth-authorization-server`
+2. The client registers and authenticates via the [OAuth 2.1 flow](/guides/oauth)
+3. MCP requests are sent to `POST /mcp` with `Authorization: Bearer <access_token>`
+
+See the [OAuth 2.1 guide](/guides/oauth) for the full authentication flow.
+
+### Connecting Claude App
+
+Point Claude App to `https://scrapix.meilisearch.dev/mcp` as a remote MCP server. Claude will automatically:
+
+1. Discover the OAuth metadata
+2. Register as a client
+3. Prompt you to log in
+4. Obtain and refresh tokens automatically
+
+No manual configuration required.
+
+### Requirements
+
+The HTTP MCP endpoint requires:
+- `DATABASE_URL` — PostgreSQL for OAuth token storage
+- `JWT_SECRET` — For session token signing
+
+## Available Tools
+
+All Scrapix API endpoints are automatically exposed as MCP tools, generated from the OpenAPI specification. Key tools include:
+
+### Web Operations
+
+| Tool | Description |
+|------|-------------|
+| `scrape_url` | Scrape a single URL with optional JS rendering and AI enrichment |
+| `map_url` | Discover all URLs on a website with metadata |
+| `search_url` | Search indexed documents for a domain |
+| `create_crawl` | Start an async crawl job |
+| `create_crawl_sync` | Start a synchronous crawl (waits for completion) |
+| `create_crawl_bulk` | Batch-create multiple crawl jobs |
+
+### Job Management
+
+| Tool | Description |
+|------|-------------|
+| `job_status` | Get current status of a crawl job |
+| `list_jobs` | List all jobs with pagination |
+| `cancel_job` | Cancel a running or queued job |
+
+### Configuration
+
+| Tool | Description |
+|------|-------------|
+| `create_config` | Save a named crawl configuration |
+| `list_configs` | List saved configurations |
+| `trigger_config` | Start a crawl from a saved config |
+
+### Engine Management
+
+| Tool | Description |
+|------|-------------|
+| `create_engine` | Register a Meilisearch instance |
+| `list_engines` | List registered engines |
+| `set_default_engine` | Set the default engine for your account |
+| `search_engine_index` | Search a specific index on an engine |
+
+### Diagnostics
+
+| Tool | Description |
+|------|-------------|
+| `health` | Server health check |
+| `handle_stats` | System-wide statistics |
+| `handle_errors` | Recent error records |
+| `handle_domains` | Per-domain performance metrics |
+
+## OpenAPI Specification
+
+The MCP tools are generated from the same OpenAPI 3.1 specification that powers the interactive API docs:
+
+- **Raw spec:** `GET /openapi.json`
+- **Interactive docs:** `GET /docs` (Scalar UI)
+
+```bash
+# Download the OpenAPI spec
+curl https://scrapix.meilisearch.dev/openapi.json -o openapi.json
+
+# Open interactive docs in browser
+open https://scrapix.meilisearch.dev/docs
+```
+
+## Building from Source
+
+```bash
+# Build the standalone MCP server
+cargo build --bin scrapix-mcp --release
+
+# The binary will be at target/release/scrapix-mcp
+```

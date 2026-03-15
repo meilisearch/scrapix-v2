@@ -75,6 +75,7 @@ All responses return JSON. Successful responses return the data directly. Errors
 |--------|------|-------------|
 | `POST` | `/scrape` | [Scrape a single URL](/api-reference/scrape) |
 | `POST` | `/map` | [Discover URLs on a website](/api-reference/map) |
+| `POST` | `/search` | [Search indexed documents](/api-reference/search) |
 | `POST` | `/crawl` | [Create async crawl job](/api-reference/crawl#create-crawl) |
 | `POST` | `/crawl/sync` | [Create sync crawl job](/api-reference/crawl#create-sync-crawl) |
 | `GET` | `/jobs` | [List all jobs](/api-reference/jobs#list-jobs) |
@@ -117,6 +118,29 @@ All responses return JSON. Successful responses return the data directly. Errors
 | `POST` | `/engines/{id}/default` | [Set default engine](/api-reference/engines#post-enginesiddefault) |
 | `GET` | `/engines/{id}/indexes` | [List engine indexes](/api-reference/engines#get-enginesidindexes) |
 
+### OAuth (When DATABASE_URL Set)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/.well-known/oauth-authorization-server` | [OAuth metadata](/guides/oauth#get-well-knownoauth-authorization-server) |
+| `POST` | `/oauth/register` | [Register OAuth client](/guides/oauth#post-oauthregister) |
+| `GET/POST` | `/oauth/authorize` | [Authorization flow](/guides/oauth#get-oauthauthorize) |
+| `POST` | `/oauth/token` | [Token exchange](/guides/oauth#post-oauthtoken) |
+| `POST` | `/oauth/revoke` | [Revoke token](/guides/oauth#post-oauthrevoke) |
+
+### MCP (When DATABASE_URL Set)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/mcp` | [MCP Streamable HTTP](/guides/mcp#http-mcp-endpoint) |
+
+### OpenAPI
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/openapi.json` | OpenAPI 3.1 specification |
+| `GET` | `/docs` | Interactive API docs (Scalar UI) |
+
 ### Analytics (When CLICKHOUSE_URL Set)
 
 | Method | Path | Description |
@@ -134,3 +158,12 @@ When authentication is enabled, requests are rate-limited per account based on b
 | Starter | 60 |
 | Pro | 300 |
 | Enterprise | 1,000 |
+
+See [Rate Limiting](/api-reference/rate-limiting) for details on headers, 429 responses, and handling.
+
+## OpenAPI & Interactive Docs
+
+The API serves an OpenAPI 3.1 specification and interactive documentation:
+
+- **`GET /openapi.json`** — Machine-readable OpenAPI spec (used by MCP server)
+- **`GET /docs`** — Interactive API explorer powered by Scalar

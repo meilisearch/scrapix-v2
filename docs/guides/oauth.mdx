@@ -1,0 +1,247 @@
+---
+title: OAuth 2.1
+description: OAuth 2.1 authentication for MCP clients and third-party integrations
+---
+
+# OAuth 2.1 Authentication
+
+Scrapix implements OAuth 2.1 with PKCE for secure third-party authentication. This is primarily used by MCP clients (like Claude) to authenticate with the Scrapix API.
+
+<Note>
+  OAuth endpoints are only available when `DATABASE_URL` is configured.
+</Note>
+
+## Supported Standards
+
+| RFC | Description |
+|-----|-------------|
+| [RFC 8414](https://datatracker.ietf.org/doc/html/rfc8414) | OAuth Authorization Server Metadata |
+| [RFC 7591](https://datatracker.ietf.org/doc/html/rfc7591) | Dynamic Client Registration |
+| [RFC 7636](https://datatracker.ietf.org/doc/html/rfc7636) | PKCE (S256 only) |
+| [RFC 7009](https://datatracker.ietf.org/doc/html/rfc7009) | Token Revocation |
+
+## Authentication Flow
+
+```
+Client                          Scrapix
+  │                                │
+  ├─ GET /.well-known/oauth-      │
+  │  authorization-server ────────►│  1. Discover endpoints
+  │◄──────────────────────────────┤
+  │                                │
+  ├─ POST /oauth/register ────────►│  2. Register client
+  │◄──────── client_id ───────────┤
+  │                                │
+  │  Generate code_verifier        │
+  │  Compute code_challenge        │
+  │                                │
+  ├─ GET /oauth/authorize?         │
+  │  code_challenge=... ──────────►│  3. User login form
+  │◄──────── HTML form ───────────┤
+  │                                │
+  ├─ POST /oauth/authorize         │
+  │  (email + password) ──────────►│  4. Issue auth code
+  │◄──── 302 redirect?code=... ──┤
+  │                                │
+  ├─ POST /oauth/token             │
+  │  code + code_verifier ────────►│  5. Exchange for tokens
+  │◄──── access_token + refresh ──┤
+  │                                │
+  ├─ POST /mcp                     │
+  │  Authorization: Bearer ... ───►│  6. Use API
+  │◄──────────────────────────────┤
+```
+
+## Endpoints
+
+### GET /.well-known/oauth-authorization-server
+
+Returns OAuth server metadata per RFC 8414.
+
+```bash
+curl https://scrapix.meilisearch.dev/.well-known/oauth-authorization-server
+```
+
+```json
+{
+  "issuer": "https://scrapix.meilisearch.dev",
+  "authorization_endpoint": "https://scrapix.meilisearch.dev/oauth/authorize",
+  "token_endpoint": "https://scrapix.meilisearch.dev/oauth/token",
+  "registration_endpoint": "https://scrapix.meilisearch.dev/oauth/register",
+  "revocation_endpoint": "https://scrapix.meilisearch.dev/oauth/revoke",
+  "response_types_supported": ["code"],
+  "grant_types_supported": ["authorization_code", "refresh_token"],
+  "code_challenge_methods_supported": ["S256"],
+  "token_endpoint_auth_methods_supported": ["none"],
+  "scopes_supported": ["mcp"]
+}
+```
+
+The base URL is controlled by the `BASE_URL` environment variable (defaults to `https://scrapix.meilisearch.dev`).
+
+### POST /oauth/register
+
+Register a new OAuth client (RFC 7591 Dynamic Client Registration).
+
+```bash
+curl -X POST https://scrapix.meilisearch.dev/oauth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "client_name": "My MCP Client",
+    "redirect_uris": ["http://localhost:8080/oauth/callback"]
+  }'
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `client_name` | string | No | Human-readable client name |
+| `redirect_uris` | string[] | Yes | At least one valid redirect URI |
+
+**Response (200):**
+
+```json
+{
+  "client_id": "sxc_ABCDEFGHIJKLMNOPQRSTUVWXYZabcd",
+  "client_name": "My MCP Client",
+  "redirect_uris": ["http://localhost:8080/oauth/callback"]
+}
+```
+
+### GET /oauth/authorize
+
+Renders a login form. The client redirects the user here with PKCE parameters.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `client_id` | Yes | Registered client ID |
+| `redirect_uri` | Yes | Must match a registered URI |
+| `response_type` | Yes | Must be `code` |
+| `code_challenge` | Yes | Base64-URL-encoded SHA-256 of code verifier |
+| `code_challenge_method` | No | Must be `S256` (default) |
+| `state` | No | Opaque CSRF protection value |
+
+```
+https://scrapix.meilisearch.dev/oauth/authorize?
+  client_id=sxc_ABC...&
+  redirect_uri=http://localhost:8080/callback&
+  response_type=code&
+  code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&
+  code_challenge_method=S256&
+  state=xyz123
+```
+
+### POST /oauth/authorize
+
+Submits the login form. On success, redirects to the `redirect_uri` with an authorization code.
+
+**Redirect (302):**
+```
+http://localhost:8080/callback?code=sxac_ABC...&state=xyz123
+```
+
+Authorization codes expire after **10 minutes** and are single-use.
+
+### POST /oauth/token
+
+Exchange an authorization code or refresh token for access tokens.
+
+#### Authorization Code Exchange
+
+```bash
+curl -X POST https://scrapix.meilisearch.dev/oauth/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=authorization_code\
+&code=sxac_ABC...\
+&code_verifier=dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk\
+&redirect_uri=http://localhost:8080/callback\
+&client_id=sxc_ABC..."
+```
+
+#### Refresh Token Exchange
+
+```bash
+curl -X POST https://scrapix.meilisearch.dev/oauth/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=refresh_token&refresh_token=sxrt_ABC..."
+```
+
+**Response (200):**
+
+```json
+{
+  "access_token": "sxat_ABC...",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "refresh_token": "sxrt_DEF...",
+  "scope": "mcp"
+}
+```
+
+### POST /oauth/revoke
+
+Revoke an access or refresh token (RFC 7009). Always returns 200.
+
+```bash
+curl -X POST https://scrapix.meilisearch.dev/oauth/revoke \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "token=sxat_ABC..."
+```
+
+## Token Details
+
+| Type | Prefix | Lifetime | Notes |
+|------|--------|----------|-------|
+| Client ID | `sxc_` | Permanent | Identifies the OAuth client |
+| Authorization Code | `sxac_` | 10 minutes | Single-use |
+| Access Token | `sxat_` | 1 hour | Used as Bearer token |
+| Refresh Token | `sxrt_` | 30 days | Rotates on use |
+
+### Refresh Token Rotation
+
+When you exchange a refresh token, the old token is immediately revoked and a new token pair is issued. This limits the window of exposure if a token is compromised.
+
+### Token Storage
+
+Tokens are stored as SHA-256 hashes in the database — plaintext tokens are never persisted. Passwords are hashed with Argon2.
+
+## PKCE (Proof Key for Code Exchange)
+
+PKCE is **mandatory** — only the S256 method is supported (plain is rejected).
+
+1. Generate a random `code_verifier` (43-128 characters, Base64-URL-safe)
+2. Compute `code_challenge = BASE64URL(SHA256(code_verifier))`
+3. Send `code_challenge` in the authorization request
+4. Send `code_verifier` in the token exchange request
+
+## Error Responses
+
+OAuth errors follow the standard format:
+
+```json
+{
+  "error": "invalid_grant",
+  "error_description": "Authorization code expired"
+}
+```
+
+| Error | When |
+|-------|------|
+| `invalid_client_metadata` | Invalid redirect URIs during registration |
+| `invalid_grant` | Expired/used code, PKCE mismatch, revoked refresh token |
+| `invalid_request` | Missing required parameters |
+| `server_error` | Database failure |
+
+## Background Cleanup
+
+Expired and revoked tokens are automatically cleaned up every hour:
+- Authorization codes: deleted 1 hour after expiry
+- Expired tokens: deleted 7 days after expiry
+- Revoked tokens: deleted 7 days after revocation
+
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `DATABASE_URL` | PostgreSQL connection string (required to enable OAuth) |
+| `JWT_SECRET` | Secret for signing session JWTs (required with DATABASE_URL) |
+| `BASE_URL` | Base URL for metadata endpoints (default: `https://scrapix.meilisearch.dev`) |

@@ -1,0 +1,86 @@
+---
+title: Rate Limiting
+description: Per-account rate limits and throttling behavior
+---
+
+# Rate Limiting
+
+When authentication is enabled, all API requests are rate-limited using a sliding window counter backed by Redis/DragonflyDB.
+
+## Per-Tier Limits
+
+| Tier | Requests per Minute |
+|------|-------------------|
+| Free | 10 |
+| Starter | 60 |
+| Pro | 300 |
+| Enterprise | 1,000 |
+
+Unauthenticated requests (when auth is enabled) are limited to **10 requests per minute per IP**.
+
+Authentication endpoints (`/auth/login`, `/auth/signup`) have a stricter limit of **5 attempts per minute per IP**.
+
+## Rate Limit Headers
+
+Every response includes rate limit headers:
+
+```
+x-ratelimit-limit: 300
+x-ratelimit-remaining: 287
+```
+
+| Header | Description |
+|--------|-------------|
+| `x-ratelimit-limit` | Maximum requests allowed in the current window |
+| `x-ratelimit-remaining` | Requests remaining in the current window |
+
+## 429 Too Many Requests
+
+When the limit is exceeded, the API returns a `429` response with a `retry-after` header:
+
+```json
+{
+  "error": "Rate limit exceeded. 60 requests per minute allowed.",
+  "code": "rate_limit_exceeded",
+  "retry_after_seconds": 45
+}
+```
+
+| Header | Description |
+|--------|-------------|
+| `retry-after` | Seconds until the current window resets |
+| `x-ratelimit-limit` | Maximum requests allowed |
+| `x-ratelimit-remaining` | Always `0` when rate limited |
+
+## Behavior Details
+
+- **Window:** 1-minute sliding window (60-second TTL)
+- **Key:** Per-account (authenticated) or per-IP (unauthenticated)
+- **Backend:** Redis/DragonflyDB with atomic INCR + EXPIRE
+- **Fail-open:** If Redis is unavailable, requests are allowed through (no rate limiting)
+
+## Handling Rate Limits
+
+Implement exponential backoff or respect the `retry-after` header:
+
+```python
+import requests
+import time
+
+response = requests.post("https://scrapix.meilisearch.dev/scrape", ...)
+
+if response.status_code == 429:
+    retry_after = int(response.headers.get("retry-after", 60))
+    time.sleep(retry_after)
+    response = requests.post("https://scrapix.meilisearch.dev/scrape", ...)
+```
+
+```javascript
+const response = await fetch("https://scrapix.meilisearch.dev/scrape", { ... });
+
+if (response.status === 429) {
+  const retryAfter = parseInt(response.headers.get("retry-after") || "60");
+  await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
+  // Retry the request
+}
+```
