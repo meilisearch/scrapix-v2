@@ -344,22 +344,40 @@ impl AppState {
             } = event
             {
                 // Look up the job to get the start URL, crawler_type, AI feature flags, and api_key_id
-                let (url, domain, is_js_rendered, has_ai_summary, has_ai_extraction, job_api_key_id) = {
+                let (
+                    url,
+                    domain,
+                    is_js_rendered,
+                    has_ai_summary,
+                    has_ai_extraction,
+                    job_api_key_id,
+                ) = {
                     let jobs = self.crawl.jobs.read();
                     jobs.get(job_id)
                         .map(|j| {
                             let url = j.start_urls.first().cloned().unwrap_or_default();
                             let domain = extract_domain(&url).unwrap_or_default();
-                            let cfg = j.config.as_ref()
-                                .and_then(|v| serde_json::from_value::<CrawlConfig>(v.clone()).ok());
-                            let is_js = cfg.as_ref()
+                            let cfg = j.config.as_ref().and_then(|v| {
+                                serde_json::from_value::<CrawlConfig>(v.clone()).ok()
+                            });
+                            let is_js = cfg
+                                .as_ref()
                                 .map(|c| c.crawler_type == CrawlerType::Browser)
                                 .unwrap_or(false);
-                            let has_summary = cfg.as_ref()
-                                .map(|c| c.features.ai_summary.as_ref().map_or(false, |t| t.enabled))
+                            let has_summary = cfg
+                                .as_ref()
+                                .map(|c| {
+                                    c.features.ai_summary.as_ref().map_or(false, |t| t.enabled)
+                                })
                                 .unwrap_or(false);
-                            let has_extraction = cfg.as_ref()
-                                .map(|c| c.features.ai_extraction.as_ref().map_or(false, |t| t.enabled))
+                            let has_extraction = cfg
+                                .as_ref()
+                                .map(|c| {
+                                    c.features
+                                        .ai_extraction
+                                        .as_ref()
+                                        .map_or(false, |t| t.enabled)
+                                })
                                 .unwrap_or(false);
                             let api_key_id = j.api_key_id.clone().unwrap_or_default();
                             (url, domain, is_js, has_summary, has_extraction, api_key_id)
@@ -1478,7 +1496,10 @@ async fn scrape_url(
             .fetch(&crawl_url)
             .await
             .map_err(|e| {
-                ApiError::new(format!("Failed to render URL with browser: {}", e), "fetch_error")
+                ApiError::new(
+                    format!("Failed to render URL with browser: {}", e),
+                    "fetch_error",
+                )
             })?
     } else if request.headers.is_empty() {
         // Use the shared fetcher (connection pooling, DNS cache, retries)
@@ -1758,8 +1779,7 @@ async fn scrape_url(
                     }
                 };
 
-                let (ai_summary_result, ai_extract_result) =
-                    tokio::join!(summary_fut, extract_fut);
+                let (ai_summary_result, ai_extract_result) = tokio::join!(summary_fut, extract_fut);
 
                 // Accumulate AI token usage
                 if let Some(ref summary) = ai_summary_result {
@@ -2990,7 +3010,10 @@ async fn search_url(
     }
 
     if request.q.is_empty() {
-        return Err(ApiError::new("Query parameter 'q' is required", "validation_error"));
+        return Err(ApiError::new(
+            "Query parameter 'q' is required",
+            "validation_error",
+        ));
     }
 
     // Resolve index UID from URL
@@ -3003,9 +3026,10 @@ async fn search_url(
     }
 
     // Resolve default Meilisearch engine for this account
-    let pool = state.db_pool.as_ref().ok_or_else(|| {
-        ApiError::new("Search requires database configuration", "internal_error")
-    })?;
+    let pool = state
+        .db_pool
+        .as_ref()
+        .ok_or_else(|| ApiError::new("Search requires database configuration", "internal_error"))?;
 
     let account_id = account_ctx
         .as_ref()

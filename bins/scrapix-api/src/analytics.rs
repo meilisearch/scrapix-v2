@@ -1425,6 +1425,122 @@ async fn pipe_account_daily_usage_by_operation(
 }
 
 // ============================================================================
+// Pipe: api_key_usage
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct ApiKeyUsageParams {
+    account_id: String,
+    #[serde(default = "default_hours")]
+    hours: u32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ApiKeyUsageRow {
+    pub api_key_id: String,
+    pub total_requests: u64,
+    pub successful_requests: u64,
+    pub failed_requests: u64,
+    pub total_bytes: u64,
+    pub avg_duration_ms: f64,
+    pub unique_domains: u64,
+    pub js_renders: u64,
+    pub ai_prompt_tokens: u64,
+    pub ai_completion_tokens: u64,
+}
+
+async fn pipe_api_key_usage(
+    State(state): State<Arc<AnalyticsState>>,
+    Query(params): Query<ApiKeyUsageParams>,
+) -> Result<Json<AnalyticsResponse<ApiKeyUsageRow>>, (StatusCode, Json<AnalyticsError>)> {
+    let start = Instant::now();
+
+    let stats = state
+        .storage
+        .get_api_key_usage(&params.account_id, params.hours)
+        .await
+        .map_err(|e| {
+            error!("api_key_usage query failed: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(AnalyticsError {
+                    error: e.to_string(),
+                    code: "QUERY_ERROR".to_string(),
+                }),
+            )
+        })?;
+
+    let data: Vec<ApiKeyUsageRow> = stats
+        .into_iter()
+        .map(|s| ApiKeyUsageRow {
+            api_key_id: s.api_key_id,
+            total_requests: s.total_requests,
+            successful_requests: s.successful_requests,
+            failed_requests: s.failed_requests,
+            total_bytes: s.total_bytes,
+            avg_duration_ms: s.avg_duration_ms,
+            unique_domains: s.unique_domains,
+            js_renders: s.js_renders,
+            ai_prompt_tokens: s.ai_prompt_tokens,
+            ai_completion_tokens: s.ai_completion_tokens,
+        })
+        .collect();
+
+    let rows = data.len();
+    Ok(Json(AnalyticsResponse {
+        meta: vec![
+            ColumnMeta {
+                name: "api_key_id".into(),
+                col_type: "String".into(),
+            },
+            ColumnMeta {
+                name: "total_requests".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "successful_requests".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "failed_requests".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "total_bytes".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "avg_duration_ms".into(),
+                col_type: "Float64".into(),
+            },
+            ColumnMeta {
+                name: "unique_domains".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "js_renders".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "ai_prompt_tokens".into(),
+                col_type: "UInt64".into(),
+            },
+            ColumnMeta {
+                name: "ai_completion_tokens".into(),
+                col_type: "UInt64".into(),
+            },
+        ],
+        data,
+        rows,
+        statistics: QueryStats {
+            elapsed: start.elapsed().as_secs_f64(),
+            rows_read: rows,
+            bytes_read: 0,
+        },
+    }))
+}
+
+// ============================================================================
 // Pipes List
 // ============================================================================
 
@@ -1648,6 +1764,25 @@ async fn list_pipes() -> Json<Vec<PipeInfo>> {
             ],
             endpoint: "/analytics/v0/pipes/account_daily_usage_by_operation.json".into(),
         },
+        PipeInfo {
+            name: "api_key_usage".into(),
+            description: "Per-API-key usage breakdown for an account".into(),
+            parameters: vec![
+                ParamInfo {
+                    name: "account_id".into(),
+                    param_type: "string".into(),
+                    required: true,
+                    default: None,
+                },
+                ParamInfo {
+                    name: "hours".into(),
+                    param_type: "integer".into(),
+                    required: false,
+                    default: Some("24".into()),
+                },
+            ],
+            endpoint: "/analytics/v0/pipes/api_key_usage.json".into(),
+        },
     ])
 }
 
@@ -1689,6 +1824,7 @@ pub fn create_analytics_router(state: Arc<AnalyticsState>) -> Router {
             "/pipes/account_daily_usage_by_operation.json",
             get(pipe_account_daily_usage_by_operation),
         )
+        .route("/pipes/api_key_usage.json", get(pipe_api_key_usage))
         .with_state(state)
 }
 

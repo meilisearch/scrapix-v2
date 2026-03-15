@@ -49,6 +49,7 @@ fn row_to_job_state(row: &sqlx::postgres::PgRow) -> JobState {
         status: str_to_status(&status_str),
         index_uid: row.get("index_uid"),
         account_id: account_id.map(|u| u.to_string()),
+        api_key_id: row.try_get::<Option<uuid::Uuid>, _>("api_key_id").ok().flatten().map(|u| u.to_string()),
         pages_crawled: row.get::<i64, _>("pages_crawled") as u64,
         pages_indexed: row.get::<i64, _>("pages_indexed") as u64,
         documents_sent: row.get::<i64, _>("documents_sent") as u64,
@@ -78,28 +79,30 @@ fn row_to_job_state(row: &sqlx::postgres::PgRow) -> JobState {
 /// Insert a new job row. Uses ON CONFLICT DO NOTHING for idempotency.
 pub async fn insert_job(pool: &PgPool, job: &JobState) {
     let account_id: Option<uuid::Uuid> = job.account_id.as_deref().and_then(|s| s.parse().ok());
+    let api_key_id: Option<uuid::Uuid> = job.api_key_id.as_deref().and_then(|s| s.parse().ok());
 
     let start_urls = serde_json::to_value(&job.start_urls).unwrap_or_default();
 
     let result = sqlx::query(
         "INSERT INTO jobs (
-            job_id, status, index_uid, account_id,
+            job_id, status, index_uid, account_id, api_key_id,
             pages_crawled, pages_indexed, documents_sent, errors, bytes_downloaded,
             started_at, completed_at, crawl_rate, eta_seconds,
             error_message, start_urls, max_pages, config,
             swap_temp_index, swap_meilisearch_url, swap_meilisearch_api_key
         ) VALUES (
-            $1, $2, $3, $4,
-            $5, $6, $7, $8, $9,
-            $10, $11, $12, $13,
-            $14, $15, $16, $17,
-            $18, $19, $20
+            $1, $2, $3, $4, $5,
+            $6, $7, $8, $9, $10,
+            $11, $12, $13, $14,
+            $15, $16, $17, $18,
+            $19, $20, $21
         ) ON CONFLICT (job_id) DO NOTHING",
     )
     .bind(&job.job_id)
     .bind(status_to_str(&job.status))
     .bind(&job.index_uid)
     .bind(account_id)
+    .bind(api_key_id)
     .bind(job.pages_crawled as i64)
     .bind(job.pages_indexed as i64)
     .bind(job.documents_sent as i64)

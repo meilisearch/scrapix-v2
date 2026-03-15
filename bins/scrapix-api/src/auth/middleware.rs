@@ -59,17 +59,18 @@ pub async fn validate_api_key(
     let key_hash = hash_api_key(api_key);
     debug!(prefix = %api_key.get(..12).unwrap_or("???"), "Validating API key");
 
-    let result = sqlx::query("SELECT account_id, tier, active FROM validate_api_key($1)")
-        .bind(&key_hash)
-        .fetch_optional(&auth_state.pool)
-        .await
-        .map_err(|e| {
-            warn!(error = %e, "Database error during API key validation");
-            AuthError {
-                error: "Authentication service unavailable".to_string(),
-                code: "auth_service_error".to_string(),
-            }
-        })?;
+    let result =
+        sqlx::query("SELECT account_id, tier, active, api_key_id FROM validate_api_key($1)")
+            .bind(&key_hash)
+            .fetch_optional(&auth_state.pool)
+            .await
+            .map_err(|e| {
+                warn!(error = %e, "Database error during API key validation");
+                AuthError {
+                    error: "Authentication service unavailable".to_string(),
+                    code: "auth_service_error".to_string(),
+                }
+            })?;
 
     let row = result.ok_or_else(|| AuthError {
         error: "Invalid or inactive API key".to_string(),
@@ -86,6 +87,11 @@ pub async fn validate_api_key(
         code: "invalid_api_key".to_string(),
     })?;
 
+    let api_key_id: uuid::Uuid = row.try_get("api_key_id").map_err(|_| AuthError {
+        error: "Invalid API key".to_string(),
+        code: "invalid_api_key".to_string(),
+    })?;
+
     let active: bool = row.try_get("active").unwrap_or(false);
     if !active {
         return Err(AuthError {
@@ -94,11 +100,12 @@ pub async fn validate_api_key(
         });
     }
 
-    debug!(account_id = %account_id, tier = %tier, "API key validated");
+    debug!(account_id = %account_id, tier = %tier, api_key_id = %api_key_id, "API key validated");
 
     request.extensions_mut().insert(AuthenticatedAccount {
         account_id: account_id.to_string(),
         tier,
+        api_key_id: Some(api_key_id.to_string()),
     });
 
     Ok(next.run(request).await)
@@ -161,27 +168,32 @@ pub(crate) async fn validate_api_key_or_session(
         let key_hash = hash_api_key(api_key);
         debug!(prefix = %api_key.get(..12).unwrap_or("???"), "Validating API key");
 
-        let row = sqlx::query("SELECT account_id, tier, active FROM validate_api_key($1)")
-            .bind(&key_hash)
-            .fetch_optional(&auth_state.pool)
-            .await
-            .map_err(|e| {
-                warn!(error = %e, "Database error during API key validation");
-                AuthError {
-                    error: "Authentication service unavailable".to_string(),
-                    code: "auth_service_error".to_string(),
-                }
-            })?
-            .ok_or_else(|| AuthError {
-                error: "Invalid or inactive API key".to_string(),
-                code: "invalid_api_key".to_string(),
-            })?;
+        let row =
+            sqlx::query("SELECT account_id, tier, active, api_key_id FROM validate_api_key($1)")
+                .bind(&key_hash)
+                .fetch_optional(&auth_state.pool)
+                .await
+                .map_err(|e| {
+                    warn!(error = %e, "Database error during API key validation");
+                    AuthError {
+                        error: "Authentication service unavailable".to_string(),
+                        code: "auth_service_error".to_string(),
+                    }
+                })?
+                .ok_or_else(|| AuthError {
+                    error: "Invalid or inactive API key".to_string(),
+                    code: "invalid_api_key".to_string(),
+                })?;
 
         let account_id: uuid::Uuid = row.try_get("account_id").map_err(|_| AuthError {
             error: "Invalid API key".to_string(),
             code: "invalid_api_key".to_string(),
         })?;
         let tier: String = row.try_get("tier").map_err(|_| AuthError {
+            error: "Invalid API key".to_string(),
+            code: "invalid_api_key".to_string(),
+        })?;
+        let api_key_id: uuid::Uuid = row.try_get("api_key_id").map_err(|_| AuthError {
             error: "Invalid API key".to_string(),
             code: "invalid_api_key".to_string(),
         })?;
@@ -193,10 +205,11 @@ pub(crate) async fn validate_api_key_or_session(
             });
         }
 
-        debug!(account_id = %account_id, tier = %tier, "API key validated");
+        debug!(account_id = %account_id, tier = %tier, api_key_id = %api_key_id, "API key validated");
         request.extensions_mut().insert(AuthenticatedAccount {
             account_id: account_id.to_string(),
             tier,
+            api_key_id: Some(api_key_id.to_string()),
         });
 
         return Ok(next.run(request).await);

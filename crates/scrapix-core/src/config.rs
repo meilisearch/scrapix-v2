@@ -768,15 +768,27 @@ mod tests {
 
     #[test]
     fn test_url_to_index_uid_basic() {
-        assert_eq!(url_to_index_uid("https://docs.example.com"), "docs-example-com");
-        assert_eq!(url_to_index_uid("https://www.example.com/path/to/page"), "example-com-path-to-page");
+        assert_eq!(
+            url_to_index_uid("https://docs.example.com"),
+            "docs-example-com"
+        );
+        assert_eq!(
+            url_to_index_uid("https://www.example.com/path/to/page"),
+            "example-com-path-to-page"
+        );
         assert_eq!(url_to_index_uid("http://example.com/"), "example-com");
-        assert_eq!(url_to_index_uid("https://en.wikipedia.org/wiki/Rust"), "en-wikipedia-org-wiki-Rust");
+        assert_eq!(
+            url_to_index_uid("https://en.wikipedia.org/wiki/Rust"),
+            "en-wikipedia-org-wiki-Rust"
+        );
     }
 
     #[test]
     fn test_url_to_index_uid_special_chars() {
-        assert_eq!(url_to_index_uid("https://example.com/a?q=1&b=2"), "example-com-a-q-1-b-2");
+        assert_eq!(
+            url_to_index_uid("https://example.com/a?q=1&b=2"),
+            "example-com-a-q-1-b-2"
+        );
         assert_eq!(url_to_index_uid("https://my-site.io"), "my-site-io");
     }
 

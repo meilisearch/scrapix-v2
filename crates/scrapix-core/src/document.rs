@@ -310,6 +310,10 @@ pub struct JobState {
     #[serde(default)]
     pub account_id: Option<String>,
 
+    /// API key ID used to create this job (for per-key usage tracking)
+    #[serde(default)]
+    pub api_key_id: Option<String>,
+
     /// Pages crawled
     pub pages_crawled: u64,
 
@@ -373,6 +377,7 @@ impl JobState {
             status: JobStatus::Pending,
             index_uid: index_uid.into(),
             account_id: None,
+            api_key_id: None,
             pages_crawled: 0,
             pages_indexed: 0,
             documents_sent: 0,

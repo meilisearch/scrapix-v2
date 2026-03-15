@@ -20,6 +20,7 @@ use sqlx::{postgres::PgPoolOptions, PgPool};
 pub struct AuthenticatedAccount {
     pub account_id: String,
     pub tier: String,
+    pub api_key_id: Option<String>,
 }
 
 /// User information extracted from a validated JWT session

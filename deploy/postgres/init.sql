@@ -76,10 +76,10 @@ CREATE INDEX IF NOT EXISTS idx_api_keys_key_hash ON api_keys (key_hash);
 -- ============================================================================
 
 CREATE OR REPLACE FUNCTION validate_api_key(p_key_hash TEXT)
-RETURNS TABLE (account_id UUID, tier TEXT, active BOOLEAN) AS $$
+RETURNS TABLE (account_id UUID, tier TEXT, active BOOLEAN, api_key_id UUID) AS $$
 BEGIN
     RETURN QUERY
-    SELECT a.id AS account_id, a.tier, a.active
+    SELECT a.id AS account_id, a.tier, a.active, k.id AS api_key_id
     FROM api_keys k
     JOIN accounts a ON a.id = k.account_id
     WHERE k.key_hash = p_key_hash
@@ -162,6 +162,7 @@ CREATE TABLE IF NOT EXISTS jobs (
         CHECK (status IN ('pending', 'running', 'completed', 'failed', 'cancelled', 'paused')),
     index_uid TEXT NOT NULL,
     account_id UUID REFERENCES accounts(id) ON DELETE SET NULL,
+    api_key_id UUID REFERENCES api_keys(id) ON DELETE SET NULL,
     pages_crawled BIGINT NOT NULL DEFAULT 0,
     pages_indexed BIGINT NOT NULL DEFAULT 0,
     documents_sent BIGINT NOT NULL DEFAULT 0,
