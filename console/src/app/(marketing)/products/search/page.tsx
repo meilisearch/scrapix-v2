@@ -303,22 +303,10 @@ export default function SearchPage() {
               Search pricing
             </h2>
             <div className="rounded-2xl border border-white/5 bg-white/[0.02] p-6 space-y-3 text-sm">
-              {[
-                { label: "Search query (per request)", value: "1 cr" },
-                { label: "Initial crawl (per page)", value: "1 cr" },
-                { label: "JS rendering (per page)", value: "2 cr" },
-                { label: "Subsequent searches (cached index)", value: "1 cr" },
-                { label: "Search indexing", value: "Free", free: true },
-              ].map(({ label, value, free }) => (
-                <div key={label} className="flex justify-between">
-                  <span className="text-zinc-400">{label}</span>
-                  <span
-                    className={`font-mono ${free ? "text-emerald-400" : "text-white"}`}
-                  >
-                    {value}
-                  </span>
-                </div>
-              ))}
+              <div className="flex justify-between">
+                <span className="text-zinc-400">Search (per request)</span>
+                <span className="font-mono text-white">2 cr</span>
+              </div>
             </div>
             <p className="mt-4 text-center text-sm text-zinc-600">
               <Link href="/pricing" className="text-zinc-400 hover:text-white transition-colors underline underline-offset-4">
