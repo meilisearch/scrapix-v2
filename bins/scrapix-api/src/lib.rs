@@ -3599,7 +3599,7 @@ enum WsServerMessage {
     /// Job status response
     Status {
         job_id: String,
-        status: JobStatusResponse,
+        status: Box<JobStatusResponse>,
     },
     /// Subscription confirmed
     Subscribed { job_id: String },
@@ -3724,7 +3724,7 @@ async fn handle_ws_message(
             if let Some(job) = state.get_job(&job_id) {
                 WsServerMessage::Status {
                     job_id,
-                    status: job.into(),
+                    status: Box::new(job.into()),
                 }
             } else {
                 WsServerMessage::Error {
@@ -3778,7 +3778,7 @@ async fn handle_job_ws_connection(socket: WebSocket, state: Arc<AppState>, job_i
     if let Some(job) = state.get_job(&job_id) {
         let msg = WsServerMessage::Status {
             job_id: job_id.clone(),
-            status: job.into(),
+            status: Box::new(job.into()),
         };
         if let Ok(json) = serde_json::to_string(&msg) {
             let _ = sender.send(Message::Text(json.into())).await;
