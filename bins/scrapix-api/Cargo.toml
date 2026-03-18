@@ -77,6 +77,10 @@ rmcp-openapi = "0.25"
 # Cron scheduling
 croner = "3"
 
+# Stripe payments
+async-stripe = { version = "0.38", default-features = false, features = ["runtime-tokio-hyper", "checkout", "billing", "connect", "webhook-events"] }
+hmac = "0.12"
+
 # OpenAPI
 utoipa = { workspace = true, features = ["axum_extras"] }
 utoipa-scalar = { version = "0.3", features = ["axum"] }

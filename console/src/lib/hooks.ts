@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { getMe } from "./auth";
-import { fetchApiKeys, fetchServiceHealth, fetchBilling, fetchTransactions } from "./api";
+import { fetchApiKeys, fetchServiceHealth, fetchBilling, fetchTransactions, fetchPaymentMethods } from "./api";
 
 export function useMe() {
   return useQuery({
@@ -49,5 +49,12 @@ export function useAllTransactions() {
       const all = await fetchTransactions(first.total, 0);
       return all;
     },
+  });
+}
+
+export function usePaymentMethods() {
+  return useQuery({
+    queryKey: ["payment-methods"],
+    queryFn: fetchPaymentMethods,
   });
 }

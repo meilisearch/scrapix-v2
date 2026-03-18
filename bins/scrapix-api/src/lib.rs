@@ -49,6 +49,7 @@ pub mod jobs_db;
 pub mod mcp;
 pub mod openapi;
 pub mod rate_limit;
+pub mod stripe;
 
 use axum::{
     extract::{
@@ -127,6 +128,14 @@ pub struct Args {
     /// Redis URL for rate limiting (optional, disables rate limiting if not set)
     #[arg(long, env = "REDIS_URL")]
     pub redis_url: Option<String>,
+
+    /// Stripe secret key (enables payment processing)
+    #[arg(long, env = "STRIPE_SECRET_KEY")]
+    pub stripe_secret_key: Option<String>,
+
+    /// Stripe webhook signing secret (for verifying webhook events)
+    #[arg(long, env = "STRIPE_WEBHOOK_SECRET")]
+    pub stripe_webhook_secret: Option<String>,
 
     /// Maximum jobs to keep in memory
     #[arg(long, env = "MAX_JOBS", default_value = "10000")]
@@ -4602,6 +4611,22 @@ pub async fn run_with_bus(
             .merge(auth::session_routes(auth.clone()))
             .merge(auth::oauth_routes(auth.clone()));
         info!("Auth routes enabled (/auth/signup, /auth/login, /auth/me, /account/*, /oauth/*)");
+
+        // Stripe payment routes
+        if let Some(ref stripe_key) = args.stripe_secret_key {
+            let stripe_state =
+                stripe::StripeState::new(stripe_key, args.stripe_webhook_secret.clone());
+            app = app
+                .merge(stripe::stripe_session_routes(
+                    auth.clone(),
+                    stripe_state.clone(),
+                ))
+                .merge(stripe::stripe_webhook_route(
+                    auth.pool.clone(),
+                    stripe_state,
+                ));
+            info!("Stripe routes enabled (/account/billing/setup-intent, /account/billing/payment-methods, /account/billing/purchase, /webhooks/stripe)");
+        }
 
         // MCP HTTP endpoint with Bearer token auth
         let mcp_base_url = format!("http://{}:{}", args.host, args.port);

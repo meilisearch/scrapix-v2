@@ -27,6 +27,9 @@ import type {
   BillingInfo,
   TransactionsListResponse,
   TopupResponse,
+  SetupIntentResponse,
+  PaymentMethodInfo,
+  PurchaseResponse,
 } from "./api-types";
 
 // API calls go through Next.js rewrites (/api/scrapix/* → backend) to avoid CORS.
@@ -382,4 +385,36 @@ export async function updateSpendLimit(monthly_spend_limit: number | null): Prom
 
 export async function fetchTransactions(limit: number = 50, offset: number = 0): Promise<TransactionsListResponse> {
   return request(`/account/billing/transactions?limit=${limit}&offset=${offset}`);
+}
+
+// ============================================================================
+// Stripe / Payment Methods
+// ============================================================================
+
+export async function createSetupIntent(): Promise<SetupIntentResponse> {
+  return request("/account/billing/setup-intent", { method: "POST" });
+}
+
+export async function fetchPaymentMethods(): Promise<PaymentMethodInfo[]> {
+  return request("/account/billing/payment-methods");
+}
+
+export async function deletePaymentMethod(id: string): Promise<void> {
+  await request(`/account/billing/payment-methods/${id}`, { method: "DELETE" });
+}
+
+export async function setDefaultPaymentMethod(paymentMethodId: string): Promise<void> {
+  await request("/account/billing/default-payment-method", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ payment_method_id: paymentMethodId }),
+  });
+}
+
+export async function purchaseCredits(credits: number, paymentMethodId?: string): Promise<PurchaseResponse> {
+  return request("/account/billing/purchase", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ credits, payment_method_id: paymentMethodId }),
+  });
 }

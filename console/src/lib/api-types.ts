@@ -297,6 +297,36 @@ export interface TopupResponse {
 }
 
 // ============================================================================
+// Stripe / Payment Methods
+// ============================================================================
+
+export interface SetupIntentResponse {
+  client_secret: string;
+}
+
+export interface PaymentMethodInfo {
+  id: string;
+  brand: string | null;
+  last4: string | null;
+  exp_month: number | null;
+  exp_year: number | null;
+  is_default: boolean;
+}
+
+export interface PurchaseCreditsRequest {
+  credits: number;
+  payment_method_id?: string;
+}
+
+export interface PurchaseResponse {
+  status: "succeeded" | "requires_action";
+  client_secret: string | null;
+  credits: number;
+  amount_cents: number;
+  message: string;
+}
+
+// ============================================================================
 // Analytics (Tinybird-style responses)
 // ============================================================================
 

@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     tier TEXT NOT NULL DEFAULT 'free' CHECK (tier IN ('free', 'starter', 'pro', 'enterprise')),
     active BOOLEAN NOT NULL DEFAULT true,
     stripe_customer_id TEXT,
+    stripe_default_payment_method_id TEXT,
     credits_balance BIGINT NOT NULL DEFAULT 100,
     auto_topup_enabled BOOLEAN NOT NULL DEFAULT false,
     auto_topup_amount BIGINT NOT NULL DEFAULT 5000,
@@ -313,5 +314,8 @@ DO $$ BEGIN
     END IF;
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'accounts' AND column_name = 'monthly_spend_limit') THEN
         ALTER TABLE accounts ADD COLUMN monthly_spend_limit BIGINT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'accounts' AND column_name = 'stripe_default_payment_method_id') THEN
+        ALTER TABLE accounts ADD COLUMN stripe_default_payment_method_id TEXT;
     END IF;
 END $$;

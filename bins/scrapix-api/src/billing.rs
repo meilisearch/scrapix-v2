@@ -140,7 +140,7 @@ pub(crate) async fn check_credits_and_deduct(
     // Synchronous auto-topup with timeout to prevent blocking on DB issues
     match tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        maybe_auto_topup(pool, account_id),
+        maybe_auto_topup(pool, account_id, None),
     )
     .await
     {
@@ -154,9 +154,14 @@ pub(crate) async fn check_credits_and_deduct(
 }
 
 /// Check if the account's balance has dropped below its auto-topup threshold,
-/// and if so, top up. This is fire-and-forget; errors are logged but not
-/// propagated.
-pub(crate) async fn maybe_auto_topup(pool: &sqlx::PgPool, account_id: &str) {
+/// and if so, top up. When a Stripe client is provided and the account has a
+/// saved payment method, the auto-topup charges the card via Stripe. Otherwise
+/// falls back to the free (no-charge) top-up for dev/test.
+pub(crate) async fn maybe_auto_topup(
+    pool: &sqlx::PgPool,
+    account_id: &str,
+    stripe_client: Option<&stripe::Client>,
+) {
     let account_uuid = match uuid::Uuid::parse_str(account_id) {
         Ok(u) => u,
         Err(_) => return,
@@ -164,7 +169,8 @@ pub(crate) async fn maybe_auto_topup(pool: &sqlx::PgPool, account_id: &str) {
 
     // Read account settings
     let row = match sqlx::query(
-        "SELECT credits_balance, auto_topup_enabled, auto_topup_amount, auto_topup_threshold \
+        "SELECT credits_balance, auto_topup_enabled, auto_topup_amount, auto_topup_threshold, \
+         stripe_customer_id, stripe_default_payment_method_id \
          FROM accounts WHERE id = $1",
     )
     .bind(account_uuid)
@@ -201,7 +207,26 @@ pub(crate) async fn maybe_auto_topup(pool: &sqlx::PgPool, account_id: &str) {
         return;
     }
 
-    // Perform the top-up
+    // Try Stripe-based auto-topup if available
+    let has_stripe_pm: bool = row
+        .get::<Option<String>, _>("stripe_default_payment_method_id")
+        .is_some();
+
+    if let Some(stripe) = stripe_client {
+        if has_stripe_pm {
+            match crate::stripe::charge_auto_topup(stripe, pool, account_uuid, topup_amount).await {
+                Ok(()) => {
+                    info!(account_id, topup_amount, "Auto top-up via Stripe completed");
+                    return;
+                }
+                Err(e) => {
+                    warn!(account_id, error = %e, "Stripe auto-topup failed, falling back to free topup");
+                }
+            }
+        }
+    }
+
+    // Fallback: free top-up (no payment — for dev/test or accounts without a card)
     let mut tx = match pool.begin().await {
         Ok(tx) => tx,
         Err(e) => {
@@ -246,7 +271,7 @@ pub(crate) async fn maybe_auto_topup(pool: &sqlx::PgPool, account_id: &str) {
 
     info!(
         account_id,
-        topup_amount, new_balance, "Auto top-up completed"
+        topup_amount, new_balance, "Auto top-up completed (free)"
     );
 }
 
