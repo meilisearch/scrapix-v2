@@ -17,6 +17,8 @@ pub use oauth::oauth_routes;
 
 use sqlx::{postgres::PgPoolOptions, PgPool};
 
+use crate::email::EmailClient;
+
 /// Account information extracted from a validated API key
 #[derive(Debug, Clone)]
 pub struct AuthenticatedAccount {
@@ -37,6 +39,7 @@ pub struct AuthenticatedUser {
 pub struct AuthState {
     pub pool: PgPool,
     pub jwt_secret: String,
+    pub email_client: Option<EmailClient>,
 }
 
 impl AuthState {
@@ -53,6 +56,10 @@ impl AuthState {
             .max_connections(10)
             .connect(&url)
             .await?;
-        Ok(Self { pool, jwt_secret })
+        Ok(Self {
+            pool,
+            jwt_secret,
+            email_client: None,
+        })
     }
 }

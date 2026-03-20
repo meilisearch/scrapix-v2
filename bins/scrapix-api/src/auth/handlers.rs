@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, Path, State},
+    extract::{Extension, Path, Query, State},
     http::StatusCode,
     middleware,
     routing::{get, patch, post},
@@ -37,6 +37,8 @@ pub(crate) struct UserResponse {
     id: String,
     email: String,
     full_name: Option<String>,
+    email_verified: bool,
+    notify_job_emails: bool,
     account: Option<AccountResponse>,
 }
 
@@ -53,6 +55,7 @@ pub(crate) struct AccountResponse {
 #[derive(Deserialize, utoipa::ToSchema)]
 pub struct UpdateMeRequest {
     full_name: Option<String>,
+    notify_job_emails: Option<bool>,
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -264,12 +267,25 @@ pub(crate) async fn signup(
         )
     })?;
 
+    // Generate email verification token (scoped to drop !Send ThreadRng before await)
+    let verification_token = {
+        use rand::Rng;
+        let chars: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+        let mut rng = rand::thread_rng();
+        let token: String = (0..48)
+            .map(|_| chars[rng.gen_range(0..chars.len())] as char)
+            .collect();
+        token
+    };
+
     let user_id: uuid::Uuid = sqlx::query_scalar(
-        "INSERT INTO users (email, password_hash, full_name) VALUES ($1, $2, $3) RETURNING id",
+        "INSERT INTO users (email, password_hash, full_name, email_verification_token) \
+         VALUES ($1, $2, $3, $4) RETURNING id",
     )
     .bind(&req.email)
     .bind(&pw_hash)
     .bind(&req.full_name)
+    .bind(&verification_token)
     .fetch_one(&mut *tx)
     .await
     .map_err(|_| {
@@ -334,6 +350,12 @@ pub(crate) async fn signup(
 
     info!(user_id = %user_id, email = %req.email, "New user signed up");
 
+    // Send verification email (replaces welcome — welcome is sent on verification)
+    if let Some(ref mailer) = state.email_client {
+        let name = req.full_name.as_deref().unwrap_or("");
+        mailer.send_verification_email(&req.email, name, &verification_token);
+    }
+
     let token = jwt::encode_jwt(&user_id, &req.email, &state.jwt_secret).map_err(|_| {
         err(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -350,6 +372,8 @@ pub(crate) async fn signup(
             id: user_id.to_string(),
             email: req.email,
             full_name: req.full_name,
+            email_verified: false,
+            notify_job_emails: true,
             account: Some(AccountResponse {
                 id: account_id.to_string(),
                 name: account_name,
@@ -377,29 +401,34 @@ pub(crate) async fn login(
     jar: CookieJar,
     Json(req): Json<LoginRequest>,
 ) -> Result<(CookieJar, Json<UserResponse>), ApiError> {
-    let row = sqlx::query("SELECT id, email, password_hash, full_name FROM users WHERE email = $1")
-        .bind(&req.email)
-        .fetch_optional(&state.pool)
-        .await
-        .map_err(|_| {
-            err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Database error",
-                "internal_error",
-            )
-        })?
-        .ok_or_else(|| {
-            err(
-                StatusCode::UNAUTHORIZED,
-                "Invalid email or password",
-                "invalid_credentials",
-            )
-        })?;
+    let row = sqlx::query(
+        "SELECT id, email, password_hash, full_name, email_verified, notify_job_emails \
+         FROM users WHERE email = $1",
+    )
+    .bind(&req.email)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|_| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Database error",
+            "internal_error",
+        )
+    })?
+    .ok_or_else(|| {
+        err(
+            StatusCode::UNAUTHORIZED,
+            "Invalid email or password",
+            "invalid_credentials",
+        )
+    })?;
 
     let user_id: uuid::Uuid = row.get("id");
     let email: String = row.get("email");
     let pw_hash: String = row.get("password_hash");
     let full_name: Option<String> = row.get("full_name");
+    let email_verified: bool = row.get("email_verified");
+    let notify_job_emails: bool = row.get("notify_job_emails");
 
     let valid = password::verify_password(&req.password, &pw_hash).unwrap_or(false);
     if !valid {
@@ -448,6 +477,8 @@ pub(crate) async fn login(
             id: user_id.to_string(),
             email,
             full_name,
+            email_verified,
+            notify_job_emails,
             account,
         }),
     ))
@@ -489,18 +520,20 @@ pub(crate) async fn get_me(
     State(state): State<Arc<AuthState>>,
     Extension(user): Extension<AuthenticatedUser>,
 ) -> Result<Json<UserResponse>, ApiError> {
-    let row = sqlx::query("SELECT id, email, full_name FROM users WHERE id = $1")
-        .bind(user.user_id)
-        .fetch_optional(&state.pool)
-        .await
-        .map_err(|_| {
-            err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Database error",
-                "internal_error",
-            )
-        })?
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "User not found", "not_found"))?;
+    let row = sqlx::query(
+        "SELECT id, email, full_name, email_verified, notify_job_emails FROM users WHERE id = $1",
+    )
+    .bind(user.user_id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|_| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Database error",
+            "internal_error",
+        )
+    })?
+    .ok_or_else(|| err(StatusCode::NOT_FOUND, "User not found", "not_found"))?;
 
     let account = sqlx::query(
         "SELECT a.id, a.name, a.tier, a.active, a.credits_balance, m.role \
@@ -525,6 +558,8 @@ pub(crate) async fn get_me(
         id: row.get::<uuid::Uuid, _>("id").to_string(),
         email: row.get("email"),
         full_name: row.get("full_name"),
+        email_verified: row.get("email_verified"),
+        notify_job_emails: row.get("notify_job_emails"),
         account,
     }))
 }
@@ -547,6 +582,20 @@ pub(crate) async fn update_me(
     if let Some(ref name) = req.full_name {
         sqlx::query("UPDATE users SET full_name = $1 WHERE id = $2")
             .bind(name)
+            .bind(user.user_id)
+            .execute(&state.pool)
+            .await
+            .map_err(|_| {
+                err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Failed to update",
+                    "internal_error",
+                )
+            })?;
+    }
+    if let Some(notify) = req.notify_job_emails {
+        sqlx::query("UPDATE users SET notify_job_emails = $1 WHERE id = $2")
+            .bind(notify)
             .bind(user.user_id)
             .execute(&state.pool)
             .await
@@ -1267,6 +1316,358 @@ async fn check_spend_limit(
 }
 
 // ============================================================================
+// Email verification & Password reset
+// ============================================================================
+
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct VerifyEmailQuery {
+    token: String,
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct ForgotPasswordRequest {
+    email: String,
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct ResetPasswordRequest {
+    token: String,
+    password: String,
+}
+
+/// GET /auth/verify-email?token=xxx
+///
+/// Marks the user's email as verified. The token was sent via email on signup.
+#[utoipa::path(
+    get,
+    path = "/auth/verify-email",
+    tag = "auth",
+    params(
+        ("token" = String, Query, description = "Email verification token"),
+    ),
+    responses(
+        (status = 200, description = "Email verified", body = MessageResponse),
+        (status = 400, description = "Invalid or expired token", body = ErrorBody),
+    )
+)]
+pub(crate) async fn verify_email(
+    State(state): State<Arc<AuthState>>,
+    Query(params): Query<VerifyEmailQuery>,
+) -> Result<Json<MessageResponse>, ApiError> {
+    let result = sqlx::query(
+        "UPDATE users SET email_verified = true, email_verification_token = NULL \
+         WHERE email_verification_token = $1 AND email_verified = false",
+    )
+    .bind(&params.token)
+    .execute(&state.pool)
+    .await
+    .map_err(|_| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Database error",
+            "internal_error",
+        )
+    })?;
+
+    if result.rows_affected() == 0 {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "Invalid or expired verification token",
+            "invalid_token",
+        ));
+    }
+
+    Ok(Json(MessageResponse {
+        message: "Email verified successfully".to_string(),
+    }))
+}
+
+/// POST /auth/resend-verification
+///
+/// Resends the verification email for the currently logged-in user.
+#[utoipa::path(
+    post,
+    path = "/auth/resend-verification",
+    tag = "auth",
+    responses(
+        (status = 200, description = "Verification email sent", body = MessageResponse),
+        (status = 400, description = "Email already verified", body = ErrorBody),
+    ),
+    security(("api_key" = []))
+)]
+pub(crate) async fn resend_verification(
+    State(state): State<Arc<AuthState>>,
+    Extension(user): Extension<AuthenticatedUser>,
+) -> Result<Json<MessageResponse>, ApiError> {
+    // Check if already verified
+    let row = sqlx::query("SELECT email_verified, full_name FROM users WHERE id = $1")
+        .bind(user.user_id)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(|_| {
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Database error",
+                "internal_error",
+            )
+        })?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "User not found", "not_found"))?;
+
+    let verified: bool = row.get("email_verified");
+    if verified {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "Email already verified",
+            "already_verified",
+        ));
+    }
+
+    let full_name: Option<String> = row.get("full_name");
+
+    // Generate new token (scoped to drop !Send ThreadRng before await)
+    let token = {
+        use rand::Rng;
+        let chars: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+        let mut rng = rand::thread_rng();
+        let t: String = (0..48)
+            .map(|_| chars[rng.gen_range(0..chars.len())] as char)
+            .collect();
+        t
+    };
+
+    sqlx::query("UPDATE users SET email_verification_token = $1 WHERE id = $2")
+        .bind(&token)
+        .bind(user.user_id)
+        .execute(&state.pool)
+        .await
+        .map_err(|_| {
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to update",
+                "internal_error",
+            )
+        })?;
+
+    if let Some(ref mailer) = state.email_client {
+        let name = full_name.as_deref().unwrap_or("");
+        mailer.send_verification_email(&user.email, name, &token);
+    }
+
+    Ok(Json(MessageResponse {
+        message: "Verification email sent".to_string(),
+    }))
+}
+
+/// POST /auth/forgot-password
+///
+/// Sends a password reset email. Always returns 200 to prevent email enumeration.
+#[utoipa::path(
+    post,
+    path = "/auth/forgot-password",
+    tag = "auth",
+    request_body = ForgotPasswordRequest,
+    responses(
+        (status = 200, description = "If the email exists, a reset link was sent", body = MessageResponse),
+    )
+)]
+pub(crate) async fn forgot_password(
+    State(state): State<Arc<AuthState>>,
+    Json(req): Json<ForgotPasswordRequest>,
+) -> Json<MessageResponse> {
+    // Always return the same message to prevent email enumeration
+    let generic_msg = Json(MessageResponse {
+        message: "If an account with that email exists, we sent a password reset link.".to_string(),
+    });
+
+    // Look up user
+    let user_row = sqlx::query("SELECT id FROM users WHERE email = $1")
+        .bind(&req.email)
+        .fetch_optional(&state.pool)
+        .await;
+
+    let user_id: uuid::Uuid = match user_row {
+        Ok(Some(row)) => row.get("id"),
+        _ => return generic_msg,
+    };
+
+    // Generate random token (scoped to drop !Send ThreadRng before await)
+    let raw_token = {
+        use rand::Rng;
+        let chars: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+        let mut rng = rand::thread_rng();
+        let t: String = (0..48)
+            .map(|_| chars[rng.gen_range(0..chars.len())] as char)
+            .collect();
+        t
+    };
+
+    // Hash the token for storage (same pattern as API keys)
+    let token_hash = {
+        let mut hasher = Sha256::new();
+        hasher.update(raw_token.as_bytes());
+        hex::encode(hasher.finalize())
+    };
+
+    // Invalidate existing unused tokens for this user
+    let _ = sqlx::query(
+        "UPDATE password_reset_tokens SET used = true WHERE user_id = $1 AND used = false",
+    )
+    .bind(user_id)
+    .execute(&state.pool)
+    .await;
+
+    // Insert new token (expires in 1 hour)
+    let insert_result = sqlx::query(
+        "INSERT INTO password_reset_tokens (user_id, token_hash, expires_at) \
+         VALUES ($1, $2, now() + interval '1 hour')",
+    )
+    .bind(user_id)
+    .bind(&token_hash)
+    .execute(&state.pool)
+    .await;
+
+    if insert_result.is_err() {
+        return generic_msg;
+    }
+
+    // Send email with the raw (unhashed) token
+    if let Some(ref mailer) = state.email_client {
+        mailer.send_password_reset(&req.email, &raw_token);
+    }
+
+    generic_msg
+}
+
+/// POST /auth/reset-password
+///
+/// Resets the user's password using a valid reset token.
+#[utoipa::path(
+    post,
+    path = "/auth/reset-password",
+    tag = "auth",
+    request_body = ResetPasswordRequest,
+    responses(
+        (status = 200, description = "Password reset successfully", body = MessageResponse),
+        (status = 400, description = "Invalid or expired token", body = ErrorBody),
+    )
+)]
+pub(crate) async fn reset_password(
+    State(state): State<Arc<AuthState>>,
+    Json(req): Json<ResetPasswordRequest>,
+) -> Result<Json<MessageResponse>, ApiError> {
+    if req.password.len() < 12 {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "Password must be at least 12 characters",
+            "validation_error",
+        ));
+    }
+
+    // Hash the provided token to look it up
+    let token_hash = {
+        let mut hasher = Sha256::new();
+        hasher.update(req.token.as_bytes());
+        hex::encode(hasher.finalize())
+    };
+
+    // Find the valid token
+    let token_row = sqlx::query(
+        "SELECT id, user_id FROM password_reset_tokens \
+         WHERE token_hash = $1 AND used = false AND expires_at > now()",
+    )
+    .bind(&token_hash)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|_| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Database error",
+            "internal_error",
+        )
+    })?
+    .ok_or_else(|| {
+        err(
+            StatusCode::BAD_REQUEST,
+            "Invalid or expired reset token",
+            "invalid_token",
+        )
+    })?;
+
+    let token_id: uuid::Uuid = token_row.get("id");
+    let user_id: uuid::Uuid = token_row.get("user_id");
+
+    // Hash the new password
+    let pw_hash = password::hash_password(&req.password).map_err(|_| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to hash password",
+            "internal_error",
+        )
+    })?;
+
+    // In a transaction: mark token used + update password
+    let mut tx = state.pool.begin().await.map_err(|_| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Database error",
+            "internal_error",
+        )
+    })?;
+
+    sqlx::query("UPDATE password_reset_tokens SET used = true WHERE id = $1")
+        .bind(token_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| {
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to invalidate token",
+                "internal_error",
+            )
+        })?;
+
+    sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
+        .bind(&pw_hash)
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| {
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to update password",
+                "internal_error",
+            )
+        })?;
+
+    tx.commit().await.map_err(|_| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Database error",
+            "internal_error",
+        )
+    })?;
+
+    // Send password changed confirmation email
+    if let Some(ref mailer) = state.email_client {
+        let email: Option<String> = sqlx::query_scalar("SELECT email FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_optional(&state.pool)
+            .await
+            .ok()
+            .flatten();
+        if let Some(email) = email {
+            mailer.send_password_changed(&email);
+        }
+    }
+
+    info!(user_id = %user_id, "Password reset successfully");
+
+    Ok(Json(MessageResponse {
+        message: "Password reset successfully. Please log in with your new password.".to_string(),
+    }))
+}
+
+// ============================================================================
 // Router constructors
 // ============================================================================
 
@@ -1276,6 +1677,9 @@ pub fn auth_routes(state: Arc<AuthState>) -> Router {
         .route("/auth/signup", post(signup))
         .route("/auth/login", post(login))
         .route("/auth/logout", post(logout))
+        .route("/auth/verify-email", get(verify_email))
+        .route("/auth/forgot-password", post(forgot_password))
+        .route("/auth/reset-password", post(reset_password))
         .with_state(state)
 }
 
@@ -1283,6 +1687,7 @@ pub fn auth_routes(state: Arc<AuthState>) -> Router {
 pub fn session_routes(state: Arc<AuthState>) -> Router {
     Router::new()
         .route("/auth/me", get(get_me).patch(update_me))
+        .route("/auth/resend-verification", post(resend_verification))
         .route("/account", get(get_account).patch(update_account))
         .route("/account/api-keys", get(list_api_keys).post(create_api_key))
         .route("/account/api-keys/{id}", patch(revoke_api_key))

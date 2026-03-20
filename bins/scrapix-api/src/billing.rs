@@ -6,6 +6,7 @@
 use sqlx::Row;
 use tracing::{debug, error, info, warn};
 
+use crate::email::EmailClient;
 use crate::{ApiError, ScrapeFormat};
 use scrapix_core::{CrawlerType, FeaturesConfig};
 
@@ -134,19 +135,32 @@ pub(crate) async fn check_credits_and_deduct(
     amount: i64,
     operation: &str,
     description: &str,
+    email_client: Option<&EmailClient>,
 ) -> Result<i64, ApiError> {
     let new_balance = deduct_credits(pool, account_id, amount, operation, description).await?;
 
     // Synchronous auto-topup with timeout to prevent blocking on DB issues
     match tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        maybe_auto_topup(pool, account_id, None),
+        maybe_auto_topup(pool, account_id, None, email_client),
     )
     .await
     {
         Ok(()) => {}
         Err(_) => {
             warn!(account_id, "Auto-topup timed out after 5s");
+        }
+    }
+
+    // Send low balance warning if below threshold (10 credits)
+    if new_balance > 0 && new_balance <= 10 {
+        if let Some(mailer) = email_client {
+            let account_uuid = uuid::Uuid::parse_str(account_id).ok();
+            if let Some(uuid) = account_uuid {
+                if let Some(email) = crate::email::get_account_email(pool, uuid).await {
+                    mailer.send_low_balance_warning(&email, new_balance);
+                }
+            }
         }
     }
 
@@ -161,6 +175,7 @@ pub(crate) async fn maybe_auto_topup(
     pool: &sqlx::PgPool,
     account_id: &str,
     stripe_client: Option<&stripe::Client>,
+    email_client: Option<&EmailClient>,
 ) {
     let account_uuid = match uuid::Uuid::parse_str(account_id) {
         Ok(u) => u,
@@ -217,10 +232,41 @@ pub(crate) async fn maybe_auto_topup(
             match crate::stripe::charge_auto_topup(stripe, pool, account_uuid, topup_amount).await {
                 Ok(()) => {
                     info!(account_id, topup_amount, "Auto top-up via Stripe completed");
+                    // Send auto-topup receipt email
+                    if let Some(mailer) = email_client {
+                        let amount_cents = crate::stripe::price_for_credits_pub(topup_amount);
+                        let new_bal: i64 = sqlx::query_scalar(
+                            "SELECT credits_balance FROM accounts WHERE id = $1",
+                        )
+                        .bind(account_uuid)
+                        .fetch_optional(pool)
+                        .await
+                        .ok()
+                        .flatten()
+                        .unwrap_or(0);
+                        if let Some(email) =
+                            crate::email::get_account_email(pool, account_uuid).await
+                        {
+                            mailer.send_auto_topup_receipt(
+                                &email,
+                                topup_amount,
+                                amount_cents,
+                                new_bal,
+                            );
+                        }
+                    }
                     return;
                 }
                 Err(e) => {
                     warn!(account_id, error = %e, "Stripe auto-topup failed, falling back to free topup");
+                    // Send auto-topup failure email
+                    if let Some(mailer) = email_client {
+                        if let Some(email) =
+                            crate::email::get_account_email(pool, account_uuid).await
+                        {
+                            mailer.send_auto_topup_failed(&email, &e);
+                        }
+                    }
                 }
             }
         }

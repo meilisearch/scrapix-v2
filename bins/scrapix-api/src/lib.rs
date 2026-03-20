@@ -44,6 +44,7 @@ pub mod analytics;
 pub mod auth;
 pub mod billing;
 pub mod configs;
+pub mod email;
 pub mod engines;
 pub mod jobs_db;
 pub mod mcp;
@@ -137,6 +138,10 @@ pub struct Args {
     #[arg(long, env = "STRIPE_WEBHOOK_SECRET")]
     pub stripe_webhook_secret: Option<String>,
 
+    /// Resend API key for transactional emails (optional, disables emails if not set)
+    #[arg(long, env = "RESEND_API_KEY")]
+    pub resend_api_key: Option<String>,
+
     /// Maximum jobs to keep in memory
     #[arg(long, env = "MAX_JOBS", default_value = "10000")]
     pub max_jobs: usize,
@@ -199,6 +204,8 @@ struct AppState {
     ai_service: Option<Arc<AiService>>,
     /// PostgreSQL connection pool (for saved configs, cron scheduling)
     db_pool: Option<sqlx::PgPool>,
+    /// Optional email client for transactional emails
+    email_client: Option<email::EmailClient>,
 }
 
 #[derive(Debug, Clone)]
@@ -218,6 +225,7 @@ impl AppState {
         browser_renderer: Option<Arc<CdpRenderer>>,
         ai_service: Option<Arc<AiService>>,
         db_pool: Option<sqlx::PgPool>,
+        email_client: Option<email::EmailClient>,
     ) -> Self {
         let (event_tx, _) = broadcast::channel(10_000);
         Self {
@@ -243,6 +251,7 @@ impl AppState {
             browser_renderer,
             ai_service,
             db_pool,
+            email_client,
         }
     }
 
@@ -504,6 +513,14 @@ impl AppState {
                 duration_secs,
                 ..
             } => {
+                // Get index_uid before updating
+                let index_uid = {
+                    let jobs = self.crawl.jobs.read();
+                    jobs.get(job_id)
+                        .map(|j| j.index_uid.clone())
+                        .unwrap_or_default()
+                };
+
                 let updated = self.update_job(job_id, |j| {
                     j.status = JobStatus::Completed;
                     j.pages_crawled = *pages_crawled;
@@ -518,6 +535,36 @@ impl AppState {
                     self.crawl.dirty_jobs.write().remove(job_id);
                     let pool = pool.clone();
                     tokio::spawn(async move { jobs_db::update_job_full(&pool, &snapshot).await });
+                }
+
+                // Send job completion email
+                if let (Some(ref mailer), Some(ref pool), Some(ref acct_id)) =
+                    (&self.email_client, &self.db_pool, account_id)
+                {
+                    let mailer = mailer.clone();
+                    let pool = pool.clone();
+                    let acct_id = acct_id.clone();
+                    let job_id = job_id.to_string();
+                    let index_uid = index_uid.clone();
+                    let pc = *pages_crawled;
+                    let di = *documents_indexed;
+                    let ds = *duration_secs;
+                    tokio::spawn(async move {
+                        if let Ok(uuid) = uuid::Uuid::parse_str(&acct_id) {
+                            if let Some(email_addr) =
+                                email::get_account_email_for_job_notification(&pool, uuid).await
+                            {
+                                mailer.send_job_completed(
+                                    &email_addr,
+                                    &job_id,
+                                    &index_uid,
+                                    pc,
+                                    di,
+                                    ds,
+                                );
+                            }
+                        }
+                    });
                 }
 
                 // Deduct credits for crawled pages (fire-and-forget)
@@ -563,6 +610,7 @@ impl AppState {
                                     "Job {} ({} pages × {} credits/page)",
                                     job_id, total_pages, cost_per_page
                                 ),
+                                None,
                             )
                             .await
                             {
@@ -626,6 +674,14 @@ impl AppState {
                     });
                 }
 
+                // Capture job info before updating status
+                let (pages_crawled, account_id) = {
+                    let jobs = self.crawl.jobs.read();
+                    jobs.get(job_id)
+                        .map(|j| (j.pages_crawled, j.account_id.clone()))
+                        .unwrap_or((0, None))
+                };
+
                 let updated = self.update_job(job_id, |j| {
                     j.status = JobStatus::Failed;
                     j.error_message = Some(error.clone());
@@ -636,6 +692,26 @@ impl AppState {
                     self.crawl.dirty_jobs.write().remove(job_id);
                     let pool = pool.clone();
                     tokio::spawn(async move { jobs_db::update_job_full(&pool, &snapshot).await });
+                }
+
+                // Send job failure email
+                if let (Some(ref mailer), Some(ref pool), Some(ref acct_id)) =
+                    (&self.email_client, &self.db_pool, &account_id)
+                {
+                    let mailer = mailer.clone();
+                    let pool = pool.clone();
+                    let acct_id = acct_id.clone();
+                    let job_id = job_id.to_string();
+                    let error = error.clone();
+                    tokio::spawn(async move {
+                        if let Ok(uuid) = uuid::Uuid::parse_str(&acct_id) {
+                            if let Some(email_addr) =
+                                email::get_account_email_for_job_notification(&pool, uuid).await
+                            {
+                                mailer.send_job_failed(&email_addr, &job_id, &error, pages_crawled);
+                            }
+                        }
+                    });
                 }
             }
             CrawlEvent::UrlsDiscovered { count, .. } => {
@@ -1866,6 +1942,7 @@ async fn scrape_url(
             scrape_cost,
             "scrape",
             &format!("{} ({} credits)", final_url, scrape_cost),
+            None,
         )
         .await
         {
@@ -2984,6 +3061,7 @@ async fn map_url(
             billing::MAP_CREDITS,
             "map",
             &request.url,
+            None,
         )
         .await
         {
@@ -3211,6 +3289,7 @@ async fn search_url(
             billing::SEARCH_CREDITS,
             "search",
             &format!("{} q={}", request.url, request.q),
+            None,
         )
         .await
         {
@@ -4102,13 +4181,22 @@ pub async fn run_with_bus(
             "dev-jwt-secret-change-in-production".to_string()
         });
         match auth::AuthState::new(db_url, jwt_secret).await {
-            Ok(state) => {
+            Ok(mut state) => {
                 // Auto-apply schema (idempotent — safe to run on every startup)
                 let schema_sql = include_str!("../../../deploy/postgres/init.sql");
                 match sqlx::raw_sql(schema_sql).execute(&state.pool).await {
                     Ok(_) => info!("PostgreSQL schema applied successfully"),
                     Err(e) => warn!(error = %e, "Failed to apply PostgreSQL schema (non-fatal)"),
                 }
+
+                // Initialize email client if RESEND_API_KEY is set
+                if let Some(ref api_key) = args.resend_api_key {
+                    state.email_client = Some(email::EmailClient::new(api_key.clone()));
+                    info!("Transactional emails enabled via Resend");
+                } else {
+                    info!("Transactional emails disabled (RESEND_API_KEY not set)");
+                }
+
                 info!("Authentication enabled via PostgreSQL");
                 Some(Arc::new(state))
             }
@@ -4208,6 +4296,7 @@ pub async fn run_with_bus(
         max_jobs: args.max_jobs,
     };
     let db_pool = auth_state.as_ref().map(|a| a.pool.clone());
+    let email_client = auth_state.as_ref().and_then(|a| a.email_client.clone());
     let state = Arc::new(AppState::new(
         producer,
         config,
@@ -4218,6 +4307,7 @@ pub async fn run_with_bus(
         browser_renderer,
         ai_service,
         db_pool,
+        email_client,
     ));
 
     // Recover active jobs from Postgres on startup
@@ -4461,8 +4551,31 @@ pub async fn run_with_bus(
                                         ),
                                         timestamp: chrono::Utc::now().timestamp_millis(),
                                     };
+                                    let error_msg = format!(
+                                        "Index swap failed: {}. Temp index '{}' preserved for manual recovery.",
+                                        e, temp_index
+                                    );
                                     idle_state.process_event(&job_id, &event);
                                     idle_state.broadcast_event(&job_id, event);
+
+                                    // Send job failure email
+                                    if let (Some(ref mailer), Some(ref pool), Some(ref acct_id)) =
+                                        (&idle_state.email_client, &idle_state.db_pool, &account_id)
+                                    {
+                                        if let Ok(uuid) = uuid::Uuid::parse_str(acct_id) {
+                                            if let Some(email_addr) =
+                                                email::get_account_email_for_job_notification(pool, uuid).await
+                                            {
+                                                mailer.send_job_failed(
+                                                    &email_addr,
+                                                    &job_id,
+                                                    &error_msg,
+                                                    pages_crawled,
+                                                );
+                                            }
+                                        }
+                                    }
+
                                     idle_state.crawl.job_last_activity.write().remove(&job_id);
                                     continue;
                                 }
@@ -4478,7 +4591,7 @@ pub async fn run_with_bus(
 
                         let event = CrawlEvent::JobCompleted {
                             job_id: job_id.clone(),
-                            account_id,
+                            account_id: account_id.clone(),
                             pages_crawled,
                             documents_indexed,
                             errors,
@@ -4489,6 +4602,26 @@ pub async fn run_with_bus(
 
                         idle_state.process_event(&job_id, &event);
                         idle_state.broadcast_event(&job_id, event);
+
+                        // Send job completion email
+                        if let (Some(ref mailer), Some(ref pool), Some(ref acct_id)) =
+                            (&idle_state.email_client, &idle_state.db_pool, &account_id)
+                        {
+                            if let Ok(uuid) = uuid::Uuid::parse_str(acct_id) {
+                                if let Some(email_addr) =
+                                    email::get_account_email_for_job_notification(pool, uuid).await
+                                {
+                                    mailer.send_job_completed(
+                                        &email_addr,
+                                        &job_id,
+                                        &index_uid,
+                                        pages_crawled,
+                                        documents_indexed,
+                                        duration_secs,
+                                    );
+                                }
+                            }
+                        }
 
                         // Clean up activity tracking
                         idle_state.crawl.job_last_activity.write().remove(&job_id);
@@ -4624,6 +4757,7 @@ pub async fn run_with_bus(
                 .merge(stripe::stripe_webhook_route(
                     auth.pool.clone(),
                     stripe_state,
+                    auth.email_client.clone(),
                 ));
             info!("Stripe routes enabled (/account/billing/setup-intent, /account/billing/payment-methods, /account/billing/purchase, /webhooks/stripe)");
         }
