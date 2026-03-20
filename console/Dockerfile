@@ -12,6 +12,14 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
+
+# Next.js inlines NEXT_PUBLIC_* vars at build time, so they must be
+# available as build args when deploying via Docker (e.g. Heroku).
+ARG NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
+ARG NEXT_PUBLIC_SCRAPIX_API_URL
+ENV NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=$NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
+ENV NEXT_PUBLIC_SCRAPIX_API_URL=$NEXT_PUBLIC_SCRAPIX_API_URL
+
 RUN npm run build
 
 # Stage 3: Production runner
