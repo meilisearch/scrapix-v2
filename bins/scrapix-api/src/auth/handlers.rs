@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::Row;
 use std::sync::Arc;
-use tracing::info;
+use tracing::{error, info};
 
 use super::{jwt, password, AuthState, AuthenticatedUser};
 
@@ -948,12 +948,16 @@ pub(crate) async fn topup_credits(
 
     let account_id = get_user_account_id(&state.pool, user.user_id)
         .await
-        .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
+        .map_err(|e| {
+            error!(user_id = %user.user_id, "topup: failed to get account_id: {e:?}");
+            err(StatusCode::NOT_FOUND, "Account not found", "not_found")
+        })?;
 
     // Check monthly spend limit
     check_spend_limit(&state.pool, account_id, req.amount).await?;
 
-    let mut tx = state.pool.begin().await.map_err(|_| {
+    let mut tx = state.pool.begin().await.map_err(|e| {
+        error!(account_id = %account_id, "topup: failed to begin transaction: {e}");
         err(
             StatusCode::INTERNAL_SERVER_ERROR,
             "Database error",
@@ -968,7 +972,8 @@ pub(crate) async fn topup_credits(
     .bind(account_id)
     .fetch_one(&mut *tx)
     .await
-    .map_err(|_| {
+    .map_err(|e| {
+        error!(account_id = %account_id, amount = req.amount, "topup: failed to update balance: {e}");
         err(StatusCode::INTERNAL_SERVER_ERROR, "Failed to update balance", "internal_error")
     })?;
 
@@ -981,7 +986,8 @@ pub(crate) async fn topup_credits(
     .bind(new_balance)
     .fetch_one(&mut *tx)
     .await
-    .map_err(|_| {
+    .map_err(|e| {
+        error!(account_id = %account_id, "topup: failed to insert transaction: {e}");
         err(
             StatusCode::INTERNAL_SERVER_ERROR,
             "Failed to log transaction",
@@ -989,7 +995,8 @@ pub(crate) async fn topup_credits(
         )
     })?;
 
-    tx.commit().await.map_err(|_| {
+    tx.commit().await.map_err(|e| {
+        error!(account_id = %account_id, "topup: failed to commit: {e}");
         err(
             StatusCode::INTERNAL_SERVER_ERROR,
             "Database error",
@@ -1216,7 +1223,8 @@ async fn check_spend_limit(
         .bind(account_id)
         .fetch_optional(pool)
         .await
-        .map_err(|_| {
+        .map_err(|e| {
+            error!(account_id = %account_id, "check_spend_limit: failed to query account: {e}");
             err(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Database error",
@@ -1237,7 +1245,8 @@ async fn check_spend_limit(
         .bind(account_id)
         .fetch_one(pool)
         .await
-        .map_err(|_| {
+        .map_err(|e| {
+            error!(account_id = %account_id, "check_spend_limit: failed to sum transactions: {e}");
             err(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Database error",

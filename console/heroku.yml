@@ -1,3 +1,6 @@
 build:
   docker:
     web: Dockerfile
+  config:
+    NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_51TAwQdRGrCEv0wspTJFC1nDzrfhVwg2pxBtfAplfdjdTDkB8kOxrVAodNPYjehdMhIzTCY4HUnJ6I21ELXuKiXDq00pDyrnwvj
+    NEXT_PUBLIC_SCRAPIX_API_URL: https://api.scrapix.meilisearch.com
