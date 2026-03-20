@@ -181,7 +181,7 @@ function fillBillingDailyGaps(
 // ---------------------------------------------------------------------------
 
 export default function UsagePage() {
-  const [rangeIdx, setRangeIdx] = useState(0);
+  const [rangeIdx, setRangeIdx] = useState(2);
   const range = TIME_RANGES[rangeIdx];
   const useDaily = range.granularity === "daily";
 
