@@ -328,14 +328,14 @@ export interface PurchaseResponse {
 
 export interface InvoiceInfo {
   id: string;
+  number: string | null;
   amount_cents: number;
   credits: number | null;
   status: string;
   description: string | null;
-  card_brand: string | null;
-  card_last4: string | null;
   created_at: string;
-  receipt_url: string | null;
+  invoice_pdf: string | null;
+  hosted_invoice_url: string | null;
 }
 
 // ============================================================================

@@ -1,6 +1,6 @@
 //! Stripe payment integration.
 //!
-//! Handles customer creation, payment methods, credit purchases via PaymentIntents,
+//! Handles customer creation, payment methods, credit purchases via Invoices,
 //! and webhook processing. All UI is custom — Stripe is used purely as a backend
 //! payment engine.
 
@@ -16,8 +16,9 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use std::sync::Arc;
 use stripe::{
-    Client as StripeClient, CreateCustomer, CreatePaymentIntent, CreateSetupIntent, Currency,
-    Customer, CustomerId, EventObject, EventType, ListPaymentIntents, ListPaymentMethods,
+    Client as StripeClient, CreateCustomer, CreateInvoice, CreateInvoiceItem, CreateSetupIntent,
+    Currency, Customer, CustomerId, EventObject, EventType, Invoice,
+    InvoicePendingInvoiceItemsBehavior, InvoiceStatus, ListInvoices, ListPaymentMethods,
     PaymentIntent, PaymentIntentStatus, PaymentMethod, PaymentMethodId, PaymentMethodTypeFilter,
     SetupIntent, Webhook,
 };
@@ -117,14 +118,14 @@ pub(crate) struct MessageResponse {
 #[derive(Serialize)]
 pub(crate) struct InvoiceResponse {
     id: String,
+    number: Option<String>,
     amount_cents: i64,
     credits: Option<i64>,
     status: String,
     description: Option<String>,
-    card_brand: Option<String>,
-    card_last4: Option<String>,
     created_at: String,
-    receipt_url: Option<String>,
+    invoice_pdf: Option<String>,
+    hosted_invoice_url: Option<String>,
 }
 
 type ApiError = (StatusCode, Json<StripeErrorBody>);
@@ -509,9 +510,9 @@ async fn set_default_payment_method(
 
 /// POST /account/billing/purchase
 ///
-/// Purchase a credit pack. Creates a PaymentIntent and charges the saved
-/// payment method. If 3D Secure is required, returns `requires_action` with
-/// a `client_secret` for the frontend to handle.
+/// Purchase a credit pack. Creates a Stripe Invoice with line items, finalizes
+/// and pays it. This generates a proper invoice with PDF. If 3D Secure is
+/// required, returns `requires_action` with a `client_secret` for the frontend.
 async fn purchase_credits(
     State(state): State<Arc<AuthState>>,
     Extension(user): Extension<AuthenticatedUser>,
@@ -558,52 +559,38 @@ async fn purchase_credits(
         }
     };
 
-    let pm_id: PaymentMethodId = pm_id.parse().map_err(|_| {
-        err(
-            StatusCode::BAD_REQUEST,
-            "Invalid payment method ID",
-            "validation_error",
-        )
-    })?;
+    // Create the invoice, pay it, and add credits
+    let invoice = create_and_pay_invoice(
+        &stripe_state.client,
+        customer_id,
+        account_id,
+        &pm_id,
+        req.credits,
+        amount_cents,
+        "credit_purchase",
+    )
+    .await?;
 
-    // Create PaymentIntent
-    let mut params = CreatePaymentIntent::new(amount_cents, Currency::USD);
-    params.customer = Some(customer_id);
-    params.payment_method = Some(pm_id);
-    params.confirm = Some(true);
-    params.off_session = Some(stripe::PaymentIntentOffSession::Exists(true));
-    params.metadata = Some(
-        [
-            ("scrapix_account_id".to_string(), account_id.to_string()),
-            ("credits".to_string(), req.credits.to_string()),
-            ("type".to_string(), "credit_purchase".to_string()),
-        ]
-        .into_iter()
-        .collect(),
-    );
-    let description = format!("Scrapix: {} credits", req.credits);
-    params.description = Some(&description);
+    // Check the payment intent status on the paid invoice
+    let pi_status = invoice
+        .payment_intent
+        .as_ref()
+        .and_then(|pi| pi.as_object())
+        .map(|pi| pi.status);
 
-    let pi = PaymentIntent::create(&stripe_state.client, params)
-        .await
-        .map_err(|e| {
-            error!(error = %e, "Failed to create PaymentIntent");
-            err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Payment failed. Please try again or use a different card.",
-                "stripe_error",
-            )
-        })?;
+    match pi_status {
+        Some(PaymentIntentStatus::Succeeded) => {
+            let pi_id = invoice
+                .payment_intent
+                .as_ref()
+                .map(|pi| pi.id().to_string())
+                .unwrap_or_default();
 
-    match pi.status {
-        PaymentIntentStatus::Succeeded => {
-            // Payment succeeded immediately — credits will be added by webhook
-            // but we also add them here for instant feedback
             add_credits_for_payment(
                 &state.pool,
                 account_id,
                 req.credits,
-                pi.id.as_ref(),
+                &pi_id,
                 "Credit purchase",
             )
             .await?;
@@ -616,18 +603,23 @@ async fn purchase_credits(
                 message: format!("{} credits added to your account", req.credits),
             }))
         }
-        PaymentIntentStatus::RequiresAction => {
-            // 3D Secure or other action needed — return client_secret to frontend
+        Some(PaymentIntentStatus::RequiresAction) => {
+            let client_secret = invoice
+                .payment_intent
+                .as_ref()
+                .and_then(|pi| pi.as_object())
+                .and_then(|pi| pi.client_secret.clone());
+
             Ok(Json(PurchaseResponse {
                 status: "requires_action".to_string(),
-                client_secret: pi.client_secret,
+                client_secret,
                 credits: req.credits,
                 amount_cents,
                 message: "Additional authentication required".to_string(),
             }))
         }
         other => {
-            warn!(status = ?other, pi_id = %pi.id, "Unexpected PaymentIntent status");
+            warn!(status = ?other, invoice_id = %invoice.id, "Unexpected payment status on invoice");
             Err(err(
                 StatusCode::BAD_REQUEST,
                 "Payment could not be processed",
@@ -635,6 +627,109 @@ async fn purchase_credits(
             ))
         }
     }
+}
+
+/// Create a Stripe Invoice with a line item, finalize it, and pay it.
+/// Returns the paid Invoice object (with `invoice_pdf`, `hosted_invoice_url`, etc.).
+async fn create_and_pay_invoice(
+    stripe: &StripeClient,
+    customer_id: CustomerId,
+    account_id: uuid::Uuid,
+    payment_method_id: &str,
+    credits: i64,
+    amount_cents: i64,
+    purchase_type: &str,
+) -> Result<Invoice, ApiError> {
+    // 1. Create an invoice item (pending, attached to customer)
+    let item_description = format!("Scrapix: {} credits", credits);
+    let mut item_params = CreateInvoiceItem::new(customer_id.clone());
+    item_params.amount = Some(amount_cents);
+    item_params.currency = Some(Currency::USD);
+    item_params.description = Some(&item_description);
+
+    stripe::InvoiceItem::create(stripe, item_params)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "Failed to create InvoiceItem");
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to create invoice item",
+                "stripe_error",
+            )
+        })?;
+
+    // 2. Create a draft invoice (picks up the pending invoice item)
+    let description = format!("Scrapix: {} credits", credits);
+    let mut invoice_params = CreateInvoice::new();
+    invoice_params.customer = Some(customer_id);
+    invoice_params.collection_method = Some(stripe::CollectionMethod::ChargeAutomatically);
+    invoice_params.auto_advance = Some(false); // we'll finalize and pay manually
+    invoice_params.default_payment_method = Some(payment_method_id);
+    invoice_params.description = Some(&description);
+    invoice_params.pending_invoice_items_behavior =
+        Some(InvoicePendingInvoiceItemsBehavior::Include);
+    invoice_params.metadata = Some(
+        [
+            ("scrapix_account_id".to_string(), account_id.to_string()),
+            ("credits".to_string(), credits.to_string()),
+            ("type".to_string(), purchase_type.to_string()),
+        ]
+        .into_iter()
+        .collect(),
+    );
+
+    let invoice = Invoice::create(stripe, invoice_params)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "Failed to create Invoice");
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to create invoice",
+                "stripe_error",
+            )
+        })?;
+
+    // 3. Finalize the invoice
+    let invoice: Invoice = stripe
+        .post_form(
+            &format!("/invoices/{}/finalize", invoice.id),
+            [("auto_advance", "false")],
+        )
+        .await
+        .map_err(|e| {
+            error!(error = %e, invoice_id = %invoice.id, "Failed to finalize invoice");
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to finalize invoice",
+                "stripe_error",
+            )
+        })?;
+
+    // 4. Pay the invoice — expands the payment_intent so we can check its status
+    let invoice: Invoice = stripe
+        .post_form(
+            &format!("/invoices/{}/pay", invoice.id),
+            [("expand[]", "payment_intent")],
+        )
+        .await
+        .map_err(|e| {
+            error!(error = %e, invoice_id = %invoice.id, "Failed to pay invoice");
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Payment failed. Please try again or use a different card.",
+                "stripe_error",
+            )
+        })?;
+
+    info!(
+        account_id = %account_id,
+        invoice_id = %invoice.id,
+        credits,
+        amount_cents,
+        "Invoice created and paid"
+    );
+
+    Ok(invoice)
 }
 
 /// Add credits to an account after a successful payment.
@@ -772,6 +867,11 @@ async fn stripe_webhook(
     })?;
 
     match event.type_ {
+        EventType::InvoicePaid => {
+            if let EventObject::Invoice(inv) = event.data.object {
+                handle_invoice_paid(&pool, &inv, email_client.as_ref()).await;
+            }
+        }
         EventType::PaymentIntentSucceeded => {
             if let EventObject::PaymentIntent(pi) = event.data.object {
                 handle_payment_intent_succeeded(&pool, &pi, email_client.as_ref()).await;
@@ -796,6 +896,80 @@ async fn stripe_webhook(
     }
 
     Ok(StatusCode::OK)
+}
+
+async fn handle_invoice_paid(
+    pool: &sqlx::PgPool,
+    inv: &Invoice,
+    email_client: Option<&EmailClient>,
+) {
+    let metadata = match &inv.metadata {
+        Some(m) => m,
+        None => {
+            warn!(invoice_id = %inv.id, "Invoice missing metadata");
+            return;
+        }
+    };
+
+    let account_id_str = match metadata.get("scrapix_account_id") {
+        Some(id) => id.clone(),
+        None => {
+            // Not a Scrapix invoice — ignore
+            return;
+        }
+    };
+
+    let credits_str = match metadata.get("credits") {
+        Some(c) => c.clone(),
+        None => {
+            warn!(invoice_id = %inv.id, "Invoice missing credits metadata");
+            return;
+        }
+    };
+
+    let account_id: uuid::Uuid = match account_id_str.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            warn!(invoice_id = %inv.id, "Invalid account_id in invoice metadata");
+            return;
+        }
+    };
+
+    let credits: i64 = match credits_str.parse() {
+        Ok(c) => c,
+        Err(_) => {
+            warn!(invoice_id = %inv.id, "Invalid credits in invoice metadata");
+            return;
+        }
+    };
+
+    // Use the invoice's payment_intent ID for idempotency
+    let pi_id = inv
+        .payment_intent
+        .as_ref()
+        .map(|pi| pi.id().to_string())
+        .unwrap_or_else(|| inv.id.to_string());
+
+    if let Err(e) = add_credits_for_payment(
+        pool,
+        account_id,
+        credits,
+        &pi_id,
+        "Credit purchase (Invoice)",
+    )
+    .await
+    {
+        error!(error = ?e, invoice_id = %inv.id, "Failed to add credits from invoice webhook");
+        return;
+    }
+
+    // Send payment receipt email
+    if let Some(mailer) = email_client {
+        let amount_cents = inv.amount_paid.unwrap_or(0);
+        if let Some(email) = crate::email::get_account_email(pool, account_id).await {
+            mailer.send_payment_receipt(&email, credits, amount_cents);
+        }
+    }
 }
 
 async fn handle_payment_intent_succeeded(
@@ -932,7 +1106,6 @@ pub async fn charge_auto_topup(
     let pm_id = pm_id.ok_or("No default payment method for auto-topup")?;
 
     let cid: CustomerId = customer_id.parse().map_err(|_| "Invalid customer ID")?;
-    let pm: PaymentMethodId = pm_id.parse().map_err(|_| "Invalid payment method ID")?;
 
     // Calculate price — for auto-topup, use the closest pack or pro-rate
     let amount_cents = price_for_credits(credits).unwrap_or_else(|| {
@@ -940,52 +1113,40 @@ pub async fn charge_auto_topup(
         ((credits as f64) * 0.8).ceil() as i64
     });
 
-    let mut params = CreatePaymentIntent::new(amount_cents, Currency::USD);
-    params.customer = Some(cid);
-    params.payment_method = Some(pm);
-    params.confirm = Some(true);
-    params.off_session = Some(stripe::PaymentIntentOffSession::Exists(true));
-    params.metadata = Some(
-        [
-            ("scrapix_account_id".to_string(), account_id.to_string()),
-            ("credits".to_string(), credits.to_string()),
-            ("type".to_string(), "auto_topup".to_string()),
-        ]
-        .into_iter()
-        .collect(),
-    );
-    let description = format!("Scrapix auto-topup: {} credits", credits);
-    params.description = Some(&description);
-
-    let pi = PaymentIntent::create(stripe, params)
+    let invoice = create_and_pay_invoice(stripe, cid, account_id, &pm_id, credits, amount_cents, "auto_topup")
         .await
-        .map_err(|e| format!("Stripe error: {e}"))?;
+        .map_err(|e| format!("Invoice error: {}", e.1.error))?;
 
-    if pi.status == PaymentIntentStatus::Succeeded {
-        // Credits will be added by the webhook, but also add here for immediacy
-        add_credits_for_payment(
-            pool,
-            account_id,
-            credits,
-            pi.id.as_ref(),
-            "Auto top-up (Stripe)",
-        )
-        .await
-        .map_err(|e| format!("Failed to add credits: {}", e.0))?;
+    let pi_status = invoice
+        .payment_intent
+        .as_ref()
+        .and_then(|pi| pi.as_object())
+        .map(|pi| pi.status);
+
+    if pi_status == Some(PaymentIntentStatus::Succeeded) {
+        let pi_id = invoice
+            .payment_intent
+            .as_ref()
+            .map(|pi| pi.id().to_string())
+            .unwrap_or_default();
+
+        add_credits_for_payment(pool, account_id, credits, &pi_id, "Auto top-up (Stripe)")
+            .await
+            .map_err(|e| format!("Failed to add credits: {}", e.0))?;
     } else {
-        return Err(format!("Auto-topup payment status: {:?}", pi.status));
+        return Err(format!("Auto-topup payment status: {:?}", pi_status));
     }
 
     Ok(())
 }
 
 // ============================================================================
-// Invoices (payment history)
+// Invoices
 // ============================================================================
 
 /// GET /account/billing/invoices
 ///
-/// List successful payments (charges) for the account from Stripe.
+/// List actual Stripe Invoices for the account, with PDF download links.
 async fn list_invoices(
     State(state): State<Arc<AuthState>>,
     Extension(user): Extension<AuthenticatedUser>,
@@ -1021,14 +1182,15 @@ async fn list_invoices(
         )
     })?;
 
-    let mut params = ListPaymentIntents::new();
+    let mut params = ListInvoices::new();
     params.customer = Some(cid);
+    params.status = Some(InvoiceStatus::Paid);
     params.limit = Some(50);
 
-    let intents = PaymentIntent::list(&stripe_state.client, &params)
+    let stripe_invoices = Invoice::list(&stripe_state.client, &params)
         .await
         .map_err(|e| {
-            error!(error = %e, "Failed to list payment intents");
+            error!(error = %e, "Failed to list invoices");
             err(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Failed to list invoices",
@@ -1036,47 +1198,35 @@ async fn list_invoices(
             )
         })?;
 
-    let invoices: Vec<InvoiceResponse> = intents
+    let invoices: Vec<InvoiceResponse> = stripe_invoices
         .data
         .iter()
-        .filter(|pi| pi.status == PaymentIntentStatus::Succeeded)
-        .map(|pi| {
-            let credits = pi
+        .map(|inv| {
+            let credits = inv
                 .metadata
-                .get("credits")
+                .as_ref()
+                .and_then(|m| m.get("credits"))
                 .and_then(|c| c.parse::<i64>().ok());
 
-            let (card_brand, card_last4) = pi
-                .latest_charge
-                .as_ref()
-                .and_then(|c| c.as_object())
-                .and_then(|charge| {
-                    charge
-                        .payment_method_details
-                        .as_ref()
-                        .and_then(|d| d.card.as_ref())
-                        .map(|card| (card.brand.clone(), card.last4.clone()))
-                })
-                .unwrap_or((None, None));
-
-            let receipt_url = pi
-                .latest_charge
-                .as_ref()
-                .and_then(|c| c.as_object())
-                .and_then(|charge| charge.receipt_url.clone());
+            let status = inv
+                .status
+                .map(|s| s.as_str().to_string())
+                .unwrap_or_else(|| "unknown".to_string());
 
             InvoiceResponse {
-                id: pi.id.to_string(),
-                amount_cents: pi.amount,
+                id: inv.id.to_string(),
+                number: inv.number.clone(),
+                amount_cents: inv.amount_paid.unwrap_or(0),
                 credits,
-                status: "paid".to_string(),
-                description: pi.description.clone(),
-                card_brand,
-                card_last4,
-                created_at: chrono::DateTime::from_timestamp(pi.created, 0)
+                status,
+                description: inv.description.clone(),
+                created_at: inv
+                    .created
+                    .and_then(|ts| chrono::DateTime::from_timestamp(ts, 0))
                     .map(|dt| dt.to_rfc3339())
                     .unwrap_or_default(),
-                receipt_url,
+                invoice_pdf: inv.invoice_pdf.clone(),
+                hosted_invoice_url: inv.hosted_invoice_url.clone(),
             }
         })
         .collect();

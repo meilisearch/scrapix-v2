@@ -56,6 +56,7 @@ import {
   Loader2,
   Receipt,
   ExternalLink,
+  FileDown,
   Info,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -1007,7 +1008,7 @@ export default function BillingPage() {
               Invoices
             </CardTitle>
             <CardDescription>
-              Payment receipts from Stripe
+              Download invoices and receipts
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -1025,27 +1026,25 @@ export default function BillingPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead>Invoice</TableHead>
                     <TableHead>Date</TableHead>
                     <TableHead>Description</TableHead>
-                    <TableHead>Payment</TableHead>
                     <TableHead className="text-right">Amount</TableHead>
                     <TableHead className="text-right">Credits</TableHead>
-                    <TableHead />
+                    <TableHead className="text-right">PDF</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {invoices.map((inv) => (
                     <TableRow key={inv.id}>
+                      <TableCell className="text-sm font-mono">
+                        {inv.number ?? "—"}
+                      </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
                         {format(new Date(inv.created_at), "MMM d, yyyy")}
                       </TableCell>
                       <TableCell className="text-sm">
                         {inv.description || "Credit purchase"}
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {inv.card_brand && inv.card_last4
-                          ? `${inv.card_brand} ····${inv.card_last4}`
-                          : "—"}
                       </TableCell>
                       <TableCell className="text-right font-mono text-sm">
                         ${(inv.amount_cents / 100).toFixed(2)}
@@ -1054,16 +1053,30 @@ export default function BillingPage() {
                         {inv.credits?.toLocaleString() ?? "—"}
                       </TableCell>
                       <TableCell className="text-right">
-                        {inv.receipt_url && (
-                          <a
-                            href={inv.receipt_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-                          >
-                            <ExternalLink className="h-3.5 w-3.5" />
-                          </a>
-                        )}
+                        <div className="flex items-center justify-end gap-1">
+                          {inv.invoice_pdf && (
+                            <a
+                              href={inv.invoice_pdf}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+                              title="Download PDF"
+                            >
+                              <FileDown className="h-3.5 w-3.5" />
+                            </a>
+                          )}
+                          {inv.hosted_invoice_url && (
+                            <a
+                              href={inv.hosted_invoice_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+                              title="View invoice"
+                            >
+                              <ExternalLink className="h-3.5 w-3.5" />
+                            </a>
+                          )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
