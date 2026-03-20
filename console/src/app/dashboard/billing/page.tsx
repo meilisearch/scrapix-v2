@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useCallback } from "react";
-import { useBilling, useTransactions, useAllTransactions, useMe, usePaymentMethods } from "@/lib/hooks";
+import { useBilling, useTransactions, useAllTransactions, useMe, usePaymentMethods, useInvoices } from "@/lib/hooks";
 import {
   topupCredits,
   updateAutoTopup,
@@ -46,6 +46,8 @@ import {
   Trash2,
   Star,
   Loader2,
+  Receipt,
+  ExternalLink,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDistanceToNow, format, parseISO, eachDayOfInterval, startOfDay } from "date-fns";
@@ -179,6 +181,7 @@ export default function BillingPage() {
   const { data: user, isLoading: userLoading } = useMe();
   const { data: billing, isLoading: billingLoading } = useBilling();
   const { data: paymentMethods, isLoading: pmLoading } = usePaymentMethods();
+  const { data: invoices, isLoading: invoicesLoading } = useInvoices();
   const [txOffset, setTxOffset] = useState(0);
   const { data: txData, isLoading: txLoading } = useTransactions(TX_PAGE_SIZE, txOffset);
   const { data: allTxData } = useAllTransactions();
@@ -921,6 +924,82 @@ export default function BillingPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Invoices */}
+      {hasStripe && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Receipt className="h-5 w-5" />
+              Invoices
+            </CardTitle>
+            <CardDescription>
+              Payment receipts from Stripe
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {invoicesLoading ? (
+              <div className="space-y-2">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <Skeleton key={i} className="h-10 w-full" />
+                ))}
+              </div>
+            ) : !invoices?.length ? (
+              <p className="text-sm text-muted-foreground py-4 text-center">
+                No invoices yet
+              </p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Date</TableHead>
+                    <TableHead>Description</TableHead>
+                    <TableHead>Payment</TableHead>
+                    <TableHead className="text-right">Amount</TableHead>
+                    <TableHead className="text-right">Credits</TableHead>
+                    <TableHead />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {invoices.map((inv) => (
+                    <TableRow key={inv.id}>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {format(new Date(inv.created_at), "MMM d, yyyy")}
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {inv.description || "Credit purchase"}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {inv.card_brand && inv.card_last4
+                          ? `${inv.card_brand} ····${inv.card_last4}`
+                          : "—"}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm">
+                        ${(inv.amount_cents / 100).toFixed(2)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm">
+                        {inv.credits?.toLocaleString() ?? "—"}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {inv.receipt_url && (
+                          <a
+                            href={inv.receipt_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" />
+                          </a>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

@@ -326,6 +326,18 @@ export interface PurchaseResponse {
   message: string;
 }
 
+export interface InvoiceInfo {
+  id: string;
+  amount_cents: number;
+  credits: number | null;
+  status: string;
+  description: string | null;
+  card_brand: string | null;
+  card_last4: string | null;
+  created_at: string;
+  receipt_url: string | null;
+}
+
 // ============================================================================
 // Analytics (Tinybird-style responses)
 // ============================================================================

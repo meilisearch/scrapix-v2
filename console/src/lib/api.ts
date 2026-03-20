@@ -30,6 +30,7 @@ import type {
   SetupIntentResponse,
   PaymentMethodInfo,
   PurchaseResponse,
+  InvoiceInfo,
 } from "./api-types";
 
 // API calls go through Next.js rewrites (/api/scrapix/* → backend) to avoid CORS.
@@ -417,4 +418,8 @@ export async function purchaseCredits(credits: number, paymentMethodId?: string)
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ credits, payment_method_id: paymentMethodId }),
   });
+}
+
+export async function fetchInvoices(): Promise<InvoiceInfo[]> {
+  return request("/account/billing/invoices");
 }

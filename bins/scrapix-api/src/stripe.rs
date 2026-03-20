@@ -17,13 +17,14 @@ use sqlx::Row;
 use std::sync::Arc;
 use stripe::{
     Client as StripeClient, CreateCustomer, CreatePaymentIntent, CreateSetupIntent, Currency,
-    Customer, CustomerId, EventObject, EventType, ListPaymentMethods, PaymentIntent,
-    PaymentIntentStatus, PaymentMethod, PaymentMethodId, PaymentMethodTypeFilter, SetupIntent,
-    Webhook,
+    Customer, CustomerId, EventObject, EventType, ListPaymentIntents, ListPaymentMethods,
+    PaymentIntent, PaymentIntentStatus, PaymentMethod, PaymentMethodId, PaymentMethodTypeFilter,
+    SetupIntent, Webhook,
 };
 use tracing::{error, info, warn};
 
 use crate::auth::{AuthState, AuthenticatedUser};
+use crate::email::EmailClient;
 
 // ============================================================================
 // Credit pack definitions
@@ -42,6 +43,11 @@ fn price_for_credits(credits: i64) -> Option<i64> {
         .iter()
         .find(|(c, _)| *c == credits)
         .map(|(_, price)| *price)
+}
+
+/// Public wrapper for price lookup, used by billing module for email receipts.
+pub fn price_for_credits_pub(credits: i64) -> i64 {
+    price_for_credits(credits).unwrap_or_else(|| ((credits as f64) * 0.8).ceil() as i64)
 }
 
 // ============================================================================
@@ -106,6 +112,19 @@ pub struct SetDefaultPaymentMethodRequest {
 #[derive(Serialize)]
 pub(crate) struct MessageResponse {
     message: String,
+}
+
+#[derive(Serialize)]
+pub(crate) struct InvoiceResponse {
+    id: String,
+    amount_cents: i64,
+    credits: Option<i64>,
+    status: String,
+    description: Option<String>,
+    card_brand: Option<String>,
+    card_last4: Option<String>,
+    created_at: String,
+    receipt_url: Option<String>,
 }
 
 type ApiError = (StatusCode, Json<StripeErrorBody>);
@@ -720,6 +739,7 @@ async fn add_credits_for_payment(
 async fn stripe_webhook(
     Extension(stripe_state): Extension<StripeState>,
     Extension(pool): Extension<sqlx::PgPool>,
+    Extension(email_client): Extension<Option<EmailClient>>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<StatusCode, (StatusCode, String)> {
@@ -754,7 +774,7 @@ async fn stripe_webhook(
     match event.type_ {
         EventType::PaymentIntentSucceeded => {
             if let EventObject::PaymentIntent(pi) = event.data.object {
-                handle_payment_intent_succeeded(&pool, &pi).await;
+                handle_payment_intent_succeeded(&pool, &pi, email_client.as_ref()).await;
             }
         }
         EventType::PaymentIntentPaymentFailed => {
@@ -778,7 +798,11 @@ async fn stripe_webhook(
     Ok(StatusCode::OK)
 }
 
-async fn handle_payment_intent_succeeded(pool: &sqlx::PgPool, pi: &PaymentIntent) {
+async fn handle_payment_intent_succeeded(
+    pool: &sqlx::PgPool,
+    pi: &PaymentIntent,
+    email_client: Option<&EmailClient>,
+) {
     let metadata = &pi.metadata;
 
     let account_id_str = match metadata.get("scrapix_account_id") {
@@ -823,6 +847,15 @@ async fn handle_payment_intent_succeeded(pool: &sqlx::PgPool, pi: &PaymentIntent
     .await
     {
         error!(error = ?e, pi_id = %pi.id, "Failed to add credits from webhook");
+        return;
+    }
+
+    // Send payment receipt email
+    if let Some(mailer) = email_client {
+        let amount_cents = pi.amount;
+        if let Some(email) = crate::email::get_account_email(pool, account_id).await {
+            mailer.send_payment_receipt(&email, credits, amount_cents);
+        }
     }
 }
 
@@ -947,6 +980,111 @@ pub async fn charge_auto_topup(
 }
 
 // ============================================================================
+// Invoices (payment history)
+// ============================================================================
+
+/// GET /account/billing/invoices
+///
+/// List successful payments (charges) for the account from Stripe.
+async fn list_invoices(
+    State(state): State<Arc<AuthState>>,
+    Extension(user): Extension<AuthenticatedUser>,
+    Extension(stripe_state): Extension<StripeState>,
+) -> Result<Json<Vec<InvoiceResponse>>, ApiError> {
+    let account_id = get_account_id(&state.pool, user.user_id).await?;
+
+    let customer_id: Option<String> =
+        sqlx::query_scalar("SELECT stripe_customer_id FROM accounts WHERE id = $1")
+            .bind(account_id)
+            .fetch_optional(&state.pool)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "DB error fetching stripe_customer_id");
+                err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Database error",
+                    "internal_error",
+                )
+            })?
+            .flatten();
+
+    let customer_id = match customer_id {
+        Some(c) => c,
+        None => return Ok(Json(vec![])),
+    };
+
+    let cid: CustomerId = customer_id.parse().map_err(|_| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Invalid stripe customer ID",
+            "internal_error",
+        )
+    })?;
+
+    let mut params = ListPaymentIntents::new();
+    params.customer = Some(cid);
+    params.limit = Some(50);
+
+    let intents = PaymentIntent::list(&stripe_state.client, &params)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "Failed to list payment intents");
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to list invoices",
+                "stripe_error",
+            )
+        })?;
+
+    let invoices: Vec<InvoiceResponse> = intents
+        .data
+        .iter()
+        .filter(|pi| pi.status == PaymentIntentStatus::Succeeded)
+        .map(|pi| {
+            let credits = pi
+                .metadata
+                .get("credits")
+                .and_then(|c| c.parse::<i64>().ok());
+
+            let (card_brand, card_last4) = pi
+                .latest_charge
+                .as_ref()
+                .and_then(|c| c.as_object())
+                .and_then(|charge| {
+                    charge
+                        .payment_method_details
+                        .as_ref()
+                        .and_then(|d| d.card.as_ref())
+                        .map(|card| (card.brand.clone(), card.last4.clone()))
+                })
+                .unwrap_or((None, None));
+
+            let receipt_url = pi
+                .latest_charge
+                .as_ref()
+                .and_then(|c| c.as_object())
+                .and_then(|charge| charge.receipt_url.clone());
+
+            InvoiceResponse {
+                id: pi.id.to_string(),
+                amount_cents: pi.amount,
+                credits,
+                status: "paid".to_string(),
+                description: pi.description.clone(),
+                card_brand,
+                card_last4,
+                created_at: chrono::DateTime::from_timestamp(pi.created, 0)
+                    .map(|dt| dt.to_rfc3339())
+                    .unwrap_or_default(),
+                receipt_url,
+            }
+        })
+        .collect();
+
+    Ok(Json(invoices))
+}
+
+// ============================================================================
 // Router
 // ============================================================================
 
@@ -967,6 +1105,7 @@ pub fn stripe_session_routes(state: Arc<AuthState>, stripe_state: StripeState) -
             axum::routing::patch(set_default_payment_method),
         )
         .route("/account/billing/purchase", post(purchase_credits))
+        .route("/account/billing/invoices", get(list_invoices))
         .layer(Extension(stripe_state))
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -976,9 +1115,14 @@ pub fn stripe_session_routes(state: Arc<AuthState>, stripe_state: StripeState) -
 }
 
 /// Stripe webhook route (no auth — verified by Stripe signature).
-pub fn stripe_webhook_route(pool: sqlx::PgPool, stripe_state: StripeState) -> Router {
+pub fn stripe_webhook_route(
+    pool: sqlx::PgPool,
+    stripe_state: StripeState,
+    email_client: Option<EmailClient>,
+) -> Router {
     Router::new()
         .route("/webhooks/stripe", post(stripe_webhook))
         .layer(Extension(stripe_state))
         .layer(Extension(pool))
+        .layer(Extension(email_client))
 }
