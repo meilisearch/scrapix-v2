@@ -395,96 +395,121 @@ export default function BillingPage() {
                   How credits work
                 </Button>
               </SheetTrigger>
-              <SheetContent className="overflow-y-auto sm:max-w-lg">
-                <SheetHeader>
-                  <SheetTitle>How credits work</SheetTitle>
+              <SheetContent className="overflow-y-auto sm:max-w-xl">
+                <SheetHeader className="pb-2">
+                  <SheetTitle className="text-lg">How credits work</SheetTitle>
                   <SheetDescription>
                     Credits are consumed per API call. Cost depends on the endpoint and features you enable.
                   </SheetDescription>
                 </SheetHeader>
-                <div className="space-y-6 pt-6">
+                <div className="space-y-8 px-1 pt-4 pb-8">
                   {/* /scrape */}
-                  <div className="space-y-2">
-                    <h4 className="text-sm font-semibold">/scrape</h4>
-                    <p className="text-sm text-muted-foreground">
-                      1 credit minimum per request. Base formats (<code className="text-xs bg-muted px-1 py-0.5 rounded">html</code>, <code className="text-xs bg-muted px-1 py-0.5 rounded">rawHtml</code>, <code className="text-xs bg-muted px-1 py-0.5 rounded">content</code>) are free.
+                  <div className="space-y-3">
+                    <h4 className="font-semibold">/scrape</h4>
+                    <p className="text-sm text-muted-foreground leading-relaxed">
+                      1 credit minimum per request. Base formats (<code className="text-xs bg-muted px-1.5 py-0.5 rounded">html</code>, <code className="text-xs bg-muted px-1.5 py-0.5 rounded">rawHtml</code>, <code className="text-xs bg-muted px-1.5 py-0.5 rounded">content</code>) are free.
                     </p>
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Component</TableHead>
-                          <TableHead className="text-right">Credits</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        <TableRow>
-                          <TableCell className="text-sm">Each feature format: <code className="text-xs bg-muted px-1 py-0.5 rounded">markdown</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">links</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">metadata</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">screenshot</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">schema</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">blocks</code></TableCell>
-                          <TableCell className="text-right font-mono">+1 each</TableCell>
-                        </TableRow>
-                        <TableRow>
-                          <TableCell className="text-sm">AI summary</TableCell>
-                          <TableCell className="text-right font-mono">+5</TableCell>
-                        </TableRow>
-                        <TableRow>
-                          <TableCell className="text-sm">AI extraction</TableCell>
-                          <TableCell className="text-right font-mono">+5</TableCell>
-                        </TableRow>
-                      </TableBody>
-                    </Table>
+                    <div className="rounded-lg border">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="py-2.5">Component</TableHead>
+                            <TableHead className="py-2.5 text-right">Credits</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          <TableRow>
+                            <TableCell className="py-2.5 text-sm">
+                              <span>Each feature: </span>
+                              <span className="inline-flex flex-wrap gap-1 mt-1">
+                                <code className="text-xs bg-muted px-1.5 py-0.5 rounded">markdown</code>
+                                <code className="text-xs bg-muted px-1.5 py-0.5 rounded">links</code>
+                                <code className="text-xs bg-muted px-1.5 py-0.5 rounded">metadata</code>
+                                <code className="text-xs bg-muted px-1.5 py-0.5 rounded">screenshot</code>
+                                <code className="text-xs bg-muted px-1.5 py-0.5 rounded">schema</code>
+                                <code className="text-xs bg-muted px-1.5 py-0.5 rounded">blocks</code>
+                              </span>
+                            </TableCell>
+                            <TableCell className="py-2.5 text-right font-mono">+1 each</TableCell>
+                          </TableRow>
+                          <TableRow>
+                            <TableCell className="py-2.5 text-sm">AI summary</TableCell>
+                            <TableCell className="py-2.5 text-right font-mono">+5</TableCell>
+                          </TableRow>
+                          <TableRow>
+                            <TableCell className="py-2.5 text-sm">AI extraction</TableCell>
+                            <TableCell className="py-2.5 text-right font-mono">+5</TableCell>
+                          </TableRow>
+                        </TableBody>
+                      </Table>
+                    </div>
                   </div>
 
                   {/* /map */}
-                  <div className="space-y-2">
-                    <h4 className="text-sm font-semibold">/map</h4>
-                    <p className="text-sm text-muted-foreground">
-                      Flat <span className="font-mono font-medium">2 credits</span> per call, regardless of the number of URLs discovered.
+                  <div className="space-y-3">
+                    <h4 className="font-semibold">/map</h4>
+                    <p className="text-sm text-muted-foreground leading-relaxed">
+                      Flat <span className="font-mono font-medium text-foreground">2 credits</span> per call, regardless of the number of URLs discovered.
                     </p>
                   </div>
 
                   {/* /crawl */}
-                  <div className="space-y-2">
-                    <h4 className="text-sm font-semibold">/crawl</h4>
-                    <p className="text-sm text-muted-foreground">
+                  <div className="space-y-3">
+                    <h4 className="font-semibold">/crawl</h4>
+                    <p className="text-sm text-muted-foreground leading-relaxed">
                       Credits are deducted at job completion. Cost per page depends on crawler type and enabled features.
                     </p>
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Component</TableHead>
-                          <TableHead className="text-right">Credits / page</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        <TableRow>
-                          <TableCell className="text-sm">HTTP mode (base)</TableCell>
-                          <TableCell className="text-right font-mono">1</TableCell>
-                        </TableRow>
-                        <TableRow>
-                          <TableCell className="text-sm">Browser / JS mode (base)</TableCell>
-                          <TableCell className="text-right font-mono">2</TableCell>
-                        </TableRow>
-                        <TableRow>
-                          <TableCell className="text-sm">Each feature: <code className="text-xs bg-muted px-1 py-0.5 rounded">metadata</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">markdown</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">block_split</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">schema</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">custom_selectors</code></TableCell>
-                          <TableCell className="text-right font-mono">+1 each</TableCell>
-                        </TableRow>
-                        <TableRow>
-                          <TableCell className="text-sm">AI extraction</TableCell>
-                          <TableCell className="text-right font-mono">+5</TableCell>
-                        </TableRow>
-                        <TableRow>
-                          <TableCell className="text-sm">AI summary</TableCell>
-                          <TableCell className="text-right font-mono">+5</TableCell>
-                        </TableRow>
-                      </TableBody>
-                    </Table>
-                    <p className="text-xs text-muted-foreground">
-                      Formula: <code className="bg-muted px-1 py-0.5 rounded">total = pages_crawled x (base + feature_costs)</code>
+                    <div className="rounded-lg border">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="py-2.5">Component</TableHead>
+                            <TableHead className="py-2.5 text-right">Credits / page</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          <TableRow>
+                            <TableCell className="py-2.5 text-sm">HTTP mode (base)</TableCell>
+                            <TableCell className="py-2.5 text-right font-mono">1</TableCell>
+                          </TableRow>
+                          <TableRow>
+                            <TableCell className="py-2.5 text-sm">Browser / JS mode (base)</TableCell>
+                            <TableCell className="py-2.5 text-right font-mono">2</TableCell>
+                          </TableRow>
+                          <TableRow>
+                            <TableCell className="py-2.5 text-sm">
+                              <span>Each feature: </span>
+                              <span className="inline-flex flex-wrap gap-1 mt-1">
+                                <code className="text-xs bg-muted px-1.5 py-0.5 rounded">metadata</code>
+                                <code className="text-xs bg-muted px-1.5 py-0.5 rounded">markdown</code>
+                                <code className="text-xs bg-muted px-1.5 py-0.5 rounded">block_split</code>
+                                <code className="text-xs bg-muted px-1.5 py-0.5 rounded">schema</code>
+                                <code className="text-xs bg-muted px-1.5 py-0.5 rounded">custom_selectors</code>
+                              </span>
+                            </TableCell>
+                            <TableCell className="py-2.5 text-right font-mono">+1 each</TableCell>
+                          </TableRow>
+                          <TableRow>
+                            <TableCell className="py-2.5 text-sm">AI extraction</TableCell>
+                            <TableCell className="py-2.5 text-right font-mono">+5</TableCell>
+                          </TableRow>
+                          <TableRow>
+                            <TableCell className="py-2.5 text-sm">AI summary</TableCell>
+                            <TableCell className="py-2.5 text-right font-mono">+5</TableCell>
+                          </TableRow>
+                        </TableBody>
+                      </Table>
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      Formula: <code className="bg-muted px-1.5 py-0.5 rounded text-xs">total = pages_crawled x (base + feature_costs)</code>
                     </p>
                   </div>
 
-                  <p className="text-sm text-muted-foreground">
-                    No feature restrictions. Everything is available — you only pay for what you use.
-                  </p>
+                  <div className="rounded-lg border border-dashed p-4">
+                    <p className="text-sm text-muted-foreground">
+                      No feature restrictions. Everything is available — you only pay for what you use.
+                    </p>
+                  </div>
                 </div>
               </SheetContent>
             </Sheet>
