@@ -26,6 +26,14 @@ import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
+import {
   Table,
   TableBody,
   TableCell,
@@ -48,6 +56,7 @@ import {
   Loader2,
   Receipt,
   ExternalLink,
+  Info,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDistanceToNow, format, parseISO, eachDayOfInterval, startOfDay } from "date-fns";
@@ -75,7 +84,7 @@ const TOPUP_PACKAGES = [
   { amount: 50_000, price: "$250", perCredit: "$0.005", badge: "Save 50%" },
 ];
 
-const TX_PAGE_SIZE = 20;
+const TX_PAGE_SIZE = 5;
 
 function transactionIcon(type: string) {
   switch (type) {
@@ -369,13 +378,117 @@ export default function BillingPage() {
       {/* Credits Balance */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Zap className="h-5 w-5" />
-            Credits Balance
-          </CardTitle>
-          <CardDescription>
-            Credits are consumed per API request. All features are available with credits.
-          </CardDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Zap className="h-5 w-5" />
+                Credits Balance
+              </CardTitle>
+              <CardDescription>
+                Credits are consumed per API request. All features are available with credits.
+              </CardDescription>
+            </div>
+            <Sheet>
+              <SheetTrigger asChild>
+                <Button variant="outline" size="sm">
+                  <Info className="mr-2 h-4 w-4" />
+                  How credits work
+                </Button>
+              </SheetTrigger>
+              <SheetContent className="overflow-y-auto sm:max-w-lg">
+                <SheetHeader>
+                  <SheetTitle>How credits work</SheetTitle>
+                  <SheetDescription>
+                    Credits are consumed per API call. Cost depends on the endpoint and features you enable.
+                  </SheetDescription>
+                </SheetHeader>
+                <div className="space-y-6 pt-6">
+                  {/* /scrape */}
+                  <div className="space-y-2">
+                    <h4 className="text-sm font-semibold">/scrape</h4>
+                    <p className="text-sm text-muted-foreground">
+                      1 credit minimum per request. Base formats (<code className="text-xs bg-muted px-1 py-0.5 rounded">html</code>, <code className="text-xs bg-muted px-1 py-0.5 rounded">rawHtml</code>, <code className="text-xs bg-muted px-1 py-0.5 rounded">content</code>) are free.
+                    </p>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Component</TableHead>
+                          <TableHead className="text-right">Credits</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        <TableRow>
+                          <TableCell className="text-sm">Each feature format: <code className="text-xs bg-muted px-1 py-0.5 rounded">markdown</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">links</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">metadata</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">screenshot</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">schema</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">blocks</code></TableCell>
+                          <TableCell className="text-right font-mono">+1 each</TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell className="text-sm">AI summary</TableCell>
+                          <TableCell className="text-right font-mono">+5</TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell className="text-sm">AI extraction</TableCell>
+                          <TableCell className="text-right font-mono">+5</TableCell>
+                        </TableRow>
+                      </TableBody>
+                    </Table>
+                  </div>
+
+                  {/* /map */}
+                  <div className="space-y-2">
+                    <h4 className="text-sm font-semibold">/map</h4>
+                    <p className="text-sm text-muted-foreground">
+                      Flat <span className="font-mono font-medium">2 credits</span> per call, regardless of the number of URLs discovered.
+                    </p>
+                  </div>
+
+                  {/* /crawl */}
+                  <div className="space-y-2">
+                    <h4 className="text-sm font-semibold">/crawl</h4>
+                    <p className="text-sm text-muted-foreground">
+                      Credits are deducted at job completion. Cost per page depends on crawler type and enabled features.
+                    </p>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Component</TableHead>
+                          <TableHead className="text-right">Credits / page</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        <TableRow>
+                          <TableCell className="text-sm">HTTP mode (base)</TableCell>
+                          <TableCell className="text-right font-mono">1</TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell className="text-sm">Browser / JS mode (base)</TableCell>
+                          <TableCell className="text-right font-mono">2</TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell className="text-sm">Each feature: <code className="text-xs bg-muted px-1 py-0.5 rounded">metadata</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">markdown</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">block_split</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">schema</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">custom_selectors</code></TableCell>
+                          <TableCell className="text-right font-mono">+1 each</TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell className="text-sm">AI extraction</TableCell>
+                          <TableCell className="text-right font-mono">+5</TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell className="text-sm">AI summary</TableCell>
+                          <TableCell className="text-right font-mono">+5</TableCell>
+                        </TableRow>
+                      </TableBody>
+                    </Table>
+                    <p className="text-xs text-muted-foreground">
+                      Formula: <code className="bg-muted px-1 py-0.5 rounded">total = pages_crawled x (base + feature_costs)</code>
+                    </p>
+                  </div>
+
+                  <p className="text-sm text-muted-foreground">
+                    No feature restrictions. Everything is available — you only pay for what you use.
+                  </p>
+                </div>
+              </SheetContent>
+            </Sheet>
+          </div>
         </CardHeader>
         <CardContent>
           <div className="flex items-baseline gap-2">
@@ -419,11 +532,40 @@ export default function BillingPage() {
                     theme: "night",
                     variables: {
                       colorPrimary: "#6366f1",
-                      colorBackground: "#09090b",
-                      colorText: "#fafafa",
-                      colorDanger: "#ef4444",
+                      colorBackground: "hsl(var(--card))",
+                      colorText: "hsl(var(--card-foreground))",
+                      colorDanger: "hsl(var(--destructive))",
+                      colorTextSecondary: "hsl(var(--muted-foreground))",
                       borderRadius: "8px",
                       fontFamily: "var(--font-geist-sans), system-ui, sans-serif",
+                    },
+                    rules: {
+                      ".Input": {
+                        backgroundColor: "hsl(var(--input))",
+                        borderColor: "hsl(var(--border))",
+                        color: "hsl(var(--foreground))",
+                      },
+                      ".Input:focus": {
+                        borderColor: "hsl(var(--ring))",
+                        boxShadow: "0 0 0 3px hsl(var(--ring) / 0.5)",
+                      },
+                      ".Label": {
+                        color: "hsl(var(--foreground))",
+                      },
+                      ".Tab": {
+                        backgroundColor: "hsl(var(--muted))",
+                        borderColor: "hsl(var(--border))",
+                        color: "hsl(var(--foreground))",
+                      },
+                      ".Tab--selected": {
+                        backgroundColor: "hsl(var(--background))",
+                        borderColor: "hsl(var(--ring))",
+                        color: "hsl(var(--foreground))",
+                      },
+                      ".Block": {
+                        backgroundColor: "hsl(var(--muted))",
+                        borderColor: "hsl(var(--border))",
+                      },
                     },
                   },
                 }}
@@ -503,100 +645,6 @@ export default function BillingPage() {
           </CardContent>
         </Card>
       )}
-
-      {/* How credits work */}
-      <Card>
-        <CardHeader>
-          <CardTitle>How credits work</CardTitle>
-          <CardDescription>
-            Credits are consumed per API call. Cost depends on the endpoint and features you enable.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          {/* /scrape */}
-          <div className="space-y-2">
-            <h4 className="text-sm font-semibold">/scrape</h4>
-            <p className="text-sm text-muted-foreground">
-              1 credit minimum per request. Base formats (<code className="text-xs bg-muted px-1 py-0.5 rounded">html</code>, <code className="text-xs bg-muted px-1 py-0.5 rounded">rawHtml</code>, <code className="text-xs bg-muted px-1 py-0.5 rounded">content</code>) are free.
-            </p>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Component</TableHead>
-                  <TableHead className="text-right">Credits</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                <TableRow>
-                  <TableCell className="text-sm">Each feature format: <code className="text-xs bg-muted px-1 py-0.5 rounded">markdown</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">links</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">metadata</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">screenshot</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">schema</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">blocks</code></TableCell>
-                  <TableCell className="text-right font-mono">+1 each</TableCell>
-                </TableRow>
-                <TableRow>
-                  <TableCell className="text-sm">AI summary</TableCell>
-                  <TableCell className="text-right font-mono">+5</TableCell>
-                </TableRow>
-                <TableRow>
-                  <TableCell className="text-sm">AI extraction</TableCell>
-                  <TableCell className="text-right font-mono">+5</TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
-          </div>
-
-          {/* /map */}
-          <div className="space-y-2">
-            <h4 className="text-sm font-semibold">/map</h4>
-            <p className="text-sm text-muted-foreground">
-              Flat <span className="font-mono font-medium">2 credits</span> per call, regardless of the number of URLs discovered.
-            </p>
-          </div>
-
-          {/* /crawl */}
-          <div className="space-y-2">
-            <h4 className="text-sm font-semibold">/crawl</h4>
-            <p className="text-sm text-muted-foreground">
-              Credits are deducted at job completion. Cost per page depends on crawler type and enabled features.
-            </p>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Component</TableHead>
-                  <TableHead className="text-right">Credits / page</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                <TableRow>
-                  <TableCell className="text-sm">HTTP mode (base)</TableCell>
-                  <TableCell className="text-right font-mono">1</TableCell>
-                </TableRow>
-                <TableRow>
-                  <TableCell className="text-sm">Browser / JS mode (base)</TableCell>
-                  <TableCell className="text-right font-mono">2</TableCell>
-                </TableRow>
-                <TableRow>
-                  <TableCell className="text-sm">Each feature: <code className="text-xs bg-muted px-1 py-0.5 rounded">metadata</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">markdown</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">block_split</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">schema</code> <code className="text-xs bg-muted px-1 py-0.5 rounded">custom_selectors</code></TableCell>
-                  <TableCell className="text-right font-mono">+1 each</TableCell>
-                </TableRow>
-                <TableRow>
-                  <TableCell className="text-sm">AI extraction</TableCell>
-                  <TableCell className="text-right font-mono">+5</TableCell>
-                </TableRow>
-                <TableRow>
-                  <TableCell className="text-sm">AI summary</TableCell>
-                  <TableCell className="text-right font-mono">+5</TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
-            <p className="text-xs text-muted-foreground">
-              Formula: <code className="bg-muted px-1 py-0.5 rounded">total = pages_crawled x (base + feature_costs)</code>
-            </p>
-          </div>
-
-          <p className="text-sm text-muted-foreground">
-            No feature restrictions. Everything is available — you only pay for what you use.
-          </p>
-        </CardContent>
-      </Card>
 
       {/* Buy Credits */}
       <Card>
