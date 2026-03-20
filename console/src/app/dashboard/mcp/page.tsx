@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import Image from "next/image";
+import { codeToHtml } from "shiki";
 import { useApiKeys } from "@/lib/hooks";
 import { Button } from "@/components/ui/button";
 import {
@@ -64,6 +65,21 @@ function CopyButton({ text, label }: { text: string; label: string }) {
 
 function CodeBlock({ code, language = "json" }: { code: string; language?: string }) {
   const [copied, setCopied] = useState(false);
+  const [html, setHtml] = useState<string>("");
+
+  useEffect(() => {
+    let cancelled = false;
+    codeToHtml(code, {
+      lang: language,
+      themes: { light: "github-light", dark: "github-dark" },
+      defaultColor: false,
+    }).then((result) => {
+      if (!cancelled) setHtml(result);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [code, language]);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(code);
@@ -74,9 +90,16 @@ function CodeBlock({ code, language = "json" }: { code: string; language?: strin
 
   return (
     <div className="relative group">
-      <pre className="rounded-lg border bg-muted/50 p-4 text-sm font-mono overflow-x-auto">
-        <code>{code}</code>
-      </pre>
+      {html ? (
+        <div
+          className="rounded-lg border bg-muted/50 p-4 text-sm overflow-x-auto [&_pre]:!bg-transparent [&_code]:!bg-transparent [&_.shiki]:!bg-transparent"
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
+      ) : (
+        <pre className="rounded-lg border bg-muted/50 p-4 text-sm font-mono overflow-x-auto">
+          <code>{code}</code>
+        </pre>
+      )}
       <Button
         variant="ghost"
         size="icon"
@@ -347,7 +370,7 @@ export default function McpPage() {
         <CardContent className="space-y-4">
           <div className="space-y-2">
             <h4 className="text-sm font-medium">Endpoint URL</h4>
-            <CodeBlock code={`${API_URL}/mcp`} />
+            <CodeBlock code={`${API_URL}/mcp`} language="text" />
           </div>
 
           <div className="space-y-3">
