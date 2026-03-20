@@ -28,7 +28,7 @@ jobs:
       api: ${{ steps.filter.outputs.api }}
       console: ${{ steps.filter.outputs.console }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -48,10 +48,10 @@ jobs:
     if: needs.changes.outputs.api == 'true' || inputs.force_api == true
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to Heroku Container Registry
         run: echo "${{ secrets.HEROKU_API_KEY }}" | docker login registry.heroku.com -u _ --password-stdin
@@ -82,10 +82,10 @@ jobs:
     if: needs.changes.outputs.console == 'true' || inputs.force_console == true
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to Heroku Container Registry
         run: echo "${{ secrets.HEROKU_API_KEY }}" | docker login registry.heroku.com -u _ --password-stdin
