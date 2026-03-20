@@ -678,22 +678,22 @@ async fn create_and_pay_invoice(
         .collect(),
     );
 
-    let invoice = Invoice::create(stripe, invoice_params)
-        .await
-        .map_err(|e| {
-            error!(error = %e, "Failed to create Invoice");
-            err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to create invoice",
-                "stripe_error",
-            )
-        })?;
+    let invoice = Invoice::create(stripe, invoice_params).await.map_err(|e| {
+        error!(error = %e, "Failed to create Invoice");
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to create invoice",
+            "stripe_error",
+        )
+    })?;
 
     // 3. Finalize the invoice
+    let finalize_params: std::collections::HashMap<&str, &str> =
+        [("auto_advance", "false")].into_iter().collect();
     let invoice: Invoice = stripe
         .post_form(
             &format!("/invoices/{}/finalize", invoice.id),
-            [("auto_advance", "false")],
+            finalize_params,
         )
         .await
         .map_err(|e| {
@@ -706,11 +706,10 @@ async fn create_and_pay_invoice(
         })?;
 
     // 4. Pay the invoice — expands the payment_intent so we can check its status
+    let pay_params: std::collections::HashMap<&str, &str> =
+        [("expand[]", "payment_intent")].into_iter().collect();
     let invoice: Invoice = stripe
-        .post_form(
-            &format!("/invoices/{}/pay", invoice.id),
-            [("expand[]", "payment_intent")],
-        )
+        .post_form(&format!("/invoices/{}/pay", invoice.id), pay_params)
         .await
         .map_err(|e| {
             error!(error = %e, invoice_id = %invoice.id, "Failed to pay invoice");
@@ -1113,9 +1112,17 @@ pub async fn charge_auto_topup(
         ((credits as f64) * 0.8).ceil() as i64
     });
 
-    let invoice = create_and_pay_invoice(stripe, cid, account_id, &pm_id, credits, amount_cents, "auto_topup")
-        .await
-        .map_err(|e| format!("Invoice error: {}", e.1.error))?;
+    let invoice = create_and_pay_invoice(
+        stripe,
+        cid,
+        account_id,
+        &pm_id,
+        credits,
+        amount_cents,
+        "auto_topup",
+    )
+    .await
+    .map_err(|e| format!("Invoice error: {}", e.1.error))?;
 
     let pi_status = invoice
         .payment_intent
