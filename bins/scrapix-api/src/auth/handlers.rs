@@ -1237,7 +1237,7 @@ async fn check_spend_limit(
     if let Some(limit) = limit {
         // Sum all top-ups this calendar month
         let spent: i64 = sqlx::query_scalar(
-            "SELECT COALESCE(SUM(amount), 0) FROM transactions \
+            "SELECT COALESCE(SUM(amount), 0)::BIGINT FROM transactions \
              WHERE account_id = $1 \
              AND type IN ('manual_topup', 'auto_topup') \
              AND created_at >= date_trunc('month', now())",

@@ -13,12 +13,11 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# Next.js inlines NEXT_PUBLIC_* vars at build time, so they must be
-# available as build args when deploying via Docker (e.g. Heroku).
-ARG NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
-ARG NEXT_PUBLIC_SCRAPIX_API_URL
-ENV NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=$NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
-ENV NEXT_PUBLIC_SCRAPIX_API_URL=$NEXT_PUBLIC_SCRAPIX_API_URL
+# Next.js inlines NEXT_PUBLIC_* vars at build time. In Docker builds
+# (e.g. Heroku), runtime config vars aren't available during build,
+# so we hardcode defaults here. The publishable key is public by design.
+ENV NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_51TAwQdRGrCEv0wspTJFC1nDzrfhVwg2pxBtfAplfdjdTDkB8kOxrVAodNPYjehdMhIzTCY4HUnJ6I21ELXuKiXDq00pDyrnwvj
+ENV NEXT_PUBLIC_SCRAPIX_API_URL=https://api.scrapix.meilisearch.com
 
 RUN npm run build
 
