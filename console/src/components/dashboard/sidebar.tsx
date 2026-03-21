@@ -254,18 +254,18 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           <DropdownMenuTrigger asChild>
             <Button
               variant="ghost"
-              className="w-full justify-start text-muted-foreground h-auto py-2"
+              className="w-full text-muted-foreground h-auto py-2 px-2 gap-2"
             >
-              <Avatar className="mr-3 h-6 w-6 shrink-0">
+              <Avatar className="h-6 w-6 shrink-0">
                 <AvatarFallback className="text-[10px]">{initials}</AvatarFallback>
               </Avatar>
-              <div className="flex flex-col items-start min-w-0">
-                <span className="truncate text-sm">{user?.full_name || user?.email || "Account"}</span>
-                <span className="truncate text-[11px] text-muted-foreground/70">
+              <div className="flex flex-col items-start min-w-0 flex-1 overflow-hidden">
+                <span className="truncate w-full text-left text-sm">{user?.full_name || user?.email || "Account"}</span>
+                <span className="truncate w-full text-left text-[11px] text-muted-foreground/70">
                   {currentAccount?.name ?? user?.account?.name ?? ""}
                 </span>
               </div>
-              <ChevronsUpDown className="ml-auto h-3 w-3 shrink-0 opacity-50" />
+              <ChevronsUpDown className="h-3 w-3 shrink-0 opacity-50" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent side="top" align="start" className="w-64">
