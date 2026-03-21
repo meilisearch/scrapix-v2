@@ -60,6 +60,7 @@ import {
   Info,
 } from "lucide-react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import { formatDistanceToNow, format, parseISO, eachDayOfInterval, startOfDay } from "date-fns";
 import dynamic from "next/dynamic";
 import { loadStripe } from "@stripe/stripe-js";
@@ -78,12 +79,28 @@ const stripePromise = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
   ? loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY)
   : null;
 
-const TOPUP_PACKAGES = [
-  { amount: 1_000, price: "$10", perCredit: "$0.010" },
-  { amount: 5_000, price: "$40", perCredit: "$0.008", badge: "Save 20%" },
-  { amount: 10_000, price: "$70", perCredit: "$0.007", badge: "Save 30%" },
-  { amount: 50_000, price: "$250", perCredit: "$0.005", badge: "Save 50%" },
+const PRICING_TIERS = [
+  { upTo: 999, rate: 0.01, per1k: "$10" },
+  { upTo: 4_999, rate: 0.008, per1k: "$8" },
+  { upTo: 9_999, rate: 0.007, per1k: "$7" },
+  { upTo: null as number | null, rate: 0.005, per1k: "$5" },
 ];
+
+const QUICK_AMOUNTS = [1_000, 5_000, 10_000, 50_000];
+
+function calculatePrice(credits: number): number {
+  if (credits >= 10_000) return credits * 0.005;
+  if (credits >= 5_000) return credits * 0.007;
+  if (credits >= 1_000) return credits * 0.008;
+  return credits * 0.01;
+}
+
+function getActiveTier(credits: number): number {
+  if (credits >= 10_000) return 3;
+  if (credits >= 5_000) return 2;
+  if (credits >= 1_000) return 1;
+  return 0;
+}
 
 const TX_PAGE_SIZE = 5;
 
@@ -201,6 +218,7 @@ export default function BillingPage() {
   const [setupClientSecret, setSetupClientSecret] = useState<string | null>(null);
 
   // Purchase state
+  const [purchaseAmount, setPurchaseAmount] = useState("1000");
   const [purchasingPack, setPurchasingPack] = useState<number | null>(null);
 
   // Auto top-up form state
@@ -685,41 +703,93 @@ export default function BillingPage() {
               : "Add credits to your account"}
           </CardDescription>
         </CardHeader>
-        <CardContent>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {TOPUP_PACKAGES.map((pack) => {
-              const isPurchasing = purchasingPack === pack.amount && purchaseMutation.isPending;
+        <CardContent className="space-y-4">
+          {/* Pricing tiers */}
+          <div className="grid grid-cols-4 gap-2">
+            {PRICING_TIERS.map((tier, i) => {
+              const parsedAmount = parseInt(purchaseAmount) || 0;
+              const isActive = getActiveTier(parsedAmount) === i;
               return (
-                <Button
-                  key={pack.amount}
-                  variant="outline"
-                  className="h-auto flex-col items-start gap-1 p-4"
-                  disabled={isPurchasing || topupMutation.isPending}
-                  onClick={() => handlePurchase(pack.amount)}
-                >
-                  {isPurchasing ? (
-                    <Loader2 className="h-5 w-5 animate-spin" />
-                  ) : (
-                    <>
-                      <div className="flex items-center gap-2">
-                        <span className="text-lg font-bold">
-                          {pack.amount.toLocaleString()} credits
-                        </span>
-                        {pack.badge && (
-                          <Badge variant="secondary" className="text-xs">
-                            {pack.badge}
-                          </Badge>
-                        )}
-                      </div>
-                      <span className="text-sm text-muted-foreground">{pack.price}</span>
-                    </>
+                <div
+                  key={i}
+                  className={cn(
+                    "rounded-lg border p-3 text-center transition-colors",
+                    isActive
+                      ? "border-primary bg-primary/5"
+                      : "border-border"
                   )}
-                </Button>
+                >
+                  <div className="text-xs text-muted-foreground">
+                    {tier.upTo ? `Up to ${tier.upTo.toLocaleString()}` : "10,000+"}
+                  </div>
+                  <div className="text-lg font-bold">{tier.per1k}</div>
+                  <div className="text-xs text-muted-foreground">per 1K credits</div>
+                </div>
               );
             })}
           </div>
+
+          {/* Amount input + quick presets */}
+          <div className="space-y-3">
+            <div className="flex items-end gap-3">
+              <div className="flex-1">
+                <Label htmlFor="credit-amount">Credits</Label>
+                <Input
+                  id="credit-amount"
+                  type="number"
+                  min={100}
+                  step={100}
+                  value={purchaseAmount}
+                  onChange={(e) => setPurchaseAmount(e.target.value)}
+                  placeholder="Enter amount"
+                />
+              </div>
+              <div className="text-right pb-1">
+                {(() => {
+                  const amt = parseInt(purchaseAmount) || 0;
+                  if (amt < 100) return null;
+                  const price = calculatePrice(amt);
+                  return (
+                    <div>
+                      <div className="text-2xl font-bold">${price.toFixed(2)}</div>
+                      <div className="text-xs text-muted-foreground">
+                        ${(price / amt * 1000).toFixed(2)} / 1K
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+              <Button
+                disabled={
+                  purchaseMutation.isPending ||
+                  topupMutation.isPending ||
+                  (parseInt(purchaseAmount) || 0) < 100
+                }
+                onClick={() => handlePurchase(parseInt(purchaseAmount) || 0)}
+              >
+                {purchaseMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  "Buy"
+                )}
+              </Button>
+            </div>
+            <div className="flex gap-2">
+              {QUICK_AMOUNTS.map((amt) => (
+                <Button
+                  key={amt}
+                  variant={purchaseAmount === String(amt) ? "secondary" : "outline"}
+                  size="sm"
+                  onClick={() => setPurchaseAmount(String(amt))}
+                >
+                  {amt >= 1000 ? `${amt / 1000}K` : amt}
+                </Button>
+              ))}
+            </div>
+          </div>
+
           {hasStripe && !hasPaymentMethod && (
-            <p className="mt-3 text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground">
               Add a payment method above to purchase credits.
             </p>
           )}

@@ -234,7 +234,7 @@ pub(crate) async fn maybe_auto_topup(
                     info!(account_id, topup_amount, "Auto top-up via Stripe completed");
                     // Send auto-topup receipt email
                     if let Some(mailer) = email_client {
-                        let amount_cents = crate::stripe::price_for_credits_pub(topup_amount);
+                        let amount_cents = crate::stripe::calculate_price_cents(topup_amount);
                         let new_bal: i64 = sqlx::query_scalar(
                             "SELECT credits_balance FROM accounts WHERE id = $1",
                         )

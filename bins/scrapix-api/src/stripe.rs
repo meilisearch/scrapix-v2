@@ -28,27 +28,31 @@ use crate::auth::{AuthState, AuthenticatedUser};
 use crate::email::EmailClient;
 
 // ============================================================================
-// Credit pack definitions
+// Volume-based tiered pricing
 // ============================================================================
 
-/// Credit packs available for purchase. Amount in cents (USD).
-const CREDIT_PACKS: &[(i64, i64)] = &[
-    (1_000, 1_000),   // 1,000 credits = $10.00
-    (5_000, 4_000),   // 5,000 credits = $40.00
-    (10_000, 7_000),  // 10,000 credits = $70.00
-    (50_000, 25_000), // 50,000 credits = $250.00
-];
-
-fn price_for_credits(credits: i64) -> Option<i64> {
-    CREDIT_PACKS
-        .iter()
-        .find(|(c, _)| *c == credits)
-        .map(|(_, price)| *price)
-}
-
-/// Public wrapper for price lookup, used by billing module for email receipts.
-pub fn price_for_credits_pub(credits: i64) -> i64 {
-    price_for_credits(credits).unwrap_or_else(|| ((credits as f64) * 0.8).ceil() as i64)
+/// Calculate the price in cents for a given number of credits.
+/// Volume-based: the entire quantity is priced at the tier rate.
+///
+/// | Volume      | Per credit | Per 1K |
+/// |-------------|-----------|--------|
+/// | 1–999       | $0.010    | $10    |
+/// | 1,000–4,999 | $0.008    | $8     |
+/// | 5,000–9,999 | $0.007    | $7     |
+/// | 10,000+     | $0.005    | $5     |
+pub fn calculate_price_cents(credits: i64) -> i64 {
+    // Unit price in tenths of a cent to avoid floating point
+    let rate_tenths = if credits >= 10_000 {
+        5 // $0.005 = 0.5 cents
+    } else if credits >= 5_000 {
+        7 // $0.007 = 0.7 cents
+    } else if credits >= 1_000 {
+        8 // $0.008 = 0.8 cents
+    } else {
+        10 // $0.010 = 1.0 cent
+    };
+    // cents = credits * rate_tenths / 10, ceiling
+    (credits * rate_tenths + 9) / 10
 }
 
 // ============================================================================
@@ -126,6 +130,13 @@ pub(crate) struct InvoiceResponse {
     created_at: String,
     invoice_pdf: Option<String>,
     hosted_invoice_url: Option<String>,
+}
+
+#[derive(Serialize)]
+pub(crate) struct PricingTier {
+    up_to: Option<i64>,
+    unit_price_cents: f64,
+    per_1k: f64,
 }
 
 type ApiError = (StatusCode, Json<StripeErrorBody>);
@@ -519,13 +530,15 @@ async fn purchase_credits(
     Extension(stripe_state): Extension<StripeState>,
     Json(req): Json<PurchaseCreditsRequest>,
 ) -> Result<Json<PurchaseResponse>, ApiError> {
-    let amount_cents = price_for_credits(req.credits).ok_or_else(|| {
-        err(
+    if req.credits < 100 {
+        return Err(err(
             StatusCode::BAD_REQUEST,
-            "Invalid credit pack. Valid options: 1000, 5000, 10000, 50000",
+            "Minimum purchase is 100 credits",
             "validation_error",
-        )
-    })?;
+        ));
+    }
+
+    let amount_cents = calculate_price_cents(req.credits);
 
     let account_id = get_account_id(&state.pool, user.user_id).await?;
     let customer_id = get_or_create_customer(&stripe_state.client, &state.pool, account_id).await?;
@@ -1106,11 +1119,7 @@ pub async fn charge_auto_topup(
 
     let cid: CustomerId = customer_id.parse().map_err(|_| "Invalid customer ID")?;
 
-    // Calculate price — for auto-topup, use the closest pack or pro-rate
-    let amount_cents = price_for_credits(credits).unwrap_or_else(|| {
-        // Pro-rate at $0.008 per credit (5K pack rate) for non-standard amounts
-        ((credits as f64) * 0.8).ceil() as i64
-    });
+    let amount_cents = calculate_price_cents(credits);
 
     let invoice = create_and_pay_invoice(
         stripe,
@@ -1242,6 +1251,38 @@ async fn list_invoices(
 }
 
 // ============================================================================
+// Pricing
+// ============================================================================
+
+/// GET /account/billing/pricing
+///
+/// Returns the volume-based pricing tiers.
+async fn get_pricing() -> Json<Vec<PricingTier>> {
+    Json(vec![
+        PricingTier {
+            up_to: Some(999),
+            unit_price_cents: 1.0,
+            per_1k: 10.0,
+        },
+        PricingTier {
+            up_to: Some(4_999),
+            unit_price_cents: 0.8,
+            per_1k: 8.0,
+        },
+        PricingTier {
+            up_to: Some(9_999),
+            unit_price_cents: 0.7,
+            per_1k: 7.0,
+        },
+        PricingTier {
+            up_to: None,
+            unit_price_cents: 0.5,
+            per_1k: 5.0,
+        },
+    ])
+}
+
+// ============================================================================
 // Router
 // ============================================================================
 
@@ -1263,6 +1304,7 @@ pub fn stripe_session_routes(state: Arc<AuthState>, stripe_state: StripeState) -
         )
         .route("/account/billing/purchase", post(purchase_credits))
         .route("/account/billing/invoices", get(list_invoices))
+        .route("/account/billing/pricing", get(get_pricing))
         .layer(Extension(stripe_state))
         .layer(middleware::from_fn_with_state(
             state.clone(),
