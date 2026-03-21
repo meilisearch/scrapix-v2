@@ -430,7 +430,7 @@ export default function BillingPage() {
                     Credits are consumed per API call. Cost depends on the endpoint and features you enable.
                   </SheetDescription>
                 </SheetHeader>
-                <div className="space-y-8 px-1 pt-4 pb-8">
+                <div className="space-y-8 px-4 pt-4 pb-8">
                   {/* /scrape */}
                   <div className="space-y-3">
                     <h4 className="font-semibold">/scrape</h4>
@@ -728,7 +728,7 @@ export default function BillingPage() {
                     The more credits you buy, the less you pay per credit.
                   </SheetDescription>
                 </SheetHeader>
-                <div className="pt-4 pb-8">
+                <div className="px-4 pt-4 pb-8">
                   <div className="rounded-lg border">
                     <Table>
                       <TableHeader>
