@@ -256,8 +256,11 @@ async fn get_or_create_customer(
 }
 
 /// Get the user's account_id (re-exported from auth for convenience).
-async fn get_account_id(pool: &sqlx::PgPool, user_id: uuid::Uuid) -> Result<uuid::Uuid, ApiError> {
-    crate::auth::get_user_account_id(pool, user_id)
+async fn get_account_id(
+    pool: &sqlx::PgPool,
+    user: &AuthenticatedUser,
+) -> Result<uuid::Uuid, ApiError> {
+    crate::auth::get_user_account_id(pool, user.user_id, user.selected_account_id)
         .await
         .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))
 }
@@ -275,7 +278,7 @@ async fn create_setup_intent(
     Extension(user): Extension<AuthenticatedUser>,
     Extension(stripe_state): Extension<StripeState>,
 ) -> Result<Json<SetupIntentResponse>, ApiError> {
-    let account_id = get_account_id(&state.pool, user.user_id).await?;
+    let account_id = get_account_id(&state.pool, &user).await?;
     let customer_id = get_or_create_customer(&stripe_state.client, &state.pool, account_id).await?;
 
     let mut params = CreateSetupIntent::new();
@@ -317,7 +320,7 @@ async fn list_payment_methods(
     Extension(user): Extension<AuthenticatedUser>,
     Extension(stripe_state): Extension<StripeState>,
 ) -> Result<Json<Vec<PaymentMethodResponse>>, ApiError> {
-    let account_id = get_account_id(&state.pool, user.user_id).await?;
+    let account_id = get_account_id(&state.pool, &user).await?;
 
     // Get stripe customer id — if none, return empty list
     let customer_id: Option<String> =
@@ -406,7 +409,7 @@ async fn delete_payment_method(
     Extension(stripe_state): Extension<StripeState>,
     Path(pm_id): Path<String>,
 ) -> Result<Json<MessageResponse>, ApiError> {
-    let account_id = get_account_id(&state.pool, user.user_id).await?;
+    let account_id = get_account_id(&state.pool, &user).await?;
 
     // Verify the payment method belongs to this account's customer
     let customer_id: Option<String> =
@@ -499,7 +502,7 @@ async fn set_default_payment_method(
     Extension(user): Extension<AuthenticatedUser>,
     Json(req): Json<SetDefaultPaymentMethodRequest>,
 ) -> Result<Json<MessageResponse>, ApiError> {
-    let account_id = get_account_id(&state.pool, user.user_id).await?;
+    let account_id = get_account_id(&state.pool, &user).await?;
 
     sqlx::query("UPDATE accounts SET stripe_default_payment_method_id = $1 WHERE id = $2")
         .bind(&req.payment_method_id)
@@ -540,7 +543,7 @@ async fn purchase_credits(
 
     let amount_cents = calculate_price_cents(req.credits);
 
-    let account_id = get_account_id(&state.pool, user.user_id).await?;
+    let account_id = get_account_id(&state.pool, &user).await?;
     let customer_id = get_or_create_customer(&stripe_state.client, &state.pool, account_id).await?;
 
     // Determine payment method: explicit or default
@@ -1168,7 +1171,7 @@ async fn list_invoices(
     Extension(user): Extension<AuthenticatedUser>,
     Extension(stripe_state): Extension<StripeState>,
 ) -> Result<Json<Vec<InvoiceResponse>>, ApiError> {
-    let account_id = get_account_id(&state.pool, user.user_id).await?;
+    let account_id = get_account_id(&state.pool, &user).await?;
 
     let customer_id: Option<String> =
         sqlx::query_scalar("SELECT stripe_customer_id FROM accounts WHERE id = $1")

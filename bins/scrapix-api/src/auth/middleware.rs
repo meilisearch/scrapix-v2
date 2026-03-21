@@ -136,9 +136,17 @@ pub(crate) async fn validate_session(
         code: "invalid_session".to_string(),
     })?;
 
+    // Read optional X-Account-Id header for account switching
+    let selected_account_id = request
+        .headers()
+        .get("X-Account-Id")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| s.parse::<uuid::Uuid>().ok());
+
     request.extensions_mut().insert(AuthenticatedUser {
         user_id,
         email: claims.email,
+        selected_account_id,
     });
 
     Ok(next.run(request).await)
@@ -234,9 +242,17 @@ pub(crate) async fn validate_api_key_or_session(
         code: "invalid_session".to_string(),
     })?;
 
+    // Read optional X-Account-Id header for account switching
+    let selected_account_id = request
+        .headers()
+        .get("X-Account-Id")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| s.parse::<uuid::Uuid>().ok());
+
     request.extensions_mut().insert(AuthenticatedUser {
         user_id,
         email: claims.email,
+        selected_account_id,
     });
 
     Ok(next.run(request).await)

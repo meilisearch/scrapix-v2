@@ -99,7 +99,7 @@ async fn resolve_account_id(
             .parse::<uuid::Uuid>()
             .map_err(|_| ApiError::new("Invalid account ID", "internal_error"))
     } else if let Some(user) = user_ext {
-        get_user_account_id(pool, user.user_id)
+        get_user_account_id(pool, user.user_id, user.selected_account_id)
             .await
             .map_err(|_| ApiError::new("Account not found", "not_found"))
     } else {
@@ -474,6 +474,7 @@ pub(crate) async fn trigger_config(
         account_id: account_id.to_string(),
         api_key_id: None,
         tier,
+        user_role: None,
     };
 
     let response = do_create_crawl(&state, crawl_config, Some(&account_ctx)).await?;
@@ -581,6 +582,7 @@ async fn run_cron_tick(state: &Arc<AppState>, pool: &PgPool) -> Result<(), sqlx:
             account_id: account_id.to_string(),
             api_key_id: None,
             tier,
+            user_role: None,
         };
 
         // Trigger crawl

@@ -31,7 +31,11 @@ import type {
   PaymentMethodInfo,
   PurchaseResponse,
   InvoiceInfo,
+  AccountListItem,
+  MemberInfo,
+  InviteInfo,
 } from "./api-types";
+import { useAccountStore } from "./account-store";
 
 // API calls go through Next.js rewrites (/api/scrapix/* → backend) to avoid CORS.
 // WebSocket still connects directly to the backend.
@@ -62,9 +66,15 @@ function getWsBase(): string {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  const accountId = useAccountStore.getState().selectedAccountId;
+  if (accountId) {
+    headers.set("X-Account-Id", accountId);
+  }
   const res = await fetch(`${BASE}${path}`, {
     credentials: "include",
     ...init,
+    headers,
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -88,8 +98,13 @@ export async function fetchJobStatus(id: string): Promise<JobStatus> {
 }
 
 export async function deleteJob(id: string): Promise<void> {
+  const headers: Record<string, string> = {};
+  const accountId = useAccountStore.getState().selectedAccountId;
+  if (accountId) headers["X-Account-Id"] = accountId;
   await fetch(`${BASE}/job/${encodeURIComponent(id)}`, {
     method: "DELETE",
+    credentials: "include",
+    headers,
   });
 }
 
@@ -208,9 +223,13 @@ export async function updateConfig(id: string, req: UpdateConfigRequest): Promis
 }
 
 export async function deleteConfig(id: string): Promise<void> {
+  const headers: Record<string, string> = {};
+  const accountId = useAccountStore.getState().selectedAccountId;
+  if (accountId) headers["X-Account-Id"] = accountId;
   await fetch(`${BASE}/configs/${encodeURIComponent(id)}`, {
     method: "DELETE",
     credentials: "include",
+    headers,
   });
 }
 
@@ -249,9 +268,13 @@ export async function updateEngine(id: string, req: UpdateEngineRequest): Promis
 }
 
 export async function deleteEngine(id: string): Promise<void> {
+  const headers: Record<string, string> = {};
+  const accountId = useAccountStore.getState().selectedAccountId;
+  if (accountId) headers["X-Account-Id"] = accountId;
   await fetch(`${BASE}/engines/${encodeURIComponent(id)}`, {
     method: "DELETE",
     credentials: "include",
+    headers,
   });
 }
 
@@ -422,4 +445,68 @@ export async function purchaseCredits(credits: number, paymentMethodId?: string)
 
 export async function fetchInvoices(): Promise<InvoiceInfo[]> {
   return request("/account/billing/invoices");
+}
+
+// ============================================================================
+// Account Switching
+// ============================================================================
+
+export async function fetchMyAccounts(): Promise<AccountListItem[]> {
+  return request("/auth/me/accounts");
+}
+
+export async function createAccount(name: string): Promise<AccountListItem> {
+  return request("/auth/me/accounts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+}
+
+// ============================================================================
+// Team Management
+// ============================================================================
+
+export async function fetchMembers(): Promise<MemberInfo[]> {
+  return request("/account/members");
+}
+
+export async function inviteMember(email: string, role?: string): Promise<InviteInfo> {
+  return request("/account/members/invite", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, role }),
+  });
+}
+
+export async function updateMemberRole(userId: string, role: string): Promise<void> {
+  await request(`/account/members/${encodeURIComponent(userId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ role }),
+  });
+}
+
+export async function removeMember(userId: string): Promise<void> {
+  await request(`/account/members/${encodeURIComponent(userId)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function fetchInvites(): Promise<InviteInfo[]> {
+  return request("/account/invites");
+}
+
+export async function revokeInvite(inviteId: string): Promise<void> {
+  await request(`/account/invites/${encodeURIComponent(inviteId)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function acceptInvite(token: string): Promise<{ message: string }> {
+  return request("/auth/accept-invite", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
 }

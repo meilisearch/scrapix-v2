@@ -1,9 +1,13 @@
+import { useAccountStore } from "./account-store";
+
 const BASE = "/api/scrapix";
 
 export interface AuthUser {
   id: string;
   email: string;
   full_name: string | null;
+  email_verified?: boolean;
+  notify_job_emails?: boolean;
   account: {
     id: string;
     name: string;
@@ -57,8 +61,14 @@ export async function logout(): Promise<void> {
 }
 
 export async function getMe(): Promise<AuthUser> {
+  const headers: Record<string, string> = {};
+  const accountId = useAccountStore.getState().selectedAccountId;
+  if (accountId) {
+    headers["X-Account-Id"] = accountId;
+  }
   const res = await fetch(`${BASE}/auth/me`, {
     credentials: "include",
+    headers,
   });
   if (!res.ok) {
     throw new Error("Not authenticated");

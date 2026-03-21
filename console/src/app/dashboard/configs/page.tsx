@@ -73,9 +73,12 @@ import {
 } from "../playground/crawl-options";
 import { crawlStateToConfig } from "@/lib/crawl-config-utils";
 import { CronBuilder } from "@/components/cron-builder";
+import { useMe } from "@/lib/hooks";
 
 export default function ConfigsPage() {
   const queryClient = useQueryClient();
+  const { data: user } = useMe();
+  const isViewer = user?.account?.role === "viewer";
   const [search, setSearch] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<SavedConfig | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -157,10 +160,12 @@ export default function ConfigsPage() {
               />
             </div>
           )}
-          <Button onClick={() => setShowCreate(true)}>
-            <Plus className="h-4 w-4 mr-2" />
-            New Config
-          </Button>
+          {!isViewer && (
+            <Button onClick={() => setShowCreate(true)}>
+              <Plus className="h-4 w-4 mr-2" />
+              New Config
+            </Button>
+          )}
         </div>
       </div>
 
@@ -275,7 +280,7 @@ export default function ConfigsPage() {
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1">
-                        <Tooltip>
+                        {!isViewer && <Tooltip>
                           <TooltipTrigger asChild>
                             <Button
                               variant="ghost"
@@ -292,19 +297,19 @@ export default function ConfigsPage() {
                             </Button>
                           </TooltipTrigger>
                           <TooltipContent>Trigger crawl</TooltipContent>
-                        </Tooltip>
+                        </Tooltip>}
                         <Button variant="ghost" size="icon" asChild>
                           <Link href={`/dashboard/configs/${config.id}`}>
                             <ExternalLink className="h-4 w-4" />
                           </Link>
                         </Button>
-                        <Button
+                        {!isViewer && <Button
                           variant="ghost"
                           size="icon"
                           onClick={() => setDeleteTarget(config)}
                         >
                           <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
+                        </Button>}
                       </div>
                     </TableCell>
                   </TableRow>

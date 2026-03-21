@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { getMe } from "./auth";
-import { fetchApiKeys, fetchServiceHealth, fetchBilling, fetchTransactions, fetchPaymentMethods, fetchInvoices } from "./api";
+import { fetchApiKeys, fetchServiceHealth, fetchBilling, fetchTransactions, fetchPaymentMethods, fetchInvoices, fetchMyAccounts, fetchMembers, fetchInvites } from "./api";
 
 export function useMe() {
   return useQuery({
@@ -63,5 +63,26 @@ export function useInvoices() {
   return useQuery({
     queryKey: ["invoices"],
     queryFn: fetchInvoices,
+  });
+}
+
+export function useMyAccounts() {
+  return useQuery({
+    queryKey: ["my-accounts"],
+    queryFn: fetchMyAccounts,
+  });
+}
+
+export function useMembers() {
+  return useQuery({
+    queryKey: ["members"],
+    queryFn: fetchMembers,
+  });
+}
+
+export function useInvites() {
+  return useQuery({
+    queryKey: ["invites"],
+    queryFn: fetchInvites,
   });
 }

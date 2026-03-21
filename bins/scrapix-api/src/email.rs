@@ -565,7 +565,55 @@ impl EmailClient {
     }
 
     // ------------------------------------------------------------------
-    // 10. Low credit balance warning
+    // 10. Team invite
+    // ------------------------------------------------------------------
+    pub fn send_team_invite(
+        &self,
+        to_email: &str,
+        account_name: &str,
+        inviter_name: &str,
+        role: &str,
+        token: &str,
+    ) {
+        let account_name = html_escape(account_name);
+        let inviter_name = html_escape(inviter_name);
+        let invite_url = format!("{CONSOLE_URL}/invite?token={token}");
+        let body = format!(
+            "{heading}\
+             {intro}\
+             {ts}\
+               {r1}\
+               {r2}\
+             {te}\
+             {btn}\
+             {fallback}\
+             {ignore}",
+            heading = heading("You're invited!"),
+            intro = paragraph(&format!(
+                "<strong style=\"color: #e4e4e7;\">{inviter_name}</strong> has invited you to join \
+                 <strong style=\"color: #e4e4e7;\">{account_name}</strong> on Scrapix."
+            )),
+            ts = table_start(),
+            r1 = kv_row("Account", &account_name, false),
+            r2 = kv_row("Role", role, true),
+            te = table_end(),
+            btn = button(&invite_url, "Accept Invite"),
+            fallback = muted(&format!(
+                "Or copy this link: <span style=\"color: #818cf8; word-break: break-all;\">{invite_url}</span>"
+            )),
+            ignore = muted("This invite expires in 7 days. If you weren't expecting this, you can safely ignore it."),
+        );
+
+        self.send_owned(OwnedSendEmailRequest {
+            from: FROM_ADDRESS.to_string(),
+            to: vec![to_email.to_string()],
+            subject: format!("You're invited to join {account_name} on Scrapix"),
+            html: wrap("Team Invite", &body),
+        });
+    }
+
+    // ------------------------------------------------------------------
+    // 11. Low credit balance warning
     // ------------------------------------------------------------------
     pub fn send_low_balance_warning(&self, to_email: &str, current_balance: i64) {
         let body = format!(

@@ -22,12 +22,30 @@ import {
   Zap,
   Coins,
   Search,
+  Users,
+  Plus,
+  Check,
+  ChevronsUpDown,
 } from "lucide-react";
 import { FeedbackDialog } from "@/components/dashboard/feedback-dialog";
 import { logout } from "@/lib/auth";
-import { useMe } from "@/lib/hooks";
+import { useMe, useMyAccounts } from "@/lib/hooks";
+import { useAccountStore } from "@/lib/account-store";
+import { createAccount } from "@/lib/api";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -64,6 +82,7 @@ const navGroups = [
   {
     label: "Account",
     items: [
+      { name: "Team", href: "/dashboard/team", icon: Users },
       { name: "API Keys", href: "/dashboard/api-keys", icon: Key },
       { name: "Billing", href: "/dashboard/billing", icon: CreditCard },
       { name: "Usage", href: "/dashboard/usage", icon: BarChart3 },
@@ -78,18 +97,51 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const router = useRouter();
   const { resolvedTheme, theme, setTheme } = useTheme();
   const { data: user } = useMe();
+  const { data: accounts } = useMyAccounts();
+  const { selectedAccountId, setSelectedAccountId } = useAccountStore();
   const [mounted, setMounted] = useState(false);
+  const [showCreateAccount, setShowCreateAccount] = useState(false);
+  const [newAccountName, setNewAccountName] = useState("");
+  const [creatingAccount, setCreatingAccount] = useState(false);
   const isDark = resolvedTheme === "dark" || resolvedTheme === "glitch";
 
   useEffect(() => {
     setMounted(true);
   }, []);
 
+  const queryClient = useQueryClient();
+
   const handleLogout = async () => {
     await logout();
     router.push("/login");
     router.refresh();
   };
+
+  const handleSwitchAccount = (accountId: string) => {
+    setSelectedAccountId(accountId);
+    queryClient.invalidateQueries();
+  };
+
+  const handleCreateAccount = async () => {
+    if (!newAccountName.trim()) return;
+    setCreatingAccount(true);
+    try {
+      const account = await createAccount(newAccountName.trim());
+      queryClient.invalidateQueries({ queryKey: ["my-accounts"] });
+      queryClient.invalidateQueries({ queryKey: ["me"] });
+      setSelectedAccountId(account.id);
+      queryClient.invalidateQueries();
+      toast.success(`Account "${account.name}" created`);
+      setNewAccountName("");
+      setShowCreateAccount(false);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to create account");
+    } finally {
+      setCreatingAccount(false);
+    }
+  };
+
+  const currentAccount = accounts?.find((a) => a.id === (selectedAccountId ?? user?.account?.id));
 
   const initials =
     user?.full_name
@@ -202,15 +254,21 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           <DropdownMenuTrigger asChild>
             <Button
               variant="ghost"
-              className="w-full justify-start text-muted-foreground"
+              className="w-full justify-start text-muted-foreground h-auto py-2"
             >
-              <Avatar className="mr-3 h-5 w-5">
+              <Avatar className="mr-3 h-6 w-6 shrink-0">
                 <AvatarFallback className="text-[10px]">{initials}</AvatarFallback>
               </Avatar>
-              <span className="truncate">{user?.full_name || user?.email || "Account"}</span>
+              <div className="flex flex-col items-start min-w-0">
+                <span className="truncate text-sm">{user?.full_name || user?.email || "Account"}</span>
+                <span className="truncate text-[11px] text-muted-foreground/70">
+                  {currentAccount?.name ?? user?.account?.name ?? ""}
+                </span>
+              </div>
+              <ChevronsUpDown className="ml-auto h-3 w-3 shrink-0 opacity-50" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent side="top" align="start" className="w-56">
+          <DropdownMenuContent side="top" align="start" className="w-64">
             <DropdownMenuLabel>
               <div className="flex flex-col space-y-1">
                 <p className="text-sm font-medium">
@@ -224,10 +282,65 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
               Settings
             </DropdownMenuItem>
             <DropdownMenuSeparator />
+            {accounts && accounts.length > 0 && (
+              <>
+                <DropdownMenuLabel className="text-xs text-muted-foreground">
+                  Switch account
+                </DropdownMenuLabel>
+                {accounts.map((account) => {
+                  const isActive = account.id === (selectedAccountId ?? user?.account?.id);
+                  return (
+                    <DropdownMenuItem
+                      key={account.id}
+                      onClick={() => handleSwitchAccount(account.id)}
+                      className={cn(isActive && "bg-muted")}
+                    >
+                      <span className="truncate flex-1">{account.name}</span>
+                      {isActive && <Check className="ml-2 h-3.5 w-3.5 shrink-0" />}
+                    </DropdownMenuItem>
+                  );
+                })}
+                <DropdownMenuItem onClick={() => setShowCreateAccount(true)}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Create new account
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+              </>
+            )}
             <DropdownMenuItem onClick={handleLogout}>Sign out</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+
+      <Dialog open={showCreateAccount} onOpenChange={setShowCreateAccount}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create a new account</DialogTitle>
+            <DialogDescription>
+              Accounts are separate workspaces with their own billing, API keys, and team members.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <Label htmlFor="account-name">Account name</Label>
+            <Input
+              id="account-name"
+              placeholder="My Team"
+              value={newAccountName}
+              onChange={(e) => setNewAccountName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleCreateAccount()}
+              className="mt-2"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowCreateAccount(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleCreateAccount} disabled={creatingAccount || !newAccountName.trim()}>
+              {creatingAccount ? "Creating..." : "Create account"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

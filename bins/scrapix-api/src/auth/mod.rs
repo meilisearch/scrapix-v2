@@ -32,6 +32,8 @@ pub struct AuthenticatedAccount {
 pub struct AuthenticatedUser {
     pub user_id: uuid::Uuid,
     pub email: String,
+    /// If set, the user wants to operate on this specific account (from X-Account-Id header).
+    pub selected_account_id: Option<uuid::Uuid>,
 }
 
 /// Shared auth state: database pool + JWT secret

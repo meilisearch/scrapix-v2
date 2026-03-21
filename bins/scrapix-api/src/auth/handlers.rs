@@ -2,7 +2,7 @@ use axum::{
     extract::{Extension, Path, Query, State},
     http::StatusCode,
     middleware,
-    routing::{get, patch, post},
+    routing::{delete, get, patch, post},
     Json, Router,
 };
 use axum_extra::extract::cookie::{Cookie, SameSite};
@@ -192,19 +192,70 @@ fn err(status: StatusCode, msg: &str, code: &str) -> ApiError {
     )
 }
 
-/// Get the user's account_id via account_members
+/// Get the user's account_id via account_members.
+/// If `selected_account_id` is provided, verifies the user is a member of that account.
+/// Otherwise falls back to the first account (backward compatible).
 pub(crate) async fn get_user_account_id(
     pool: &sqlx::PgPool,
     user_id: uuid::Uuid,
+    selected_account_id: Option<uuid::Uuid>,
 ) -> Result<uuid::Uuid, StatusCode> {
-    sqlx::query_scalar::<_, uuid::Uuid>(
-        "SELECT account_id FROM account_members WHERE user_id = $1 LIMIT 1",
+    if let Some(account_id) = selected_account_id {
+        // Verify user is a member of the requested account
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM account_members WHERE user_id = $1 AND account_id = $2)",
+        )
+        .bind(user_id)
+        .bind(account_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+        if exists {
+            Ok(account_id)
+        } else {
+            Err(StatusCode::FORBIDDEN)
+        }
+    } else {
+        sqlx::query_scalar::<_, uuid::Uuid>(
+            "SELECT account_id FROM account_members WHERE user_id = $1 LIMIT 1",
+        )
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)
+    }
+}
+
+/// Get the user's role in the given account.
+pub(crate) async fn get_user_role(
+    pool: &sqlx::PgPool,
+    user_id: uuid::Uuid,
+    account_id: uuid::Uuid,
+) -> Result<String, StatusCode> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT role FROM account_members WHERE user_id = $1 AND account_id = $2",
     )
     .bind(user_id)
+    .bind(account_id)
     .fetch_optional(pool)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     .ok_or(StatusCode::NOT_FOUND)
+}
+
+/// Check that a role is in the allowed set. Returns Err(403) if not.
+pub(crate) fn require_role(role: &str, allowed: &[&str]) -> Result<(), ApiError> {
+    if allowed.contains(&role) {
+        Ok(())
+    } else {
+        Err(err(
+            StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+            "forbidden",
+        ))
+    }
 }
 
 // ============================================================================
@@ -349,6 +400,39 @@ pub(crate) async fn signup(
     })?;
 
     info!(user_id = %user_id, email = %req.email, "New user signed up");
+
+    // Auto-accept pending invites for this email
+    let pending_invites = sqlx::query(
+        "SELECT id, account_id, role FROM account_invites \
+         WHERE email = $1 AND status = 'pending' AND expires_at > now()",
+    )
+    .bind(&req.email)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
+    for invite_row in &pending_invites {
+        let invite_id: uuid::Uuid = invite_row.get("id");
+        let inv_account_id: uuid::Uuid = invite_row.get("account_id");
+        let inv_role: String = invite_row.get("role");
+
+        let _ = sqlx::query(
+            "INSERT INTO account_members (user_id, account_id, role) VALUES ($1, $2, $3) \
+             ON CONFLICT (user_id, account_id) DO NOTHING",
+        )
+        .bind(user_id)
+        .bind(inv_account_id)
+        .bind(&inv_role)
+        .execute(&state.pool)
+        .await;
+
+        let _ = sqlx::query("UPDATE account_invites SET status = 'accepted' WHERE id = $1")
+            .bind(invite_id)
+            .execute(&state.pool)
+            .await;
+
+        info!(user_id = %user_id, account_id = %inv_account_id, role = %inv_role, "Auto-accepted pending invite on signup");
+    }
 
     // Send verification email (replaces welcome — welcome is sent on verification)
     if let Some(ref mailer) = state.email_client {
@@ -535,14 +619,27 @@ pub(crate) async fn get_me(
     })?
     .ok_or_else(|| err(StatusCode::NOT_FOUND, "User not found", "not_found"))?;
 
-    let account = sqlx::query(
-        "SELECT a.id, a.name, a.tier, a.active, a.credits_balance, m.role \
-         FROM account_members m JOIN accounts a ON a.id = m.account_id \
-         WHERE m.user_id = $1 LIMIT 1",
-    )
-    .bind(user.user_id)
-    .fetch_optional(&state.pool)
-    .await
+    // If user has a selected_account_id, use that; otherwise default to first
+    let account = if let Some(selected_id) = user.selected_account_id {
+        sqlx::query(
+            "SELECT a.id, a.name, a.tier, a.active, a.credits_balance, m.role \
+             FROM account_members m JOIN accounts a ON a.id = m.account_id \
+             WHERE m.user_id = $1 AND m.account_id = $2",
+        )
+        .bind(user.user_id)
+        .bind(selected_id)
+        .fetch_optional(&state.pool)
+        .await
+    } else {
+        sqlx::query(
+            "SELECT a.id, a.name, a.tier, a.active, a.credits_balance, m.role \
+             FROM account_members m JOIN accounts a ON a.id = m.account_id \
+             WHERE m.user_id = $1 LIMIT 1",
+        )
+        .bind(user.user_id)
+        .fetch_optional(&state.pool)
+        .await
+    }
     .ok()
     .flatten()
     .map(|r| AccountResponse {
@@ -626,14 +723,26 @@ pub(crate) async fn get_account(
     State(state): State<Arc<AuthState>>,
     Extension(user): Extension<AuthenticatedUser>,
 ) -> Result<Json<AccountResponse>, ApiError> {
-    let row = sqlx::query(
-        "SELECT a.id, a.name, a.tier, a.active, a.credits_balance, m.role \
-         FROM account_members m JOIN accounts a ON a.id = m.account_id \
-         WHERE m.user_id = $1 LIMIT 1",
-    )
-    .bind(user.user_id)
-    .fetch_optional(&state.pool)
-    .await
+    let row = if let Some(selected_id) = user.selected_account_id {
+        sqlx::query(
+            "SELECT a.id, a.name, a.tier, a.active, a.credits_balance, m.role \
+             FROM account_members m JOIN accounts a ON a.id = m.account_id \
+             WHERE m.user_id = $1 AND m.account_id = $2",
+        )
+        .bind(user.user_id)
+        .bind(selected_id)
+        .fetch_optional(&state.pool)
+        .await
+    } else {
+        sqlx::query(
+            "SELECT a.id, a.name, a.tier, a.active, a.credits_balance, m.role \
+             FROM account_members m JOIN accounts a ON a.id = m.account_id \
+             WHERE m.user_id = $1 LIMIT 1",
+        )
+        .bind(user.user_id)
+        .fetch_optional(&state.pool)
+        .await
+    }
     .map_err(|_| {
         err(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -669,9 +778,15 @@ pub(crate) async fn update_account(
     Extension(user): Extension<AuthenticatedUser>,
     Json(req): Json<UpdateAccountRequest>,
 ) -> Result<Json<MessageResponse>, ApiError> {
-    let account_id = get_user_account_id(&state.pool, user.user_id)
+    let account_id = get_user_account_id(&state.pool, user.user_id, user.selected_account_id)
         .await
         .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
+
+    // Only owners can update account settings
+    let role = get_user_role(&state.pool, user.user_id, account_id)
+        .await
+        .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
+    require_role(&role, &["owner"])?;
 
     if let Some(ref name) = req.name {
         sqlx::query("UPDATE accounts SET name = $1 WHERE id = $2")
@@ -706,7 +821,7 @@ pub(crate) async fn list_api_keys(
     State(state): State<Arc<AuthState>>,
     Extension(user): Extension<AuthenticatedUser>,
 ) -> Result<Json<Vec<ApiKeyResponse>>, ApiError> {
-    let account_id = get_user_account_id(&state.pool, user.user_id)
+    let account_id = get_user_account_id(&state.pool, user.user_id, user.selected_account_id)
         .await
         .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
 
@@ -769,9 +884,15 @@ pub(crate) async fn create_api_key(
         ));
     }
 
-    let account_id = get_user_account_id(&state.pool, user.user_id)
+    let account_id = get_user_account_id(&state.pool, user.user_id, user.selected_account_id)
         .await
         .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
+
+    // Only owners and admins can create API keys
+    let role = get_user_role(&state.pool, user.user_id, account_id)
+        .await
+        .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
+    require_role(&role, &["owner", "admin"])?;
 
     // Generate key server-side (scoped to drop !Send ThreadRng before await)
     let (api_key, prefix, key_hash) = {
@@ -836,9 +957,15 @@ pub(crate) async fn revoke_api_key(
     Extension(user): Extension<AuthenticatedUser>,
     Path(key_id): Path<String>,
 ) -> Result<Json<MessageResponse>, ApiError> {
-    let account_id = get_user_account_id(&state.pool, user.user_id)
+    let account_id = get_user_account_id(&state.pool, user.user_id, user.selected_account_id)
         .await
         .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
+
+    // Only owners and admins can revoke API keys
+    let role = get_user_role(&state.pool, user.user_id, account_id)
+        .await
+        .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
+    require_role(&role, &["owner", "admin"])?;
 
     let key_uuid: uuid::Uuid = key_id.parse().map_err(|_| {
         err(
@@ -885,7 +1012,7 @@ pub(crate) async fn get_billing(
     State(state): State<Arc<AuthState>>,
     Extension(user): Extension<AuthenticatedUser>,
 ) -> Result<Json<BillingResponse>, ApiError> {
-    let account_id = get_user_account_id(&state.pool, user.user_id)
+    let account_id = get_user_account_id(&state.pool, user.user_id, user.selected_account_id)
         .await
         .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
 
@@ -943,9 +1070,15 @@ pub(crate) async fn update_billing(
         ));
     }
 
-    let account_id = get_user_account_id(&state.pool, user.user_id)
+    let account_id = get_user_account_id(&state.pool, user.user_id, user.selected_account_id)
         .await
         .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
+
+    // Only owners can change billing tier
+    let role = get_user_role(&state.pool, user.user_id, account_id)
+        .await
+        .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
+    require_role(&role, &["owner"])?;
 
     sqlx::query("UPDATE accounts SET tier = $1 WHERE id = $2")
         .bind(&req.tier)
@@ -995,7 +1128,7 @@ pub(crate) async fn topup_credits(
         ));
     }
 
-    let account_id = get_user_account_id(&state.pool, user.user_id)
+    let account_id = get_user_account_id(&state.pool, user.user_id, user.selected_account_id)
         .await
         .map_err(|e| {
             error!(user_id = %user.user_id, "topup: failed to get account_id: {e:?}");
@@ -1079,7 +1212,7 @@ pub(crate) async fn update_auto_topup(
     Extension(user): Extension<AuthenticatedUser>,
     Json(req): Json<AutoTopupRequest>,
 ) -> Result<Json<MessageResponse>, ApiError> {
-    let account_id = get_user_account_id(&state.pool, user.user_id)
+    let account_id = get_user_account_id(&state.pool, user.user_id, user.selected_account_id)
         .await
         .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
 
@@ -1154,7 +1287,7 @@ pub(crate) async fn update_spend_limit(
         }
     }
 
-    let account_id = get_user_account_id(&state.pool, user.user_id)
+    let account_id = get_user_account_id(&state.pool, user.user_id, user.selected_account_id)
         .await
         .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
 
@@ -1198,7 +1331,7 @@ pub(crate) async fn list_transactions(
     Extension(user): Extension<AuthenticatedUser>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<TransactionsListResponse>, ApiError> {
-    let account_id = get_user_account_id(&state.pool, user.user_id)
+    let account_id = get_user_account_id(&state.pool, user.user_id, user.selected_account_id)
         .await
         .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
 
@@ -1668,6 +1801,756 @@ pub(crate) async fn reset_password(
 }
 
 // ============================================================================
+// Team management types
+// ============================================================================
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct AccountListItem {
+    id: String,
+    name: String,
+    tier: String,
+    active: bool,
+    role: String,
+    credits_balance: i64,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct MemberResponse {
+    user_id: String,
+    email: String,
+    full_name: Option<String>,
+    role: String,
+    joined_at: String,
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct InviteMemberRequest {
+    email: String,
+    role: Option<String>,
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct UpdateMemberRoleRequest {
+    role: String,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct InviteResponse {
+    id: String,
+    email: String,
+    role: String,
+    status: String,
+    invited_by: String,
+    expires_at: String,
+    created_at: String,
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct AcceptInviteRequest {
+    token: String,
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct CreateAccountRequest {
+    name: String,
+}
+
+// ============================================================================
+// Account switching: list all accounts + create new account
+// ============================================================================
+
+/// GET /auth/me/accounts — list all accounts the user belongs to
+pub(crate) async fn list_my_accounts(
+    State(state): State<Arc<AuthState>>,
+    Extension(user): Extension<AuthenticatedUser>,
+) -> Result<Json<Vec<AccountListItem>>, ApiError> {
+    let rows = sqlx::query(
+        "SELECT a.id, a.name, a.tier, a.active, a.credits_balance, m.role \
+         FROM account_members m JOIN accounts a ON a.id = m.account_id \
+         WHERE m.user_id = $1 ORDER BY m.joined_at ASC",
+    )
+    .bind(user.user_id)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|_| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Database error",
+            "internal_error",
+        )
+    })?;
+
+    let accounts: Vec<AccountListItem> = rows
+        .iter()
+        .map(|r| AccountListItem {
+            id: r.get::<uuid::Uuid, _>("id").to_string(),
+            name: r.get("name"),
+            tier: r.get("tier"),
+            active: r.get("active"),
+            role: r.get("role"),
+            credits_balance: r.get("credits_balance"),
+        })
+        .collect();
+
+    Ok(Json(accounts))
+}
+
+/// POST /auth/me/accounts — create a new account (user becomes owner)
+pub(crate) async fn create_account(
+    State(state): State<Arc<AuthState>>,
+    Extension(user): Extension<AuthenticatedUser>,
+    Json(req): Json<CreateAccountRequest>,
+) -> Result<(StatusCode, Json<AccountListItem>), ApiError> {
+    let name = req.name.trim().to_string();
+    if name.is_empty() {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "Account name is required",
+            "validation_error",
+        ));
+    }
+
+    let mut tx = state.pool.begin().await.map_err(|_| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Database error",
+            "internal_error",
+        )
+    })?;
+
+    let account_id: uuid::Uuid =
+        sqlx::query_scalar("INSERT INTO accounts (name) VALUES ($1) RETURNING id")
+            .bind(&name)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|_| {
+                err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Failed to create account",
+                    "internal_error",
+                )
+            })?;
+
+    sqlx::query("INSERT INTO account_members (user_id, account_id, role) VALUES ($1, $2, 'owner')")
+        .bind(user.user_id)
+        .bind(account_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| {
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to create membership",
+                "internal_error",
+            )
+        })?;
+
+    // Log the initial credit deposit
+    sqlx::query(
+        "INSERT INTO transactions (account_id, type, amount, balance_after, description) \
+         VALUES ($1, 'initial_deposit', 100, 100, 'Welcome credit deposit')",
+    )
+    .bind(account_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|_| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to log initial deposit",
+            "internal_error",
+        )
+    })?;
+
+    tx.commit().await.map_err(|_| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Database error",
+            "internal_error",
+        )
+    })?;
+
+    info!(user_id = %user.user_id, account_id = %account_id, name = %name, "New account created");
+
+    Ok((
+        StatusCode::CREATED,
+        Json(AccountListItem {
+            id: account_id.to_string(),
+            name,
+            tier: "free".to_string(),
+            active: true,
+            role: "owner".to_string(),
+            credits_balance: 100,
+        }),
+    ))
+}
+
+// ============================================================================
+// Team member management
+// ============================================================================
+
+/// GET /account/members — list all members of the current account
+pub(crate) async fn list_members(
+    State(state): State<Arc<AuthState>>,
+    Extension(user): Extension<AuthenticatedUser>,
+) -> Result<Json<Vec<MemberResponse>>, ApiError> {
+    let account_id = get_user_account_id(&state.pool, user.user_id, user.selected_account_id)
+        .await
+        .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
+
+    let rows = sqlx::query(
+        "SELECT u.id, u.email, u.full_name, m.role, m.joined_at \
+         FROM account_members m JOIN users u ON u.id = m.user_id \
+         WHERE m.account_id = $1 ORDER BY m.joined_at ASC",
+    )
+    .bind(account_id)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|_| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Database error",
+            "internal_error",
+        )
+    })?;
+
+    let members: Vec<MemberResponse> = rows
+        .iter()
+        .map(|r| MemberResponse {
+            user_id: r.get::<uuid::Uuid, _>("id").to_string(),
+            email: r.get("email"),
+            full_name: r.get("full_name"),
+            role: r.get("role"),
+            joined_at: r
+                .get::<chrono::DateTime<chrono::Utc>, _>("joined_at")
+                .to_rfc3339(),
+        })
+        .collect();
+
+    Ok(Json(members))
+}
+
+/// POST /account/members/invite — invite a user by email
+pub(crate) async fn invite_member(
+    State(state): State<Arc<AuthState>>,
+    Extension(user): Extension<AuthenticatedUser>,
+    Json(req): Json<InviteMemberRequest>,
+) -> Result<Json<InviteResponse>, ApiError> {
+    let account_id = get_user_account_id(&state.pool, user.user_id, user.selected_account_id)
+        .await
+        .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
+
+    // Check caller is owner or admin
+    let caller_role = get_user_role(&state.pool, user.user_id, account_id)
+        .await
+        .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
+    require_role(&caller_role, &["owner", "admin"])?;
+
+    let role = req.role.as_deref().unwrap_or("member");
+    if !["admin", "member", "viewer"].contains(&role) {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "Invalid role. Must be admin, member, or viewer",
+            "validation_error",
+        ));
+    }
+
+    // Admins cannot invite admins or owners
+    if caller_role == "admin" && role == "admin" {
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "Admins cannot invite other admins",
+            "forbidden",
+        ));
+    }
+
+    if req.email.trim().is_empty() || !req.email.contains('@') {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "Valid email is required",
+            "validation_error",
+        ));
+    }
+
+    // Check if user is already a member
+    let already_member: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM account_members m JOIN users u ON u.id = m.user_id \
+         WHERE m.account_id = $1 AND u.email = $2)",
+    )
+    .bind(account_id)
+    .bind(req.email.trim())
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|_| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Database error",
+            "internal_error",
+        )
+    })?;
+
+    if already_member {
+        return Err(err(
+            StatusCode::CONFLICT,
+            "User is already a member of this account",
+            "already_member",
+        ));
+    }
+
+    // Generate invite token (scoped to drop !Send ThreadRng before await)
+    let (raw_token, token_hash) = {
+        use rand::Rng;
+        let chars: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+        let mut rng = rand::thread_rng();
+        let raw: String = (0..48)
+            .map(|_| chars[rng.gen_range(0..chars.len())] as char)
+            .collect();
+        let mut hasher = Sha256::new();
+        hasher.update(raw.as_bytes());
+        let hash = hex::encode(hasher.finalize());
+        (raw, hash)
+    };
+
+    let row = sqlx::query(
+        "INSERT INTO account_invites (account_id, email, role, invited_by, token_hash) \
+         VALUES ($1, $2, $3, $4, $5) \
+         ON CONFLICT (account_id, email) WHERE status = 'pending' \
+         DO UPDATE SET role = EXCLUDED.role, token_hash = EXCLUDED.token_hash, \
+             expires_at = now() + interval '7 days', invited_by = EXCLUDED.invited_by \
+         RETURNING id, email, role, status, expires_at, created_at",
+    )
+    .bind(account_id)
+    .bind(req.email.trim())
+    .bind(role)
+    .bind(user.user_id)
+    .bind(&token_hash)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|_| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to create invite",
+            "internal_error",
+        )
+    })?;
+
+    // Send invite email
+    if let Some(ref mailer) = state.email_client {
+        // Get account name for the email
+        let account_name: Option<String> =
+            sqlx::query_scalar("SELECT name FROM accounts WHERE id = $1")
+                .bind(account_id)
+                .fetch_optional(&state.pool)
+                .await
+                .ok()
+                .flatten();
+        let inviter_name = user.email.clone();
+        mailer.send_team_invite(
+            req.email.trim(),
+            &account_name.unwrap_or_else(|| "Scrapix".to_string()),
+            &inviter_name,
+            role,
+            &raw_token,
+        );
+    }
+
+    info!(account_id = %account_id, invited_email = %req.email, role = %role, "Team invite sent");
+
+    Ok(Json(InviteResponse {
+        id: row.get::<uuid::Uuid, _>("id").to_string(),
+        email: row.get("email"),
+        role: row.get("role"),
+        status: row.get("status"),
+        invited_by: user.user_id.to_string(),
+        expires_at: row
+            .get::<chrono::DateTime<chrono::Utc>, _>("expires_at")
+            .to_rfc3339(),
+        created_at: row
+            .get::<chrono::DateTime<chrono::Utc>, _>("created_at")
+            .to_rfc3339(),
+    }))
+}
+
+/// PATCH /account/members/{user_id} — change a member's role (owner only)
+pub(crate) async fn update_member_role(
+    State(state): State<Arc<AuthState>>,
+    Extension(user): Extension<AuthenticatedUser>,
+    Path(member_user_id): Path<String>,
+    Json(req): Json<UpdateMemberRoleRequest>,
+) -> Result<Json<MessageResponse>, ApiError> {
+    let account_id = get_user_account_id(&state.pool, user.user_id, user.selected_account_id)
+        .await
+        .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
+
+    let caller_role = get_user_role(&state.pool, user.user_id, account_id)
+        .await
+        .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
+    require_role(&caller_role, &["owner"])?;
+
+    let target_user_id: uuid::Uuid = member_user_id.parse().map_err(|_| {
+        err(
+            StatusCode::BAD_REQUEST,
+            "Invalid user ID",
+            "validation_error",
+        )
+    })?;
+
+    if !["owner", "admin", "member", "viewer"].contains(&req.role.as_str()) {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "Invalid role",
+            "validation_error",
+        ));
+    }
+
+    // Don't allow changing own role
+    if target_user_id == user.user_id {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "Cannot change your own role",
+            "validation_error",
+        ));
+    }
+
+    let result =
+        sqlx::query("UPDATE account_members SET role = $1 WHERE user_id = $2 AND account_id = $3")
+            .bind(&req.role)
+            .bind(target_user_id)
+            .bind(account_id)
+            .execute(&state.pool)
+            .await
+            .map_err(|_| {
+                err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Failed to update role",
+                    "internal_error",
+                )
+            })?;
+
+    if result.rows_affected() == 0 {
+        return Err(err(StatusCode::NOT_FOUND, "Member not found", "not_found"));
+    }
+
+    info!(account_id = %account_id, target_user_id = %target_user_id, new_role = %req.role, "Member role updated");
+
+    Ok(Json(MessageResponse {
+        message: format!("Role updated to {}", req.role),
+    }))
+}
+
+/// DELETE /account/members/{user_id} — remove a member (owner, or self-remove)
+pub(crate) async fn remove_member(
+    State(state): State<Arc<AuthState>>,
+    Extension(user): Extension<AuthenticatedUser>,
+    Path(member_user_id): Path<String>,
+) -> Result<Json<MessageResponse>, ApiError> {
+    let account_id = get_user_account_id(&state.pool, user.user_id, user.selected_account_id)
+        .await
+        .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
+
+    let target_user_id: uuid::Uuid = member_user_id.parse().map_err(|_| {
+        err(
+            StatusCode::BAD_REQUEST,
+            "Invalid user ID",
+            "validation_error",
+        )
+    })?;
+
+    // Self-remove is always allowed (except for owners)
+    let is_self = target_user_id == user.user_id;
+
+    if is_self {
+        let my_role = get_user_role(&state.pool, user.user_id, account_id)
+            .await
+            .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
+        if my_role == "owner" {
+            // Check if there's another owner
+            let owner_count: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM account_members WHERE account_id = $1 AND role = 'owner'",
+            )
+            .bind(account_id)
+            .fetch_one(&state.pool)
+            .await
+            .map_err(|_| {
+                err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Database error",
+                    "internal_error",
+                )
+            })?;
+
+            if owner_count <= 1 {
+                return Err(err(
+                    StatusCode::BAD_REQUEST,
+                    "Cannot leave: you are the only owner. Transfer ownership first.",
+                    "last_owner",
+                ));
+            }
+        }
+    } else {
+        // Only owner can remove others
+        let caller_role = get_user_role(&state.pool, user.user_id, account_id)
+            .await
+            .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
+        require_role(&caller_role, &["owner"])?;
+    }
+
+    let result = sqlx::query("DELETE FROM account_members WHERE user_id = $1 AND account_id = $2")
+        .bind(target_user_id)
+        .bind(account_id)
+        .execute(&state.pool)
+        .await
+        .map_err(|_| {
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to remove member",
+                "internal_error",
+            )
+        })?;
+
+    if result.rows_affected() == 0 {
+        return Err(err(StatusCode::NOT_FOUND, "Member not found", "not_found"));
+    }
+
+    info!(account_id = %account_id, removed_user_id = %target_user_id, "Member removed");
+
+    Ok(Json(MessageResponse {
+        message: "Member removed".to_string(),
+    }))
+}
+
+// ============================================================================
+// Invite management
+// ============================================================================
+
+/// GET /account/invites — list pending invites for the current account
+pub(crate) async fn list_invites(
+    State(state): State<Arc<AuthState>>,
+    Extension(user): Extension<AuthenticatedUser>,
+) -> Result<Json<Vec<InviteResponse>>, ApiError> {
+    let account_id = get_user_account_id(&state.pool, user.user_id, user.selected_account_id)
+        .await
+        .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
+
+    let caller_role = get_user_role(&state.pool, user.user_id, account_id)
+        .await
+        .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
+    require_role(&caller_role, &["owner", "admin"])?;
+
+    let rows = sqlx::query(
+        "SELECT i.id, i.email, i.role, i.status, i.invited_by, i.expires_at, i.created_at \
+         FROM account_invites i WHERE i.account_id = $1 AND i.status = 'pending' \
+         AND i.expires_at > now() ORDER BY i.created_at DESC",
+    )
+    .bind(account_id)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|_| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Database error",
+            "internal_error",
+        )
+    })?;
+
+    let invites: Vec<InviteResponse> = rows
+        .iter()
+        .map(|r| InviteResponse {
+            id: r.get::<uuid::Uuid, _>("id").to_string(),
+            email: r.get("email"),
+            role: r.get("role"),
+            status: r.get("status"),
+            invited_by: r.get::<uuid::Uuid, _>("invited_by").to_string(),
+            expires_at: r
+                .get::<chrono::DateTime<chrono::Utc>, _>("expires_at")
+                .to_rfc3339(),
+            created_at: r
+                .get::<chrono::DateTime<chrono::Utc>, _>("created_at")
+                .to_rfc3339(),
+        })
+        .collect();
+
+    Ok(Json(invites))
+}
+
+/// DELETE /account/invites/{id} — revoke a pending invite
+pub(crate) async fn revoke_invite(
+    State(state): State<Arc<AuthState>>,
+    Extension(user): Extension<AuthenticatedUser>,
+    Path(invite_id): Path<String>,
+) -> Result<Json<MessageResponse>, ApiError> {
+    let account_id = get_user_account_id(&state.pool, user.user_id, user.selected_account_id)
+        .await
+        .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
+
+    let caller_role = get_user_role(&state.pool, user.user_id, account_id)
+        .await
+        .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
+    require_role(&caller_role, &["owner", "admin"])?;
+
+    let invite_uuid: uuid::Uuid = invite_id.parse().map_err(|_| {
+        err(
+            StatusCode::BAD_REQUEST,
+            "Invalid invite ID",
+            "validation_error",
+        )
+    })?;
+
+    let result = sqlx::query(
+        "UPDATE account_invites SET status = 'revoked' \
+         WHERE id = $1 AND account_id = $2 AND status = 'pending'",
+    )
+    .bind(invite_uuid)
+    .bind(account_id)
+    .execute(&state.pool)
+    .await
+    .map_err(|_| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to revoke invite",
+            "internal_error",
+        )
+    })?;
+
+    if result.rows_affected() == 0 {
+        return Err(err(
+            StatusCode::NOT_FOUND,
+            "Invite not found or already processed",
+            "not_found",
+        ));
+    }
+
+    Ok(Json(MessageResponse {
+        message: "Invite revoked".to_string(),
+    }))
+}
+
+/// POST /auth/accept-invite — accept an invite using a token (public, no auth required for the endpoint but user must be logged in)
+pub(crate) async fn accept_invite(
+    State(state): State<Arc<AuthState>>,
+    Extension(user): Extension<AuthenticatedUser>,
+    Json(req): Json<AcceptInviteRequest>,
+) -> Result<Json<MessageResponse>, ApiError> {
+    let token_hash = {
+        let mut hasher = Sha256::new();
+        hasher.update(req.token.as_bytes());
+        hex::encode(hasher.finalize())
+    };
+
+    // Find the pending invite
+    let invite_row = sqlx::query(
+        "SELECT id, account_id, email, role FROM account_invites \
+         WHERE token_hash = $1 AND status = 'pending' AND expires_at > now()",
+    )
+    .bind(&token_hash)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|_| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Database error",
+            "internal_error",
+        )
+    })?
+    .ok_or_else(|| {
+        err(
+            StatusCode::BAD_REQUEST,
+            "Invalid or expired invite token",
+            "invalid_token",
+        )
+    })?;
+
+    let invite_id: uuid::Uuid = invite_row.get("id");
+    let account_id: uuid::Uuid = invite_row.get("account_id");
+    let invite_email: String = invite_row.get("email");
+    let role: String = invite_row.get("role");
+
+    // Verify the logged-in user's email matches the invite
+    if user.email.to_lowercase() != invite_email.to_lowercase() {
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "This invite was sent to a different email address",
+            "email_mismatch",
+        ));
+    }
+
+    // Check if already a member
+    let already_member: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM account_members WHERE user_id = $1 AND account_id = $2)",
+    )
+    .bind(user.user_id)
+    .bind(account_id)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|_| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Database error",
+            "internal_error",
+        )
+    })?;
+
+    if already_member {
+        // Mark invite as accepted even if already a member
+        let _ = sqlx::query("UPDATE account_invites SET status = 'accepted' WHERE id = $1")
+            .bind(invite_id)
+            .execute(&state.pool)
+            .await;
+
+        return Ok(Json(MessageResponse {
+            message: "You are already a member of this account".to_string(),
+        }));
+    }
+
+    // In a transaction: add member + mark invite accepted
+    let mut tx = state.pool.begin().await.map_err(|_| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Database error",
+            "internal_error",
+        )
+    })?;
+
+    sqlx::query("INSERT INTO account_members (user_id, account_id, role) VALUES ($1, $2, $3)")
+        .bind(user.user_id)
+        .bind(account_id)
+        .bind(&role)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| {
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to add member",
+                "internal_error",
+            )
+        })?;
+
+    sqlx::query("UPDATE account_invites SET status = 'accepted' WHERE id = $1")
+        .bind(invite_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| {
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to update invite",
+                "internal_error",
+            )
+        })?;
+
+    tx.commit().await.map_err(|_| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Database error",
+            "internal_error",
+        )
+    })?;
+
+    info!(user_id = %user.user_id, account_id = %account_id, role = %role, "User accepted team invite");
+
+    Ok(Json(MessageResponse {
+        message: format!("You have joined the account as {role}"),
+    }))
+}
+
+// ============================================================================
 // Router constructors
 // ============================================================================
 
@@ -1687,8 +2570,21 @@ pub fn auth_routes(state: Arc<AuthState>) -> Router {
 pub fn session_routes(state: Arc<AuthState>) -> Router {
     Router::new()
         .route("/auth/me", get(get_me).patch(update_me))
+        .route(
+            "/auth/me/accounts",
+            get(list_my_accounts).post(create_account),
+        )
+        .route("/auth/accept-invite", post(accept_invite))
         .route("/auth/resend-verification", post(resend_verification))
         .route("/account", get(get_account).patch(update_account))
+        .route("/account/members", get(list_members))
+        .route("/account/members/invite", post(invite_member))
+        .route(
+            "/account/members/{user_id}",
+            patch(update_member_role).delete(remove_member),
+        )
+        .route("/account/invites", get(list_invites))
+        .route("/account/invites/{id}", delete(revoke_invite))
         .route("/account/api-keys", get(list_api_keys).post(create_api_key))
         .route("/account/api-keys/{id}", patch(revoke_api_key))
         .route("/account/billing", get(get_billing).patch(update_billing))

@@ -214,6 +214,7 @@ function AddCardForm({ onSuccess, onCancel }: { onSuccess: () => void; onCancel:
 export default function BillingPage() {
   const queryClient = useQueryClient();
   const { data: user, isLoading: userLoading } = useMe();
+  const isOwner = user?.account?.role === "owner";
   const { data: billing, isLoading: billingLoading } = useBilling();
   const { data: paymentMethods, isLoading: pmLoading } = usePaymentMethods();
   const { data: invoices, isLoading: invoicesLoading } = useInvoices();
@@ -567,7 +568,7 @@ export default function BillingPage() {
                   Manage your cards for credit purchases and auto top-up
                 </CardDescription>
               </div>
-              {!showAddCard && (
+              {!showAddCard && isOwner && (
                 <Button variant="outline" size="sm" onClick={handleAddCard}>
                   <Plus className="mr-2 h-4 w-4" />
                   Add Card
@@ -670,7 +671,7 @@ export default function BillingPage() {
                       </div>
                     </div>
                     <div className="flex items-center gap-1">
-                      {!pm.is_default && (
+                      {isOwner && !pm.is_default && (
                         <Button
                           variant="ghost"
                           size="sm"
@@ -681,15 +682,17 @@ export default function BillingPage() {
                           <Star className="h-4 w-4" />
                         </Button>
                       )}
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => deletePmMutation.mutate(pm.id)}
-                        disabled={deletePmMutation.isPending}
-                        title="Remove card"
-                      >
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
+                      {isOwner && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => deletePmMutation.mutate(pm.id)}
+                          disabled={deletePmMutation.isPending}
+                          title="Remove card"
+                        >
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -699,8 +702,8 @@ export default function BillingPage() {
         </Card>
       )}
 
-      {/* Buy Credits */}
-      <Card>
+      {/* Buy Credits — owner only */}
+      {isOwner && <><Card>
         <CardHeader>
           <div className="flex items-center justify-between">
             <div>
@@ -924,9 +927,10 @@ export default function BillingPage() {
             </Button>
           </DialogFooter>
         </DialogContent>
-      </Dialog>
+      </Dialog></>}
 
-      {/* Auto Top-up */}
+      {/* Auto Top-up — owner only */}
+      {isOwner &&
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -1021,10 +1025,10 @@ export default function BillingPage() {
             </div>
           )}
         </CardContent>
-      </Card>
+      </Card>}
 
-      {/* Monthly Spend Limit */}
-      <Card>
+      {/* Monthly Spend Limit — owner only */}
+      {isOwner && <Card>
         <CardHeader>
           <CardTitle>Monthly Spend Limit</CardTitle>
           <CardDescription>
@@ -1078,7 +1082,7 @@ export default function BillingPage() {
             </p>
           )}
         </CardContent>
-      </Card>
+      </Card>}
 
       {/* Daily Cost Chart */}
       {dailyCostData.length > 0 && (

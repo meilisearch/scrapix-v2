@@ -197,6 +197,28 @@ DO $$ BEGIN
 END $$;
 
 -- ============================================================================
+-- Account Invites (team invite flow)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS account_invites (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id UUID NOT NULL REFERENCES accounts (id) ON DELETE CASCADE,
+    email TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('admin', 'member', 'viewer')),
+    invited_by UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'expired', 'revoked')),
+    expires_at TIMESTAMPTZ NOT NULL DEFAULT now() + interval '7 days',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_account_invites_account ON account_invites (account_id);
+CREATE INDEX IF NOT EXISTS idx_account_invites_email ON account_invites (email);
+CREATE INDEX IF NOT EXISTS idx_account_invites_token ON account_invites (token_hash) WHERE status = 'pending';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_account_invites_pending
+    ON account_invites (account_id, email) WHERE status = 'pending';
+
+-- ============================================================================
 -- Meilisearch Engines (saved Meilisearch instances)
 -- ============================================================================
 
@@ -317,6 +339,16 @@ DO $$ BEGIN
     END IF;
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'accounts' AND column_name = 'stripe_default_payment_method_id') THEN
         ALTER TABLE accounts ADD COLUMN stripe_default_payment_method_id TEXT;
+    END IF;
+
+    -- Add 'viewer' role to account_members if not already present
+    IF EXISTS (
+        SELECT 1 FROM information_schema.check_constraints
+        WHERE constraint_name = 'account_members_role_check'
+    ) THEN
+        ALTER TABLE account_members DROP CONSTRAINT IF EXISTS account_members_role_check;
+        ALTER TABLE account_members ADD CONSTRAINT account_members_role_check
+            CHECK (role IN ('owner', 'admin', 'member', 'viewer'));
     END IF;
 
     -- Email verification and notification preferences on users

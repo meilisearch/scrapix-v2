@@ -75,6 +75,8 @@ export default function SettingsPage() {
     setSavingAccount(false);
   };
 
+  const isOwner = user?.account?.role === "owner";
+
   if (loading) {
     return (
       <div className="space-y-6">
@@ -159,27 +161,33 @@ export default function SettingsPage() {
               id="accountName"
               value={accountName}
               onChange={(e) => setAccountName(e.target.value)}
+              disabled={!isOwner}
             />
+            {!isOwner && (
+              <p className="text-xs text-muted-foreground">Only the account owner can change this.</p>
+            )}
           </div>
         </CardContent>
-        <CardFooter>
-          <Button
-            onClick={saveAccount}
-            disabled={savingAccount || accountName === user?.account?.name}
-          >
-            {savingAccount && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Save Changes
-          </Button>
-        </CardFooter>
+        {isOwner && (
+          <CardFooter>
+            <Button
+              onClick={saveAccount}
+              disabled={savingAccount || accountName === user?.account?.name}
+            >
+              {savingAccount && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Save Changes
+            </Button>
+          </CardFooter>
+        )}
       </Card>
 
       {/* Meilisearch Engine */}
       <MeilisearchEngineCard />
 
-      <Separator />
+      {isOwner && <Separator />}
 
-      {/* Danger Zone */}
-      <Card className="border-destructive">
+      {/* Danger Zone — owner only */}
+      {isOwner && <Card className="border-destructive">
         <CardHeader>
           <CardTitle className="text-destructive">Danger Zone</CardTitle>
           <CardDescription>
@@ -199,7 +207,7 @@ export default function SettingsPage() {
             </Button>
           </div>
         </CardContent>
-      </Card>
+      </Card>}
     </div>
   );
 }

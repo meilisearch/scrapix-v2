@@ -339,6 +339,37 @@ export interface InvoiceInfo {
 }
 
 // ============================================================================
+// Team / Multi-tenancy
+// ============================================================================
+
+export interface AccountListItem {
+  id: string;
+  name: string;
+  tier: string;
+  active: boolean;
+  role: string;
+  credits_balance: number;
+}
+
+export interface MemberInfo {
+  user_id: string;
+  email: string;
+  full_name: string | null;
+  role: string;
+  joined_at: string;
+}
+
+export interface InviteInfo {
+  id: string;
+  email: string;
+  role: string;
+  status: string;
+  invited_by: string;
+  expires_at: string;
+  created_at: string;
+}
+
+// ============================================================================
 // Analytics (Tinybird-style responses)
 // ============================================================================
 

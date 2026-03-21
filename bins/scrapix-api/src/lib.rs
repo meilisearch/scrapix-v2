@@ -875,6 +875,8 @@ pub(crate) struct AccountContext {
     pub account_id: String,
     pub api_key_id: Option<String>,
     pub tier: String,
+    /// User role in this account (None for API key auth — API keys are account-scoped).
+    pub user_role: Option<String>,
 }
 
 /// Extract account context from request extensions.
@@ -884,42 +886,73 @@ async fn extract_account_context(
     account_ext: &Option<Extension<AuthenticatedAccount>>,
     user_ext: &Option<Extension<AuthenticatedUser>>,
 ) -> Option<AccountContext> {
-    // API key path
+    // API key path — no per-user role (API keys are account-scoped)
     if let Some(Extension(acct)) = account_ext {
         return Some(AccountContext {
             account_id: acct.account_id.clone(),
             api_key_id: acct.api_key_id.clone(),
             tier: acct.tier.clone(),
+            user_role: None,
         });
     }
 
-    // Session path: look up account_id + tier via DB
+    // Session path: look up account_id + tier + role via DB
     if let (Some(Extension(user)), Some(pool)) = (user_ext, db_pool) {
-        let row = sqlx::query(
-            "SELECT a.id, a.tier FROM account_members m \
-             JOIN accounts a ON a.id = m.account_id \
-             WHERE m.user_id = $1 LIMIT 1",
-        )
-        .bind(user.user_id)
-        .fetch_optional(pool)
-        .await
-        .ok()
-        .flatten();
+        let query = if let Some(selected_id) = user.selected_account_id {
+            sqlx::query(
+                "SELECT a.id, a.tier, m.role FROM account_members m \
+                 JOIN accounts a ON a.id = m.account_id \
+                 WHERE m.user_id = $1 AND m.account_id = $2",
+            )
+            .bind(user.user_id)
+            .bind(selected_id)
+            .fetch_optional(pool)
+            .await
+        } else {
+            sqlx::query(
+                "SELECT a.id, a.tier, m.role FROM account_members m \
+                 JOIN accounts a ON a.id = m.account_id \
+                 WHERE m.user_id = $1 LIMIT 1",
+            )
+            .bind(user.user_id)
+            .fetch_optional(pool)
+            .await
+        };
+        let row = query.ok().flatten();
 
         if let Some(row) = row {
             use sqlx::Row;
             let account_id: uuid::Uuid = row.get("id");
             let tier: String = row.get("tier");
+            let role: String = row.get("role");
             return Some(AccountContext {
                 account_id: account_id.to_string(),
                 api_key_id: None,
                 tier,
+                user_role: Some(role),
             });
         }
     }
 
     // No auth configured or no valid credentials
     None
+}
+
+/// Check that the user's role allows write operations (scrape, map, search, crawl).
+/// API key auth and auth-disabled scenarios are always allowed.
+/// Session users must be owner, admin, or member (viewers are denied).
+fn check_write_permission(account_ctx: &Option<AccountContext>) -> Result<(), ApiError> {
+    if let Some(ctx) = account_ctx {
+        if let Some(ref role) = ctx.user_role {
+            if role == "viewer" {
+                return Err(ApiError::new(
+                    "Insufficient permissions: viewers cannot perform this action",
+                    "forbidden",
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Check that the authenticated account owns the given job.
@@ -1523,6 +1556,7 @@ async fn scrape_url(
 ) -> Result<Json<ScrapeResponse>, ApiError> {
     let account_ctx =
         extract_account_context(state.db_pool.as_ref(), &account_ext, &user_ext).await;
+    check_write_permission(&account_ctx)?;
 
     if let Some(ref ctx) = account_ctx {
         debug!(account_id = %ctx.account_id, "Scrape request from account");
@@ -2660,6 +2694,7 @@ async fn map_url(
 ) -> Result<Json<MapResponse>, ApiError> {
     let account_ctx =
         extract_account_context(state.db_pool.as_ref(), &account_ext, &user_ext).await;
+    check_write_permission(&account_ctx)?;
 
     // Pre-flight credit check (map costs 2 credits)
     if let (Some(ref pool), Some(ref ctx)) = (&state.db_pool, &account_ctx) {
@@ -3105,6 +3140,7 @@ async fn search_url(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let account_ctx =
         extract_account_context(state.db_pool.as_ref(), &account_ext, &user_ext).await;
+    check_write_permission(&account_ctx)?;
 
     // Pre-flight credit check
     if let (Some(ref pool), Some(ref ctx)) = (&state.db_pool, &account_ctx) {
@@ -3310,6 +3346,7 @@ async fn create_crawl(
 ) -> Result<Json<CreateCrawlResponse>, ApiError> {
     let account_ctx =
         extract_account_context(state.db_pool.as_ref(), &account_ext, &user_ext).await;
+    check_write_permission(&account_ctx)?;
     Ok(Json(
         do_create_crawl(&state, config, account_ctx.as_ref()).await?,
     ))
@@ -3325,6 +3362,7 @@ async fn create_crawl_sync(
 ) -> Result<Json<JobStatusResponse>, ApiError> {
     let account_ctx =
         extract_account_context(state.db_pool.as_ref(), &account_ext, &user_ext).await;
+    check_write_permission(&account_ctx)?;
     // First create the async job
     let response = do_create_crawl(&state, config, account_ctx.as_ref()).await?;
     let job_id = response.job_id.clone();
@@ -3390,6 +3428,7 @@ async fn create_crawl_bulk(
 ) -> Result<Json<BulkCrawlResponse>, ApiError> {
     let account_ctx =
         extract_account_context(state.db_pool.as_ref(), &account_ext, &user_ext).await;
+    check_write_permission(&account_ctx)?;
 
     let total = configs.len();
     let mut jobs = Vec::with_capacity(total);

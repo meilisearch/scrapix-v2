@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useApiKeys } from "@/lib/hooks";
+import { useApiKeys, useMe } from "@/lib/hooks";
 import { createApiKey, revokeApiKey } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import {
@@ -39,6 +39,8 @@ import { TableSkeleton } from "@/components/table-skeleton";
 
 export default function ApiKeysPage() {
   const queryClient = useQueryClient();
+  const { data: user } = useMe();
+  const canManage = user?.account?.role === "owner" || user?.account?.role === "admin";
   const { data: keys = [], isLoading } = useApiKeys();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
@@ -98,12 +100,14 @@ export default function ApiKeysPage() {
           </p>
         </div>
         <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="mr-2 h-4 w-4" />
-              Create API Key
-            </Button>
-          </DialogTrigger>
+          {canManage && (
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="mr-2 h-4 w-4" />
+                Create API Key
+              </Button>
+            </DialogTrigger>
+          )}
           <DialogContent>
             {createdKey ? (
               <>
@@ -243,7 +247,7 @@ export default function ApiKeysPage() {
                       })}
                     </TableCell>
                     <TableCell className="text-right">
-                      {key.active && (
+                      {key.active && canManage && (
                         <Button
                           variant="ghost"
                           size="icon"
