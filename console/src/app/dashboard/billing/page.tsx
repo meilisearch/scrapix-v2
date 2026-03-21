@@ -26,6 +26,14 @@ import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   Sheet,
   SheetContent,
   SheetDescription,
@@ -220,6 +228,7 @@ export default function BillingPage() {
   // Purchase state
   const [purchaseAmount, setPurchaseAmount] = useState("1000");
   const [purchasingPack, setPurchasingPack] = useState<number | null>(null);
+  const [showPurchaseConfirm, setShowPurchaseConfirm] = useState(false);
 
   // Auto top-up form state
   const [autoTopupAmount, setAutoTopupAmount] = useState("");
@@ -693,100 +702,172 @@ export default function BillingPage() {
       {/* Buy Credits */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <CreditCard className="h-5 w-5" />
-            {hasStripe ? "Buy Credits" : "Add Credits"}
-          </CardTitle>
-          <CardDescription>
-            {hasStripe
-              ? "Purchase credits with your saved payment method"
-              : "Add credits to your account"}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {/* Pricing tiers */}
-          <div className="grid grid-cols-4 gap-2">
-            {PRICING_TIERS.map((tier, i) => {
-              const parsedAmount = parseInt(purchaseAmount) || 0;
-              const isActive = getActiveTier(parsedAmount) === i;
-              return (
-                <div
-                  key={i}
-                  className={cn(
-                    "rounded-lg border p-3 text-center transition-colors",
-                    isActive
-                      ? "border-primary bg-primary/5"
-                      : "border-border"
-                  )}
-                >
-                  <div className="text-xs text-muted-foreground">
-                    {tier.upTo ? `Up to ${tier.upTo.toLocaleString()}` : "10,000+"}
-                  </div>
-                  <div className="text-lg font-bold">{tier.per1k}</div>
-                  <div className="text-xs text-muted-foreground">per 1K credits</div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Amount input + quick presets */}
-          <div className="space-y-3">
-            <div className="flex items-end gap-3">
-              <div className="flex-1">
-                <Label htmlFor="credit-amount">Credits</Label>
-                <Input
-                  id="credit-amount"
-                  type="number"
-                  min={100}
-                  step={100}
-                  value={purchaseAmount}
-                  onChange={(e) => setPurchaseAmount(e.target.value)}
-                  placeholder="Enter amount"
-                />
-              </div>
-              <div className="text-right pb-1">
-                {(() => {
-                  const amt = parseInt(purchaseAmount) || 0;
-                  if (amt < 100) return null;
-                  const price = calculatePrice(amt);
-                  return (
-                    <div>
-                      <div className="text-2xl font-bold">${price.toFixed(2)}</div>
-                      <div className="text-xs text-muted-foreground">
-                        ${(price / amt * 1000).toFixed(2)} / 1K
-                      </div>
-                    </div>
-                  );
-                })()}
-              </div>
-              <Button
-                disabled={
-                  purchaseMutation.isPending ||
-                  topupMutation.isPending ||
-                  (parseInt(purchaseAmount) || 0) < 100
-                }
-                onClick={() => handlePurchase(parseInt(purchaseAmount) || 0)}
-              >
-                {purchaseMutation.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  "Buy"
-                )}
-              </Button>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <CreditCard className="h-5 w-5" />
+                {hasStripe ? "Buy Credits" : "Add Credits"}
+              </CardTitle>
+              <CardDescription>
+                {hasStripe
+                  ? "Purchase credits with your saved payment method"
+                  : "Add credits to your account"}
+              </CardDescription>
             </div>
-            <div className="flex gap-2">
-              {QUICK_AMOUNTS.map((amt) => (
-                <Button
+            <Sheet>
+              <SheetTrigger asChild>
+                <Button variant="outline" size="sm">
+                  <Info className="mr-2 h-4 w-4" />
+                  Volume pricing
+                </Button>
+              </SheetTrigger>
+              <SheetContent className="overflow-y-auto sm:max-w-md">
+                <SheetHeader className="pb-2">
+                  <SheetTitle className="text-lg">Volume pricing</SheetTitle>
+                  <SheetDescription>
+                    The more credits you buy, the less you pay per credit.
+                  </SheetDescription>
+                </SheetHeader>
+                <div className="pt-4 pb-8">
+                  <div className="rounded-lg border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="py-2.5">Volume</TableHead>
+                          <TableHead className="py-2.5 text-right">Per credit</TableHead>
+                          <TableHead className="py-2.5 text-right">Per 1K</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {PRICING_TIERS.map((tier, i) => (
+                          <TableRow key={i}>
+                            <TableCell className="py-2.5 text-sm">
+                              {tier.upTo ? `1 – ${tier.upTo.toLocaleString()}` : "10,000+"}
+                            </TableCell>
+                            <TableCell className="py-2.5 text-right font-mono text-sm">
+                              ${tier.rate.toFixed(3)}
+                            </TableCell>
+                            <TableCell className="py-2.5 text-right font-mono text-sm">
+                              {tier.per1k}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                  <p className="mt-4 text-sm text-muted-foreground">
+                    Volume-based pricing: the entire purchase is priced at the tier rate for the total quantity.
+                  </p>
+                </div>
+              </SheetContent>
+            </Sheet>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          {/* Preset amounts + custom */}
+          <div className="grid grid-cols-5 gap-2">
+            {QUICK_AMOUNTS.map((amt) => {
+              const price = calculatePrice(amt);
+              const isSelected = purchaseAmount === String(amt);
+              return (
+                <button
                   key={amt}
-                  variant={purchaseAmount === String(amt) ? "secondary" : "outline"}
-                  size="sm"
+                  type="button"
+                  className={cn(
+                    "flex flex-col items-center gap-0.5 rounded-lg border p-3 transition-colors",
+                    isSelected
+                      ? "border-primary bg-primary/5 ring-1 ring-primary"
+                      : "border-border hover:border-muted-foreground/30"
+                  )}
                   onClick={() => setPurchaseAmount(String(amt))}
                 >
-                  {amt >= 1000 ? `${amt / 1000}K` : amt}
-                </Button>
-              ))}
-            </div>
+                  <span className="text-sm font-bold">
+                    {amt >= 1000 ? `${(amt / 1000).toLocaleString()}K` : amt.toLocaleString()}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    ${price.toFixed(0)}
+                  </span>
+                </button>
+              );
+            })}
+            <button
+              type="button"
+              className={cn(
+                "flex flex-col items-center gap-0.5 rounded-lg border p-3 transition-colors",
+                !QUICK_AMOUNTS.includes(parseInt(purchaseAmount))
+                  ? "border-primary bg-primary/5 ring-1 ring-primary"
+                  : "border-border hover:border-muted-foreground/30"
+              )}
+              onClick={() => {
+                setPurchaseAmount("");
+                document.getElementById("credit-amount")?.focus();
+              }}
+            >
+              <span className="text-sm font-bold">Custom</span>
+              <span className="text-xs text-muted-foreground">Any amount</span>
+            </button>
           </div>
+
+          {/* Custom amount input (always visible but highlighted when Custom is selected) */}
+          {!QUICK_AMOUNTS.includes(parseInt(purchaseAmount)) && (
+            <div>
+              <Label htmlFor="credit-amount" className="mb-2">
+                Custom amount
+              </Label>
+              <Input
+                id="credit-amount"
+                type="number"
+                min={100}
+                step={100}
+                value={purchaseAmount}
+                onChange={(e) => setPurchaseAmount(e.target.value)}
+                placeholder="Enter number of credits (min 100)"
+              />
+            </div>
+          )}
+
+          {/* Order summary */}
+          {(() => {
+            const amt = parseInt(purchaseAmount) || 0;
+            if (amt < 100) return null;
+            const price = calculatePrice(amt);
+            const per1k = (price / amt) * 1000;
+            return (
+              <div className="rounded-lg border bg-muted/30 p-4">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-1">
+                    <div className="text-sm text-muted-foreground">
+                      {amt.toLocaleString()} credits × ${(price / amt).toFixed(3)}/credit
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      ${per1k.toFixed(2)} per 1,000 credits
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-2xl font-bold">${price.toFixed(2)}</div>
+                  </div>
+                </div>
+                <div className="mt-4">
+                  <Button
+                    className="w-full"
+                    disabled={
+                      purchaseMutation.isPending ||
+                      topupMutation.isPending ||
+                      (hasStripe && !hasPaymentMethod)
+                    }
+                    onClick={() => setShowPurchaseConfirm(true)}
+                  >
+                    {purchaseMutation.isPending ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : null}
+                    {purchaseMutation.isPending
+                      ? "Processing..."
+                      : `Buy ${amt.toLocaleString()} credits for $${price.toFixed(2)}`}
+                  </Button>
+                </div>
+              </div>
+            );
+          })()}
 
           {hasStripe && !hasPaymentMethod && (
             <p className="text-sm text-muted-foreground">
@@ -795,6 +876,55 @@ export default function BillingPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Purchase confirmation dialog */}
+      <Dialog open={showPurchaseConfirm} onOpenChange={setShowPurchaseConfirm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirm purchase</DialogTitle>
+            <DialogDescription>
+              You are about to purchase credits. Your default card will be charged.
+            </DialogDescription>
+          </DialogHeader>
+          {(() => {
+            const amt = parseInt(purchaseAmount) || 0;
+            const price = calculatePrice(amt);
+            return (
+              <div className="space-y-3 py-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Credits</span>
+                  <span className="font-mono font-medium">{amt.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Rate</span>
+                  <span className="font-mono font-medium">${(price / amt).toFixed(3)} / credit</span>
+                </div>
+                <div className="border-t pt-3 flex justify-between">
+                  <span className="font-medium">Total</span>
+                  <span className="text-lg font-bold">${price.toFixed(2)}</span>
+                </div>
+              </div>
+            );
+          })()}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowPurchaseConfirm(false)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={purchaseMutation.isPending}
+              onClick={() => {
+                setShowPurchaseConfirm(false);
+                handlePurchase(parseInt(purchaseAmount) || 0);
+              }}
+            >
+              {purchaseMutation.isPending ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : null}
+              Confirm purchase
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Auto Top-up */}
       <Card>
