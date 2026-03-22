@@ -152,15 +152,40 @@ pub(crate) async fn validate_session(
     Ok(next.run(request).await)
 }
 
-/// Middleware: accept either API key (X-API-Key header) or session cookie.
-/// This allows both external API clients and the console to access protected routes.
+/// Middleware: accept API key (X-API-Key), Bearer token (Authorization: Bearer), or session cookie.
+/// This allows external API clients, CLI (OAuth), and the console to access protected routes.
 pub(crate) async fn validate_api_key_or_session(
     State(auth_state): State<Arc<AuthState>>,
     jar: CookieJar,
     mut request: Request,
     next: Next,
 ) -> Result<Response, AuthError> {
-    // Try API key first
+    // Try Bearer token (OAuth access token) first
+    if let Some(bearer) = request
+        .headers()
+        .get("Authorization")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| h.strip_prefix("Bearer "))
+    {
+        let bearer = bearer.to_string();
+        debug!("Validating Bearer token");
+
+        match super::oauth::validate_bearer_token(&auth_state.pool, &bearer).await {
+            Ok(account) => {
+                debug!(account_id = %account.account_id, tier = %account.tier, "Bearer token validated");
+                request.extensions_mut().insert(account);
+                return Ok(next.run(request).await);
+            }
+            Err(_) => {
+                return Err(AuthError {
+                    error: "Invalid or expired Bearer token".to_string(),
+                    code: "invalid_bearer_token".to_string(),
+                });
+            }
+        }
+    }
+
+    // Try API key
     if let Some(api_key) = request
         .headers()
         .get("X-API-Key")

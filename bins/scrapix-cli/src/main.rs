@@ -3,7 +3,8 @@ use clap::Parser;
 use scrapix_cli::Cli;
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() {
     let cli = Cli::parse();
-    scrapix_cli::run(cli).await
+    let code = scrapix_cli::run(cli).await;
+    std::process::exit(code);
 }
