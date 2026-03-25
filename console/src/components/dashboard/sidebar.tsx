@@ -163,7 +163,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           />
         </Link>
       </div>
-      <nav className="flex-1 space-y-4 px-3 py-4">
+      <nav className="min-h-0 flex-1 overflow-y-auto space-y-4 px-3 py-4">
         <div className="space-y-1">
           {topNav.map((item) => {
             const isActive = pathname === item.href;
