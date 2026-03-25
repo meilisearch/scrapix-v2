@@ -160,7 +160,7 @@ type ApiError = (StatusCode, Json<ErrorBody>);
 // Helpers
 // ============================================================================
 
-fn build_session_cookie(token: String) -> Cookie<'static> {
+pub(crate) fn build_session_cookie(token: String) -> Cookie<'static> {
     let secure = std::env::var("ENVIRONMENT")
         .map(|e| e != "development")
         .unwrap_or(true);
@@ -1487,12 +1487,13 @@ pub(crate) async fn verify_email(
     State(state): State<Arc<AuthState>>,
     Query(params): Query<VerifyEmailQuery>,
 ) -> Result<Json<MessageResponse>, ApiError> {
-    let result = sqlx::query(
+    let verified_user = sqlx::query(
         "UPDATE users SET email_verified = true, email_verification_token = NULL \
-         WHERE email_verification_token = $1 AND email_verified = false",
+         WHERE email_verification_token = $1 AND email_verified = false \
+         RETURNING email, full_name",
     )
     .bind(&params.token)
-    .execute(&state.pool)
+    .fetch_optional(&state.pool)
     .await
     .map_err(|_| {
         err(
@@ -1502,12 +1503,22 @@ pub(crate) async fn verify_email(
         )
     })?;
 
-    if result.rows_affected() == 0 {
-        return Err(err(
+    let verified_user = verified_user.ok_or_else(|| {
+        err(
             StatusCode::BAD_REQUEST,
             "Invalid or expired verification token",
             "invalid_token",
-        ));
+        )
+    })?;
+
+    // Schedule welcome email ~2 minutes after verification (Postgres job queue)
+    {
+        let email: String = verified_user.get("email");
+        let full_name: Option<String> = verified_user.get("full_name");
+        let send_at = chrono::Utc::now() + chrono::Duration::seconds(120);
+        let payload = serde_json::json!({ "name": full_name.as_deref().unwrap_or("") });
+        crate::email_scheduler::schedule_email(&state.pool, "welcome", &email, payload, send_at)
+            .await;
     }
 
     Ok(Json(MessageResponse {
@@ -2312,6 +2323,27 @@ pub(crate) async fn remove_member(
 
     info!(account_id = %account_id, removed_user_id = %target_user_id, "Member removed");
 
+    // Notify the removed member (only if removed by someone else, not self-removal)
+    if !is_self {
+        if let Some(ref mailer) = state.email_client {
+            let pool = state.pool.clone();
+            let mailer = mailer.clone();
+            let remover_email = user.email.clone();
+            tokio::spawn(async move {
+                let removed_email = crate::email::get_user_email(&pool, target_user_id).await;
+                let account_name = crate::email::get_account_name(&pool, account_id).await;
+
+                if let Some(removed_email) = removed_email {
+                    mailer.send_member_removed(
+                        &removed_email,
+                        &account_name.unwrap_or_else(|| "Scrapix".to_string()),
+                        &remover_email,
+                    );
+                }
+            });
+        }
+    }
+
     Ok(Json(MessageResponse {
         message: "Member removed".to_string(),
     }))
@@ -2544,6 +2576,38 @@ pub(crate) async fn accept_invite(
     })?;
 
     info!(user_id = %user.user_id, account_id = %account_id, role = %role, "User accepted team invite");
+
+    // Notify the inviter that the invite was accepted
+    if let Some(ref mailer) = state.email_client {
+        let pool = state.pool.clone();
+        let mailer = mailer.clone();
+        let member_name = user.email.clone();
+        let role = role.clone();
+        tokio::spawn(async move {
+            // Get the inviter's user_id from the invite
+            let inviter_id: Option<uuid::Uuid> =
+                sqlx::query_scalar("SELECT invited_by FROM account_invites WHERE id = $1")
+                    .bind(invite_id)
+                    .fetch_optional(&pool)
+                    .await
+                    .ok()
+                    .flatten();
+
+            if let Some(inviter_id) = inviter_id {
+                let inviter_email = crate::email::get_user_email(&pool, inviter_id).await;
+                let account_name = crate::email::get_account_name(&pool, account_id).await;
+
+                if let Some(inviter_email) = inviter_email {
+                    mailer.send_invite_accepted(
+                        &inviter_email,
+                        &member_name,
+                        &account_name.unwrap_or_else(|| "Scrapix".to_string()),
+                        &role,
+                    );
+                }
+            }
+        });
+    }
 
     Ok(Json(MessageResponse {
         message: format!("You have joined the account as {role}"),

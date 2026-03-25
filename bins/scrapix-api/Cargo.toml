@@ -71,6 +71,9 @@ base64 = { workspace = true }
 redis = { workspace = true }
 dashmap = { workspace = true }
 
+# URL encoding for OAuth redirects
+urlencoding = "2.1"
+
 # MCP HTTP transport
 rmcp = { version = "1.2", features = ["server", "transport-streamable-http-server"] }
 rmcp-openapi = "0.25"

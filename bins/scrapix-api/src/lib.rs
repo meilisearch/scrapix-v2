@@ -143,6 +143,26 @@ pub struct Args {
     #[arg(long, env = "RESEND_API_KEY")]
     pub resend_api_key: Option<String>,
 
+    /// Google OAuth client ID (enables "Login with Google")
+    #[arg(long, env = "GOOGLE_CLIENT_ID")]
+    pub google_client_id: Option<String>,
+
+    /// Google OAuth client secret
+    #[arg(long, env = "GOOGLE_CLIENT_SECRET")]
+    pub google_client_secret: Option<String>,
+
+    /// GitHub OAuth client ID (enables "Login with GitHub")
+    #[arg(long, env = "GITHUB_CLIENT_ID")]
+    pub github_client_id: Option<String>,
+
+    /// GitHub OAuth client secret
+    #[arg(long, env = "GITHUB_CLIENT_SECRET")]
+    pub github_client_secret: Option<String>,
+
+    /// Console URL for OAuth redirects (e.g., https://scrapix.meilisearch.com)
+    #[arg(long, env = "CONSOLE_URL", default_value = "http://localhost:3001")]
+    pub console_url: String,
+
     /// Maximum jobs to keep in memory
     #[arg(long, env = "MAX_JOBS", default_value = "10000")]
     pub max_jobs: usize,
@@ -4801,10 +4821,57 @@ pub async fn run_with_bus(
                 rate_limit::auth_rate_limit_in_memory_middleware,
             ))
         };
+        // Social OAuth login (Google, GitHub)
+        let google_config = match (&args.google_client_id, &args.google_client_secret) {
+            (Some(id), Some(secret)) => Some(auth::ProviderConfig {
+                client_id: id.clone(),
+                client_secret: secret.clone(),
+            }),
+            _ => None,
+        };
+        let github_config = match (&args.github_client_id, &args.github_client_secret) {
+            (Some(id), Some(secret)) => Some(auth::ProviderConfig {
+                client_id: id.clone(),
+                client_secret: secret.clone(),
+            }),
+            _ => None,
+        };
+        let has_social = google_config.is_some() || github_config.is_some();
+        let social_routes = if has_social {
+            let api_base_url = format!("http://{}:{}", args.host, args.port);
+            // In production, use the public API URL
+            let api_base_url = std::env::var("API_BASE_URL").unwrap_or(api_base_url);
+            let social_state = auth::SocialAuthState {
+                auth: auth.clone(),
+                config: auth::SocialOAuthConfig {
+                    google: google_config,
+                    github: github_config,
+                },
+                state_store: auth::OAuthStateStore::new(),
+                http_client: reqwest::Client::new(),
+                api_base_url,
+                console_url: args.console_url.clone(),
+            };
+            let providers: Vec<&str> = [
+                social_state.config.google.as_ref().map(|_| "Google"),
+                social_state.config.github.as_ref().map(|_| "GitHub"),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            info!(providers = ?providers, "Social login enabled");
+            Some(auth::social_auth_routes(social_state))
+        } else {
+            None
+        };
+
         app = app
             .merge(auth_public)
             .merge(auth::session_routes(auth.clone()))
             .merge(auth::oauth_routes(auth.clone()));
+        if let Some(social) = social_routes {
+            app = app.merge(social);
+        }
         info!("Auth routes enabled (/auth/signup, /auth/login, /auth/me, /account/*, /oauth/*)");
 
         // Stripe payment routes

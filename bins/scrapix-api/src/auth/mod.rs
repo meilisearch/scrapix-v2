@@ -7,6 +7,7 @@ mod jwt;
 mod middleware;
 pub(crate) mod oauth;
 mod password;
+pub(crate) mod social;
 
 pub use handlers::auth_routes;
 pub(crate) use handlers::get_user_account_id;
@@ -14,6 +15,9 @@ pub use handlers::session_routes;
 pub(crate) use middleware::validate_api_key_or_session;
 pub(crate) use middleware::validate_session;
 pub use oauth::oauth_routes;
+pub use social::{
+    social_auth_routes, OAuthStateStore, ProviderConfig, SocialAuthState, SocialOAuthConfig,
+};
 
 use sqlx::{postgres::PgPoolOptions, PgPool};
 

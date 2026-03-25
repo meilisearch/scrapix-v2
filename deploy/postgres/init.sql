@@ -380,3 +380,47 @@ CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_hash
     ON password_reset_tokens(token_hash) WHERE used = false;
 CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user
     ON password_reset_tokens(user_id);
+
+-- ============================================================================
+-- Scheduled Emails (delayed email delivery queue)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS scheduled_emails (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email_type TEXT NOT NULL,
+    recipient TEXT NOT NULL,
+    payload JSONB NOT NULL DEFAULT '{}',
+    send_at TIMESTAMPTZ NOT NULL,
+    sent BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_scheduled_emails_pending
+    ON scheduled_emails(send_at) WHERE sent = false;
+
+-- ============================================================================
+-- OAuth Social Identities (Google, GitHub login)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS oauth_identities (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    provider TEXT NOT NULL CHECK (provider IN ('google', 'github')),
+    provider_user_id TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (provider, provider_user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_oauth_identities_user ON oauth_identities (user_id);
+
+-- Make password_hash nullable for OAuth-only users
+DO $$
+BEGIN
+    -- Check if column is currently NOT NULL and drop constraint if so
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'users' AND column_name = 'password_hash' AND is_nullable = 'NO'
+    ) THEN
+        ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL;
+    END IF;
+END $$;

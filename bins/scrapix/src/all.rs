@@ -129,6 +129,12 @@ async fn run_all_channels(args: &AllArgs) -> anyhow::Result<()> {
         stripe_secret_key: std::env::var("STRIPE_SECRET_KEY").ok(),
         stripe_webhook_secret: std::env::var("STRIPE_WEBHOOK_SECRET").ok(),
         resend_api_key: std::env::var("RESEND_API_KEY").ok(),
+        google_client_id: std::env::var("GOOGLE_CLIENT_ID").ok(),
+        google_client_secret: std::env::var("GOOGLE_CLIENT_SECRET").ok(),
+        github_client_id: std::env::var("GITHUB_CLIENT_ID").ok(),
+        github_client_secret: std::env::var("GITHUB_CLIENT_SECRET").ok(),
+        console_url: std::env::var("CONSOLE_URL")
+            .unwrap_or_else(|_| "http://localhost:3001".to_string()),
         max_jobs: 1000,
         verbose: args.verbose,
     };
@@ -374,6 +380,12 @@ async fn run_all_kafka(args: &AllArgs, brokers: &str) -> anyhow::Result<()> {
         stripe_secret_key: std::env::var("STRIPE_SECRET_KEY").ok(),
         stripe_webhook_secret: std::env::var("STRIPE_WEBHOOK_SECRET").ok(),
         resend_api_key: std::env::var("RESEND_API_KEY").ok(),
+        google_client_id: std::env::var("GOOGLE_CLIENT_ID").ok(),
+        google_client_secret: std::env::var("GOOGLE_CLIENT_SECRET").ok(),
+        github_client_id: std::env::var("GITHUB_CLIENT_ID").ok(),
+        github_client_secret: std::env::var("GITHUB_CLIENT_SECRET").ok(),
+        console_url: std::env::var("CONSOLE_URL")
+            .unwrap_or_else(|_| "http://localhost:3001".to_string()),
         max_jobs: 1000,
         verbose: args.verbose,
     };
