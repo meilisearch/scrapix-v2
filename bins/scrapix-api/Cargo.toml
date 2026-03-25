@@ -69,6 +69,7 @@ base64 = { workspace = true }
 
 # Rate limiting
 redis = { workspace = true }
+dashmap = { workspace = true }
 
 # MCP HTTP transport
 rmcp = { version = "1.2", features = ["server", "transport-streamable-http-server"] }

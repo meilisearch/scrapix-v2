@@ -19,9 +19,18 @@ spec:
         app.kubernetes.io/component: cache
         app.kubernetes.io/part-of: scrapix
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        fsGroup: 999
       containers:
         - name: dragonfly
           image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
           ports:
             - name: redis
               containerPort: 6379

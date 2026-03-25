@@ -19,10 +19,20 @@ spec:
         app.kubernetes.io/component: frontier
         app.kubernetes.io/part-of: scrapix
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
       containers:
         - name: frontier
           image: scrapix-frontier-service:latest
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
           envFrom:
             - configMapRef:
                 name: scrapix-config

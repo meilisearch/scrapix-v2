@@ -45,6 +45,7 @@ pub mod auth;
 pub mod billing;
 pub mod configs;
 pub mod email;
+pub mod email_scheduler;
 pub mod engines;
 pub mod jobs_db;
 pub mod mcp;
@@ -4685,6 +4686,20 @@ pub async fn run_with_bus(
         None
     };
 
+    // Start email scheduler if database + email are configured
+    let email_scheduler_handle =
+        if let (Some(ref pool), Some(ref mailer)) = (&state.db_pool, &state.email_client) {
+            let handle = email_scheduler::spawn_email_scheduler(
+                pool.clone(),
+                mailer.clone(),
+                shutdown_rx.clone(),
+            );
+            info!("Email scheduler started (30s tick interval)");
+            Some(handle)
+        } else {
+            None
+        };
+
     // Build router
     // Public routes (no auth required)
     let public_routes = Router::new()
@@ -4769,14 +4784,22 @@ pub async fn run_with_bus(
 
     // Add auth and session routes if database is configured
     if let Some(ref auth) = auth_state {
-        // Apply stricter rate limiting on auth endpoints (login/signup brute-force protection)
+        // Apply stricter rate limiting on auth endpoints (login/signup brute-force protection).
+        // Uses Redis when available, falls back to in-memory rate limiting otherwise.
+        // Auth endpoints are ALWAYS rate-limited — unlike general endpoints, there is no
+        // fail-open path.
         let auth_public = if let Some(ref rl) = rate_limit_state {
             auth::auth_routes(auth.clone()).layer(middleware::from_fn_with_state(
                 rl.clone(),
                 rate_limit::auth_rate_limit_middleware,
             ))
         } else {
-            auth::auth_routes(auth.clone())
+            let fallback = Arc::new(rate_limit::InMemoryAuthRateLimiter::new());
+            warn!("Redis not available — using in-memory auth rate limiting (not shared across instances)");
+            auth::auth_routes(auth.clone()).layer(middleware::from_fn_with_state(
+                fallback,
+                rate_limit::auth_rate_limit_in_memory_middleware,
+            ))
         };
         app = app
             .merge(auth_public)
@@ -4967,6 +4990,11 @@ pub async fn run_with_bus(
     if let Some(handle) = cron_handle {
         if let Err(e) = handle.await {
             warn!("Cron task failed during shutdown: {}", e);
+        }
+    }
+    if let Some(handle) = email_scheduler_handle {
+        if let Err(e) = handle.await {
+            warn!("Email scheduler task failed during shutdown: {}", e);
         }
     }
     if let Some(handle) = flush_handle {

@@ -30,8 +30,8 @@ pub struct AllArgs {
     pub meilisearch_url: String,
 
     /// Meilisearch API key
-    #[arg(long, env = "MEILISEARCH_API_KEY", default_value = "masterKey")]
-    pub meilisearch_key: String,
+    #[arg(long, env = "MEILISEARCH_API_KEY")]
+    pub meilisearch_key: Option<String>,
 
     // === Workers ===
     /// Crawler concurrency (concurrent fetchers)
@@ -263,7 +263,7 @@ fn build_content_args(args: &AllArgs, brokers: String) -> scrapix_worker_content
         group_id: "scrapix-content".to_string(),
         concurrency: args.content_concurrency,
         meilisearch_url: args.meilisearch_url.clone(),
-        meilisearch_key: Some(args.meilisearch_key.clone()),
+        meilisearch_key: args.meilisearch_key.clone(),
         default_index: "scrapix".to_string(),
         extract_content: true,
         convert_markdown: true,
