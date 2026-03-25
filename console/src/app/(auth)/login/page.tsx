@@ -189,6 +189,16 @@ export default function LoginPage() {
           Sign up
         </Link>
       </p>
+      <p className="text-center text-xs text-muted-foreground/60">
+        By signing in, you agree to our{" "}
+        <Link href="/terms" className="underline underline-offset-4 hover:text-muted-foreground">
+          Terms of Service
+        </Link>{" "}
+        and{" "}
+        <Link href="/privacy" className="underline underline-offset-4 hover:text-muted-foreground">
+          Privacy Policy
+        </Link>.
+      </p>
     </>
   );
 }
