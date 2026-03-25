@@ -96,6 +96,12 @@ pub struct Document {
     /// Anchor/fragment for this block
     #[serde(skip_serializing_if = "Option::is_none")]
     pub anchor: Option<String>,
+
+    /// Full URL with anchor fragment (for block documents only).
+    /// When block splitting is active, `url` contains the base page URL
+    /// and `block_url` contains the URL with the fragment identifier.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_url: Option<String>,
 }
 
 impl Document {
@@ -127,6 +133,7 @@ impl Document {
             h5: None,
             h6: None,
             anchor: None,
+            block_url: None,
         }
     }
 
@@ -158,6 +165,7 @@ impl Document {
             h5: None,
             h6: None,
             anchor: None,
+            block_url: None,
         }
     }
 

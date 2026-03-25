@@ -1381,7 +1381,8 @@ impl ContentWorker {
 
         Document {
             uid: format!("{}-block-{}", parent_doc.uid, block.index),
-            url: block_url,
+            url: parent_doc.url.clone(),
+            block_url: Some(block_url),
             domain: parent_doc.domain.clone(),
             source: parent_doc.source.clone(),
             title: block_title,
