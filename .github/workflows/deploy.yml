@@ -78,7 +78,7 @@ jobs:
 
   deploy-console:
     name: Deploy Console
-    needs: [ci, changes]
+    needs: [changes]
     if: needs.changes.outputs.console == 'true' || inputs.force_console == true
     runs-on: ubuntu-latest
     steps:
