@@ -46,11 +46,11 @@ impl EmailClient {
 // ============================================================================
 
 #[derive(Serialize)]
-struct OwnedSendEmailRequest {
-    from: String,
-    to: Vec<String>,
-    subject: String,
-    html: String,
+pub(crate) struct OwnedSendEmailRequest {
+    pub(crate) from: String,
+    pub(crate) to: Vec<String>,
+    pub(crate) subject: String,
+    pub(crate) html: String,
 }
 
 impl EmailClient {
@@ -80,6 +80,34 @@ impl EmailClient {
                 }
             }
         });
+    }
+
+    /// Send an email and await the result (not spawned).
+    pub(crate) async fn send_checked(&self, payload: OwnedSendEmailRequest) -> Result<(), String> {
+        let resp = self
+            .http
+            .post(RESEND_API_URL)
+            .bearer_auth(&self.api_key)
+            .json(&payload)
+            .send()
+            .await;
+
+        match resp {
+            Ok(r) if r.status().is_success() => {
+                info!(to = %payload.to.join(", "), subject = %payload.subject, "Email sent");
+                Ok(())
+            }
+            Ok(r) => {
+                let status = r.status();
+                let body = r.text().await.unwrap_or_default();
+                warn!(status = %status, body = %body, "Resend API error");
+                Err(format!("Resend API error: {status} — {body}"))
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to send email via Resend");
+                Err(format!("Failed to send email via Resend: {e}"))
+            }
+        }
     }
 }
 
@@ -228,14 +256,18 @@ enum AlertStyle {
 }
 
 // ============================================================================
-// Public send helpers — one per email type
+// Payload builders + send helpers — one per email type
 // ============================================================================
 
 impl EmailClient {
     // ------------------------------------------------------------------
     // 1. Welcome email (sent after email verification)
     // ------------------------------------------------------------------
-    pub fn send_welcome(&self, to_email: &str, name: &str) {
+    pub(crate) fn build_welcome_payload(
+        &self,
+        to_email: &str,
+        name: &str,
+    ) -> OwnedSendEmailRequest {
         let name = if name.is_empty() { "there" } else { name };
         let welcome_heading = heading(&format!("Welcome, {name}!"));
         let console_link = link(&format!("{CONSOLE_URL}/settings/api-keys"), "console");
@@ -270,18 +302,27 @@ impl EmailClient {
             btn = button(CONSOLE_URL, "Open Console"),
         );
 
-        self.send_owned(OwnedSendEmailRequest {
+        OwnedSendEmailRequest {
             from: FROM_ADDRESS.to_string(),
             to: vec![to_email.to_string()],
             subject: "Welcome to Scrapix — your 100 free credits are ready".to_string(),
             html: wrap("Welcome to Scrapix", &body),
-        });
+        }
+    }
+
+    pub fn send_welcome(&self, to_email: &str, name: &str) {
+        self.send_owned(self.build_welcome_payload(to_email, name));
     }
 
     // ------------------------------------------------------------------
     // 2. Payment receipt (Stripe payment succeeded)
     // ------------------------------------------------------------------
-    pub fn send_payment_receipt(&self, to_email: &str, credits: i64, amount_cents: i64) {
+    pub(crate) fn build_payment_receipt_payload(
+        &self,
+        to_email: &str,
+        credits: i64,
+        amount_cents: i64,
+    ) -> OwnedSendEmailRequest {
         let dollars = format!("${:.2}", amount_cents as f64 / 100.0);
         let body = format!(
             "{heading}\
@@ -307,24 +348,28 @@ impl EmailClient {
             warn = muted("If you did not make this purchase, contact us at support@meilisearch.com."),
         );
 
-        self.send_owned(OwnedSendEmailRequest {
+        OwnedSendEmailRequest {
             from: FROM_ADDRESS.to_string(),
             to: vec![to_email.to_string()],
             subject: format!("Payment receipt — {credits} credits"),
             html: wrap("Payment Received", &body),
-        });
+        }
+    }
+
+    pub fn send_payment_receipt(&self, to_email: &str, credits: i64, amount_cents: i64) {
+        self.send_owned(self.build_payment_receipt_payload(to_email, credits, amount_cents));
     }
 
     // ------------------------------------------------------------------
     // 3. Auto-topup success
     // ------------------------------------------------------------------
-    pub fn send_auto_topup_receipt(
+    pub(crate) fn build_auto_topup_receipt_payload(
         &self,
         to_email: &str,
         credits: i64,
         amount_cents: i64,
         new_balance: i64,
-    ) {
+    ) -> OwnedSendEmailRequest {
         let dollars = format!("${:.2}", amount_cents as f64 / 100.0);
         let body = format!(
             "{heading}\
@@ -348,18 +393,37 @@ impl EmailClient {
             )),
         );
 
-        self.send_owned(OwnedSendEmailRequest {
+        OwnedSendEmailRequest {
             from: FROM_ADDRESS.to_string(),
             to: vec![to_email.to_string()],
             subject: format!("Auto top-up — {credits} credits added"),
             html: wrap("Auto Top-Up", &body),
-        });
+        }
+    }
+
+    pub fn send_auto_topup_receipt(
+        &self,
+        to_email: &str,
+        credits: i64,
+        amount_cents: i64,
+        new_balance: i64,
+    ) {
+        self.send_owned(self.build_auto_topup_receipt_payload(
+            to_email,
+            credits,
+            amount_cents,
+            new_balance,
+        ));
     }
 
     // ------------------------------------------------------------------
     // 4. Auto-topup failure
     // ------------------------------------------------------------------
-    pub fn send_auto_topup_failed(&self, to_email: &str, reason: &str) {
+    pub(crate) fn build_auto_topup_failed_payload(
+        &self,
+        to_email: &str,
+        reason: &str,
+    ) -> OwnedSendEmailRequest {
         let reason = html_escape(reason);
         let body = format!(
             "{heading}\
@@ -386,18 +450,22 @@ impl EmailClient {
             ),
         );
 
-        self.send_owned(OwnedSendEmailRequest {
+        OwnedSendEmailRequest {
             from: FROM_ADDRESS.to_string(),
             to: vec![to_email.to_string()],
             subject: "Action required — auto top-up failed".to_string(),
             html: wrap("Auto Top-Up Failed", &body),
-        });
+        }
+    }
+
+    pub fn send_auto_topup_failed(&self, to_email: &str, reason: &str) {
+        self.send_owned(self.build_auto_topup_failed_payload(to_email, reason));
     }
 
     // ------------------------------------------------------------------
     // 5. Job completed
     // ------------------------------------------------------------------
-    pub fn send_job_completed(
+    pub(crate) fn build_job_completed_payload(
         &self,
         to_email: &str,
         job_id: &str,
@@ -405,7 +473,7 @@ impl EmailClient {
         pages_crawled: u64,
         documents_indexed: u64,
         duration_secs: u64,
-    ) {
+    ) -> OwnedSendEmailRequest {
         let duration = format_duration(duration_secs);
         let body = format!(
             "{heading}\
@@ -430,26 +498,45 @@ impl EmailClient {
             btn = button(&format!("{CONSOLE_URL}/jobs/{job_id}"), "View Results"),
         );
 
-        self.send_owned(OwnedSendEmailRequest {
+        OwnedSendEmailRequest {
             from: FROM_ADDRESS.to_string(),
             to: vec![to_email.to_string()],
             subject: format!(
                 "Crawl complete — {documents_indexed} documents indexed in \"{index_uid}\""
             ),
             html: wrap("Crawl Complete", &body),
-        });
+        }
+    }
+
+    pub fn send_job_completed(
+        &self,
+        to_email: &str,
+        job_id: &str,
+        index_uid: &str,
+        pages_crawled: u64,
+        documents_indexed: u64,
+        duration_secs: u64,
+    ) {
+        self.send_owned(self.build_job_completed_payload(
+            to_email,
+            job_id,
+            index_uid,
+            pages_crawled,
+            documents_indexed,
+            duration_secs,
+        ));
     }
 
     // ------------------------------------------------------------------
     // 6. Job failed
     // ------------------------------------------------------------------
-    pub fn send_job_failed(
+    pub(crate) fn build_job_failed_payload(
         &self,
         to_email: &str,
         job_id: &str,
         error_message: &str,
         pages_crawled: u64,
-    ) {
+    ) -> OwnedSendEmailRequest {
         let error_message = html_escape(error_message);
         let body = format!(
             "{heading}\
@@ -471,18 +558,38 @@ impl EmailClient {
             btn = button(&format!("{CONSOLE_URL}/jobs/{job_id}"), "View Details"),
         );
 
-        self.send_owned(OwnedSendEmailRequest {
+        OwnedSendEmailRequest {
             from: FROM_ADDRESS.to_string(),
             to: vec![to_email.to_string()],
             subject: format!("Crawl job failed — {job_id}"),
             html: wrap("Crawl Failed", &body),
-        });
+        }
+    }
+
+    pub fn send_job_failed(
+        &self,
+        to_email: &str,
+        job_id: &str,
+        error_message: &str,
+        pages_crawled: u64,
+    ) {
+        self.send_owned(self.build_job_failed_payload(
+            to_email,
+            job_id,
+            error_message,
+            pages_crawled,
+        ));
     }
 
     // ------------------------------------------------------------------
     // 7. Email verification
     // ------------------------------------------------------------------
-    pub fn send_verification_email(&self, to_email: &str, name: &str, token: &str) {
+    pub(crate) fn build_verification_email_payload(
+        &self,
+        to_email: &str,
+        name: &str,
+        token: &str,
+    ) -> OwnedSendEmailRequest {
         let name = if name.is_empty() { "there" } else { name };
         let verify_url = format!("{CONSOLE_URL}/auth/verify-email?token={token}");
         let body = format!(
@@ -500,18 +607,26 @@ impl EmailClient {
             ignore = muted("If you didn't create a Scrapix account, you can safely ignore this email."),
         );
 
-        self.send_owned(OwnedSendEmailRequest {
+        OwnedSendEmailRequest {
             from: FROM_ADDRESS.to_string(),
             to: vec![to_email.to_string()],
             subject: "Verify your email address — Scrapix".to_string(),
             html: wrap("Verify Email", &body),
-        });
+        }
+    }
+
+    pub fn send_verification_email(&self, to_email: &str, name: &str, token: &str) {
+        self.send_owned(self.build_verification_email_payload(to_email, name, token));
     }
 
     // ------------------------------------------------------------------
     // 8. Password reset
     // ------------------------------------------------------------------
-    pub fn send_password_reset(&self, to_email: &str, token: &str) {
+    pub(crate) fn build_password_reset_payload(
+        &self,
+        to_email: &str,
+        token: &str,
+    ) -> OwnedSendEmailRequest {
         let reset_url = format!("{CONSOLE_URL}/auth/reset-password?token={token}");
         let body = format!(
             "{heading}\
@@ -530,18 +645,22 @@ impl EmailClient {
             ignore = muted("If you didn't request a password reset, you can safely ignore this email. Your password will not be changed."),
         );
 
-        self.send_owned(OwnedSendEmailRequest {
+        OwnedSendEmailRequest {
             from: FROM_ADDRESS.to_string(),
             to: vec![to_email.to_string()],
             subject: "Reset your password — Scrapix".to_string(),
             html: wrap("Reset Password", &body),
-        });
+        }
+    }
+
+    pub fn send_password_reset(&self, to_email: &str, token: &str) {
+        self.send_owned(self.build_password_reset_payload(to_email, token));
     }
 
     // ------------------------------------------------------------------
     // 9. Password changed confirmation
     // ------------------------------------------------------------------
-    pub fn send_password_changed(&self, to_email: &str) {
+    pub(crate) fn build_password_changed_payload(&self, to_email: &str) -> OwnedSendEmailRequest {
         let body = format!(
             "{heading}\
              {intro}\
@@ -556,25 +675,29 @@ impl EmailClient {
             )),
         );
 
-        self.send_owned(OwnedSendEmailRequest {
+        OwnedSendEmailRequest {
             from: FROM_ADDRESS.to_string(),
             to: vec![to_email.to_string()],
             subject: "Your password has been changed — Scrapix".to_string(),
             html: wrap("Password Changed", &body),
-        });
+        }
+    }
+
+    pub fn send_password_changed(&self, to_email: &str) {
+        self.send_owned(self.build_password_changed_payload(to_email));
     }
 
     // ------------------------------------------------------------------
     // 10. Team invite
     // ------------------------------------------------------------------
-    pub fn send_team_invite(
+    pub(crate) fn build_team_invite_payload(
         &self,
         to_email: &str,
         account_name: &str,
         inviter_name: &str,
         role: &str,
         token: &str,
-    ) {
+    ) -> OwnedSendEmailRequest {
         let account_name = html_escape(account_name);
         let inviter_name = html_escape(inviter_name);
         let invite_url = format!("{CONSOLE_URL}/invite?token={token}");
@@ -604,18 +727,133 @@ impl EmailClient {
             ignore = muted("This invite expires in 7 days. If you weren't expecting this, you can safely ignore it."),
         );
 
-        self.send_owned(OwnedSendEmailRequest {
+        OwnedSendEmailRequest {
             from: FROM_ADDRESS.to_string(),
             to: vec![to_email.to_string()],
             subject: format!("You're invited to join {account_name} on Scrapix"),
             html: wrap("Team Invite", &body),
-        });
+        }
+    }
+
+    pub fn send_team_invite(
+        &self,
+        to_email: &str,
+        account_name: &str,
+        inviter_name: &str,
+        role: &str,
+        token: &str,
+    ) {
+        self.send_owned(self.build_team_invite_payload(
+            to_email,
+            account_name,
+            inviter_name,
+            role,
+            token,
+        ));
     }
 
     // ------------------------------------------------------------------
-    // 11. Low credit balance warning
+    // 11. Invite accepted — notify the inviter
     // ------------------------------------------------------------------
-    pub fn send_low_balance_warning(&self, to_email: &str, current_balance: i64) {
+    pub(crate) fn build_invite_accepted_payload(
+        &self,
+        to_email: &str,
+        member_name: &str,
+        account_name: &str,
+        role: &str,
+    ) -> OwnedSendEmailRequest {
+        let member_name = html_escape(member_name);
+        let account_name = html_escape(account_name);
+        let body = format!(
+            "{heading}\
+             {intro}\
+             {ts}\
+               {r1}\
+               {r2}\
+             {te}\
+             {btn}",
+            heading = heading("New Team Member"),
+            intro = paragraph(&format!(
+                "<strong style=\"color: #e4e4e7;\">{member_name}</strong> has accepted your invitation \
+                 and joined <strong style=\"color: #e4e4e7;\">{account_name}</strong>."
+            )),
+            ts = table_start(),
+            r1 = kv_row("Member", &member_name, false),
+            r2 = kv_row("Role", role, true),
+            te = table_end(),
+            btn = button(&format!("{CONSOLE_URL}/settings/team"), "View Team"),
+        );
+
+        OwnedSendEmailRequest {
+            from: FROM_ADDRESS.to_string(),
+            to: vec![to_email.to_string()],
+            subject: format!("{member_name} joined {account_name}"),
+            html: wrap("New Team Member", &body),
+        }
+    }
+
+    pub fn send_invite_accepted(
+        &self,
+        to_email: &str,
+        member_name: &str,
+        account_name: &str,
+        role: &str,
+    ) {
+        self.send_owned(self.build_invite_accepted_payload(
+            to_email,
+            member_name,
+            account_name,
+            role,
+        ));
+    }
+
+    // ------------------------------------------------------------------
+    // 12. Member removed from account
+    // ------------------------------------------------------------------
+    pub(crate) fn build_member_removed_payload(
+        &self,
+        to_email: &str,
+        account_name: &str,
+        removed_by: &str,
+    ) -> OwnedSendEmailRequest {
+        let account_name = html_escape(account_name);
+        let removed_by = html_escape(removed_by);
+        let body = format!(
+            "{heading}\
+             {intro}\
+             {note}\
+             {btn}",
+            heading = heading("Removed from Team"),
+            intro = paragraph(&format!(
+                "You have been removed from <strong style=\"color: #e4e4e7;\">{account_name}</strong> \
+                 by <strong style=\"color: #e4e4e7;\">{removed_by}</strong>."
+            )),
+            note = paragraph(
+                "You no longer have access to this account's resources, API keys, or crawl jobs."
+            ),
+            btn = button(CONSOLE_URL, "Open Console"),
+        );
+
+        OwnedSendEmailRequest {
+            from: FROM_ADDRESS.to_string(),
+            to: vec![to_email.to_string()],
+            subject: format!("You've been removed from {account_name}"),
+            html: wrap("Removed from Team", &body),
+        }
+    }
+
+    pub fn send_member_removed(&self, to_email: &str, account_name: &str, removed_by: &str) {
+        self.send_owned(self.build_member_removed_payload(to_email, account_name, removed_by));
+    }
+
+    // ------------------------------------------------------------------
+    // 13. Low credit balance warning
+    // ------------------------------------------------------------------
+    pub(crate) fn build_low_balance_warning_payload(
+        &self,
+        to_email: &str,
+        current_balance: i64,
+    ) -> OwnedSendEmailRequest {
         let body = format!(
             "{heading}\
              {intro}\
@@ -629,12 +867,91 @@ impl EmailClient {
             btn = button(&format!("{CONSOLE_URL}/settings/billing"), "Add Credits"),
         );
 
-        self.send_owned(OwnedSendEmailRequest {
+        OwnedSendEmailRequest {
             from: FROM_ADDRESS.to_string(),
             to: vec![to_email.to_string()],
             subject: format!("Low balance — {current_balance} credits remaining"),
             html: wrap("Low Balance", &body),
-        });
+        }
+    }
+
+    pub fn send_low_balance_warning(&self, to_email: &str, current_balance: i64) {
+        self.send_owned(self.build_low_balance_warning_payload(to_email, current_balance));
+    }
+}
+
+// ============================================================================
+// Queue-based delivery for critical emails
+// ============================================================================
+
+impl EmailClient {
+    /// Queue a verification email for reliable delivery via the scheduled_emails table.
+    pub async fn queue_verification_email(
+        &self,
+        pool: &sqlx::PgPool,
+        to_email: &str,
+        name: &str,
+        token: &str,
+    ) {
+        crate::email_scheduler::schedule_email_now(
+            pool,
+            "verification",
+            to_email,
+            serde_json::json!({ "name": name, "token": token }),
+        )
+        .await;
+    }
+
+    /// Queue a password reset email for reliable delivery.
+    pub async fn queue_password_reset(&self, pool: &sqlx::PgPool, to_email: &str, token: &str) {
+        crate::email_scheduler::schedule_email_now(
+            pool,
+            "password_reset",
+            to_email,
+            serde_json::json!({ "token": token }),
+        )
+        .await;
+    }
+
+    /// Queue a team invite email for reliable delivery.
+    pub async fn queue_team_invite(
+        &self,
+        pool: &sqlx::PgPool,
+        to_email: &str,
+        account_name: &str,
+        inviter_name: &str,
+        role: &str,
+        token: &str,
+    ) {
+        crate::email_scheduler::schedule_email_now(
+            pool,
+            "team_invite",
+            to_email,
+            serde_json::json!({
+                "account_name": account_name,
+                "inviter_name": inviter_name,
+                "role": role,
+                "token": token,
+            }),
+        )
+        .await;
+    }
+
+    /// Queue a payment receipt email for reliable delivery.
+    pub async fn queue_payment_receipt(
+        &self,
+        pool: &sqlx::PgPool,
+        to_email: &str,
+        credits: i64,
+        amount_cents: i64,
+    ) {
+        crate::email_scheduler::schedule_email_now(
+            pool,
+            "payment_receipt",
+            to_email,
+            serde_json::json!({ "credits": credits, "amount_cents": amount_cents }),
+        )
+        .await;
     }
 }
 
@@ -655,6 +972,26 @@ pub async fn get_account_email(pool: &sqlx::PgPool, account_id: uuid::Uuid) -> O
     .await
     .ok()
     .flatten()
+}
+
+/// Fetch the email for a specific user by ID.
+pub async fn get_user_email(pool: &sqlx::PgPool, user_id: uuid::Uuid) -> Option<String> {
+    sqlx::query_scalar("SELECT email FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+}
+
+/// Fetch the account name by ID.
+pub async fn get_account_name(pool: &sqlx::PgPool, account_id: uuid::Uuid) -> Option<String> {
+    sqlx::query_scalar("SELECT name FROM accounts WHERE id = $1")
+        .bind(account_id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
 }
 
 /// Fetch the owner email for an account, only if they opted into job notifications.

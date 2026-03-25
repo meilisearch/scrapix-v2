@@ -12,7 +12,8 @@ use sqlx::Row;
 use std::sync::Arc;
 use tracing::{debug, warn};
 
-use super::{jwt, AuthState, AuthenticatedAccount, AuthenticatedUser};
+use super::{AuthState, AuthenticatedAccount, AuthenticatedUser};
+use scrapix_auth::jwt;
 
 #[derive(Debug, Serialize)]
 pub(crate) struct AuthError {

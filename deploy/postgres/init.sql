@@ -392,8 +392,25 @@ CREATE TABLE IF NOT EXISTS scheduled_emails (
     payload JSONB NOT NULL DEFAULT '{}',
     send_at TIMESTAMPTZ NOT NULL,
     sent BOOLEAN NOT NULL DEFAULT false,
+    attempts INT NOT NULL DEFAULT 0,
+    next_attempt_at TIMESTAMPTZ,
+    last_error TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Add retry columns to existing tables (idempotent for upgrades)
+DO $$ BEGIN
+    ALTER TABLE scheduled_emails ADD COLUMN IF NOT EXISTS attempts INT NOT NULL DEFAULT 0;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+DO $$ BEGIN
+    ALTER TABLE scheduled_emails ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+DO $$ BEGIN
+    ALTER TABLE scheduled_emails ADD COLUMN IF NOT EXISTS last_error TEXT;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_scheduled_emails_pending
     ON scheduled_emails(send_at) WHERE sent = false;

@@ -31,29 +31,8 @@ use crate::email::EmailClient;
 // Volume-based tiered pricing
 // ============================================================================
 
-/// Calculate the price in cents for a given number of credits.
-/// Volume-based: the entire quantity is priced at the tier rate.
-///
-/// | Volume      | Per credit | Per 1K |
-/// |-------------|-----------|--------|
-/// | 1–999       | $0.010    | $10    |
-/// | 1,000–4,999 | $0.008    | $8     |
-/// | 5,000–9,999 | $0.007    | $7     |
-/// | 10,000+     | $0.005    | $5     |
-pub fn calculate_price_cents(credits: i64) -> i64 {
-    // Unit price in tenths of a cent to avoid floating point
-    let rate_tenths = if credits >= 10_000 {
-        5 // $0.005 = 0.5 cents
-    } else if credits >= 5_000 {
-        7 // $0.007 = 0.7 cents
-    } else if credits >= 1_000 {
-        8 // $0.008 = 0.8 cents
-    } else {
-        10 // $0.010 = 1.0 cent
-    };
-    // cents = credits * rate_tenths / 10, ceiling
-    (credits * rate_tenths + 9) / 10
-}
+// Re-export pricing from the billing crate.
+pub use scrapix_billing::calculate_price_cents;
 
 // ============================================================================
 // State
@@ -748,7 +727,7 @@ async fn create_and_pay_invoice(
 }
 
 /// Add credits to an account after a successful payment.
-/// Idempotent: checks if a transaction with this stripe_payment_intent_id already exists.
+/// Delegates to `scrapix_billing::add_credits_for_payment`.
 async fn add_credits_for_payment(
     pool: &sqlx::PgPool,
     account_id: uuid::Uuid,
@@ -756,87 +735,18 @@ async fn add_credits_for_payment(
     payment_intent_id: &str,
     description: &str,
 ) -> Result<(), ApiError> {
-    // Idempotency check: see if we already processed this payment
-    let exists: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM transactions WHERE account_id = $1 AND metadata->>'stripe_payment_intent_id' = $2)",
-    )
-    .bind(account_id)
-    .bind(payment_intent_id)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| {
-        error!(error = %e, "Failed idempotency check");
-        err(StatusCode::INTERNAL_SERVER_ERROR, "Database error", "internal_error")
-    })?;
-
-    if exists {
-        info!(account_id = %account_id, pi = %payment_intent_id, "Payment already processed, skipping");
-        return Ok(());
-    }
-
-    let mut tx = pool.begin().await.map_err(|e| {
-        error!(error = %e, "Failed to begin transaction");
-        err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Database error",
-            "internal_error",
-        )
-    })?;
-
-    let new_balance: i64 = sqlx::query_scalar(
-        "UPDATE accounts SET credits_balance = credits_balance + $1 WHERE id = $2 RETURNING credits_balance",
-    )
-    .bind(credits)
-    .bind(account_id)
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(|e| {
-        error!(error = %e, "Failed to update credits balance");
-        err(StatusCode::INTERNAL_SERVER_ERROR, "Database error", "internal_error")
-    })?;
-
-    let metadata = serde_json::json!({
-        "stripe_payment_intent_id": payment_intent_id,
-    });
-
-    sqlx::query(
-        "INSERT INTO transactions (account_id, type, amount, balance_after, description, metadata) \
-         VALUES ($1, 'manual_topup', $2, $3, $4, $5)",
-    )
-    .bind(account_id)
-    .bind(credits)
-    .bind(new_balance)
-    .bind(description)
-    .bind(metadata)
-    .execute(&mut *tx)
-    .await
-    .map_err(|e| {
-        error!(error = %e, "Failed to insert transaction");
-        err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Database error",
-            "internal_error",
-        )
-    })?;
-
-    tx.commit().await.map_err(|e| {
-        error!(error = %e, "Failed to commit");
-        err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Database error",
-            "internal_error",
-        )
-    })?;
-
-    info!(
-        account_id = %account_id,
+    scrapix_billing::add_credits_for_payment(
+        pool,
+        account_id,
         credits,
-        new_balance,
-        pi = %payment_intent_id,
-        "Credits added via Stripe payment"
-    );
-
-    Ok(())
+        payment_intent_id,
+        description,
+    )
+    .await
+    .map_err(|e| {
+        error!(error = %e, "Failed to add credits for payment");
+        err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string(), e.code())
+    })
 }
 
 // ============================================================================
@@ -978,11 +888,13 @@ async fn handle_invoice_paid(
         return;
     }
 
-    // Send payment receipt email
+    // Send payment receipt via the reliable queue
     if let Some(mailer) = email_client {
         let amount_cents = inv.amount_paid.unwrap_or(0);
         if let Some(email) = crate::email::get_account_email(pool, account_id).await {
-            mailer.send_payment_receipt(&email, credits, amount_cents);
+            mailer
+                .queue_payment_receipt(pool, &email, credits, amount_cents)
+                .await;
         }
     }
 }
@@ -1039,11 +951,13 @@ async fn handle_payment_intent_succeeded(
         return;
     }
 
-    // Send payment receipt email
+    // Send payment receipt via the reliable queue
     if let Some(mailer) = email_client {
         let amount_cents = pi.amount;
         if let Some(email) = crate::email::get_account_email(pool, account_id).await {
-            mailer.send_payment_receipt(&email, credits, amount_cents);
+            mailer
+                .queue_payment_receipt(pool, &email, credits, amount_cents)
+                .await;
         }
     }
 }
@@ -1103,7 +1017,7 @@ pub async fn charge_auto_topup(
     pool: &sqlx::PgPool,
     account_id: uuid::Uuid,
     credits: i64,
-) -> Result<(), String> {
+) -> Result<String, String> {
     // Get customer ID and default payment method
     let row = sqlx::query(
         "SELECT stripe_customer_id, stripe_default_payment_method_id FROM accounts WHERE id = $1",
@@ -1152,11 +1066,11 @@ pub async fn charge_auto_topup(
         add_credits_for_payment(pool, account_id, credits, &pi_id, "Auto top-up (Stripe)")
             .await
             .map_err(|e| format!("Failed to add credits: {}", e.0))?;
-    } else {
-        return Err(format!("Auto-topup payment status: {:?}", pi_status));
-    }
 
-    Ok(())
+        Ok(pi_id)
+    } else {
+        Err(format!("Auto-topup payment status: {:?}", pi_status))
+    }
 }
 
 // ============================================================================

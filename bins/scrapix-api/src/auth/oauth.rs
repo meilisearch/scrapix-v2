@@ -23,7 +23,8 @@ use sqlx::Row;
 use std::sync::Arc;
 use tracing::{info, warn};
 
-use super::{password, AuthState, AuthenticatedAccount};
+use super::{AuthState, AuthenticatedAccount};
+use scrapix_auth::password;
 
 // ============================================================================
 // Request / Response types

@@ -227,6 +227,8 @@ struct AppState {
     db_pool: Option<sqlx::PgPool>,
     /// Optional email client for transactional emails
     email_client: Option<email::EmailClient>,
+    /// Optional Stripe client for payment-backed auto-topup
+    stripe_client: Option<::stripe::Client>,
 }
 
 #[derive(Debug, Clone)]
@@ -247,6 +249,7 @@ impl AppState {
         ai_service: Option<Arc<AiService>>,
         db_pool: Option<sqlx::PgPool>,
         email_client: Option<email::EmailClient>,
+        stripe_client: Option<::stripe::Client>,
     ) -> Self {
         let (event_tx, _) = broadcast::channel(10_000);
         Self {
@@ -273,6 +276,7 @@ impl AppState {
             ai_service,
             db_pool,
             email_client,
+            stripe_client,
         }
     }
 
@@ -621,6 +625,7 @@ impl AppState {
                         let pool = pool.clone();
                         let acct_id = acct_id.clone();
                         let job_id = job_id.to_string();
+                        let stripe_cl = self.stripe_client.clone();
                         tokio::spawn(async move {
                             match billing::check_credits_and_deduct(
                                 &pool,
@@ -632,6 +637,7 @@ impl AppState {
                                     job_id, total_pages, cost_per_page
                                 ),
                                 None,
+                                stripe_cl.as_ref(),
                             )
                             .await
                             {
@@ -1998,6 +2004,7 @@ async fn scrape_url(
             "scrape",
             &format!("{} ({} credits)", final_url, scrape_cost),
             None,
+            state.stripe_client.as_ref(),
         )
         .await
         {
@@ -3118,6 +3125,7 @@ async fn map_url(
             "map",
             &request.url,
             None,
+            state.stripe_client.as_ref(),
         )
         .await
         {
@@ -3347,6 +3355,7 @@ async fn search_url(
             "search",
             &format!("{} q={}", request.url, request.q),
             None,
+            state.stripe_client.as_ref(),
         )
         .await
         {
@@ -4357,6 +4366,7 @@ pub async fn run_with_bus(
     };
     let db_pool = auth_state.as_ref().map(|a| a.pool.clone());
     let email_client = auth_state.as_ref().and_then(|a| a.email_client.clone());
+    let stripe_client = args.stripe_secret_key.as_ref().map(::stripe::Client::new);
     let state = Arc::new(AppState::new(
         producer,
         config,
@@ -4368,6 +4378,7 @@ pub async fn run_with_bus(
         ai_service,
         db_pool,
         email_client,
+        stripe_client,
     ));
 
     // Recover active jobs from Postgres on startup
@@ -4731,18 +4742,24 @@ pub async fn run_with_bus(
         .route("/ws", get(ws_handler))
         .route("/ws/job/{id}", get(ws_job_handler));
 
-    // Protected routes (API key auth required when enabled)
-    let mut protected_routes = Router::new()
+    // Product routes — revenue-generating API endpoints
+    let product_routes = Router::new()
         .route("/scrape", post(scrape_url))
         .route("/map", post(map_url))
         .route("/search", post(search_url))
         .route("/crawl", post(create_crawl))
         .route("/crawl/sync", post(create_crawl_sync))
-        .route("/crawl/bulk", post(create_crawl_bulk))
+        .route("/crawl/bulk", post(create_crawl_bulk));
+
+    // Management routes — job monitoring and configuration
+    let management_routes = Router::new()
         .route("/jobs", get(list_jobs))
         .route("/job/{id}/status", get(job_status))
         .route("/job/{id}/events", get(job_events))
         .route("/job/{id}", delete(cancel_job));
+
+    // Protected routes (API key auth required when enabled)
+    let mut protected_routes = product_routes.merge(management_routes);
 
     // Add saved config routes if database is available
     if state.db_pool.is_some() {

@@ -5310,6 +5310,7 @@ dependencies = [
  "anyhow",
  "argon2",
  "async-stripe",
+ "async-trait",
  "axum",
  "axum-extra",
  "base64 0.22.1",
@@ -5330,6 +5331,8 @@ dependencies = [
  "rmcp-openapi",
  "scraper",
  "scrapix-ai",
+ "scrapix-auth",
+ "scrapix-billing",
  "scrapix-core",
  "scrapix-crawler",
  "scrapix-extractor",
@@ -5354,6 +5357,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "scrapix-auth"
+version = "0.1.0"
+dependencies = [
+ "argon2",
+ "chrono",
+ "dashmap",
+ "jsonwebtoken",
+ "serde",
+ "uuid",
+]
+
+[[package]]
 name = "scrapix-benchmarks"
 version = "0.1.0"
 dependencies = [
@@ -5363,6 +5378,23 @@ dependencies = [
  "scrapix-core",
  "scrapix-frontier",
  "scrapix-parser",
+]
+
+[[package]]
+name = "scrapix-billing"
+version = "0.1.0"
+dependencies = [
+ "async-stripe",
+ "async-trait",
+ "chrono",
+ "scrapix-core",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

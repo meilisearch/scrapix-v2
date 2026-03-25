@@ -10,6 +10,8 @@ members = [
     "crates/scrapix-ai",
     "crates/scrapix-storage",
     "crates/scrapix-queue",
+    "crates/scrapix-billing",
+    "crates/scrapix-auth",
 
     "bins/scrapix-api",
     "bins/scrapix-worker-crawler",

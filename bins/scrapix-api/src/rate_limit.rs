@@ -7,7 +7,6 @@
 //! an in-memory fallback so brute-force protection works even without Redis.
 
 use std::sync::Arc;
-use std::time::Instant;
 
 use axum::{
     extract::{ConnectInfo, Request, State},
@@ -16,7 +15,6 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use dashmap::DashMap;
 use redis::AsyncCommands;
 use serde::Serialize;
 use tracing::{debug, warn};
@@ -148,50 +146,8 @@ pub async fn rate_limit_middleware(
     response
 }
 
-/// In-memory sliding window entry for auth rate limiting fallback.
-struct AuthWindow {
-    count: u64,
-    window_start: Instant,
-}
-
-/// In-memory auth rate limiter that works without Redis.
-/// Uses a lock-free concurrent hashmap so multiple requests can be checked
-/// in parallel without contention on a single mutex.
-#[derive(Clone, Default)]
-pub struct InMemoryAuthRateLimiter {
-    windows: Arc<DashMap<String, AuthWindow>>,
-}
-
-impl InMemoryAuthRateLimiter {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Check and increment counter for an IP. Returns current count.
-    fn check(&self, ip: &str, window_secs: u64) -> u64 {
-        let now = Instant::now();
-
-        // Evict expired entries periodically
-        if self.windows.len() > 256 {
-            self.windows
-                .retain(|_, w| now.duration_since(w.window_start).as_secs() < window_secs);
-        }
-
-        let mut entry = self.windows.entry(ip.to_string()).or_insert(AuthWindow {
-            count: 0,
-            window_start: now,
-        });
-
-        // Reset window if expired
-        if now.duration_since(entry.window_start).as_secs() >= window_secs {
-            entry.count = 0;
-            entry.window_start = now;
-        }
-
-        entry.count += 1;
-        entry.count
-    }
-}
+// Re-export from the scrapix-auth crate.
+pub use scrapix_auth::InMemoryAuthRateLimiter;
 
 const AUTH_RATE_LIMIT: u64 = 5; // 5 attempts per minute
 const AUTH_WINDOW_SECS: u64 = 60;

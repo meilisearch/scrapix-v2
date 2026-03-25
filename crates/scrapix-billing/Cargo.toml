@@ -1,0 +1,23 @@
+[package]
+name = "scrapix-billing"
+description = "Billing, credit ledger, and payment logic for Scrapix"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+scrapix-core = { path = "../scrapix-core" }
+
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "uuid", "chrono", "tls-rustls"] }
+uuid = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+
+# Stripe payments
+async-stripe = { version = "0.38", default-features = false, features = ["runtime-tokio-hyper", "checkout", "billing", "connect", "webhook-events"] }

@@ -1,13 +1,16 @@
 //! Authentication module
 //!
 //! Provides password-based auth with JWT sessions and API key validation.
+//! Core auth primitives (JWT, password hashing, types) are in `scrapix-auth`.
 
 pub(crate) mod handlers;
-mod jwt;
-mod middleware;
+pub(crate) mod middleware;
 pub(crate) mod oauth;
-mod password;
 pub(crate) mod social;
+
+// Re-export core auth primitives from the scrapix-auth crate.
+// Local jwt/password modules are no longer needed — use the crate directly.
+pub use scrapix_auth::{AuthenticatedAccount, AuthenticatedUser, Claims};
 
 pub use handlers::auth_routes;
 pub(crate) use handlers::get_user_account_id;
@@ -22,23 +25,6 @@ pub use social::{
 use sqlx::{postgres::PgPoolOptions, PgPool};
 
 use crate::email::EmailClient;
-
-/// Account information extracted from a validated API key
-#[derive(Debug, Clone)]
-pub struct AuthenticatedAccount {
-    pub account_id: String,
-    pub tier: String,
-    pub api_key_id: Option<String>,
-}
-
-/// User information extracted from a validated JWT session
-#[derive(Debug, Clone)]
-pub struct AuthenticatedUser {
-    pub user_id: uuid::Uuid,
-    pub email: String,
-    /// If set, the user wants to operate on this specific account (from X-Account-Id header).
-    pub selected_account_id: Option<uuid::Uuid>,
-}
 
 /// Shared auth state: database pool + JWT secret
 #[derive(Clone)]

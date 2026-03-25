@@ -1,0 +1,22 @@
+[package]
+name = "scrapix-auth"
+description = "Authentication primitives for Scrapix: JWT, password hashing, rate limiting"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+# JWT
+jsonwebtoken = "9"
+
+# Password hashing
+argon2 = "0.5"
+
+# Types
+uuid = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+
+# Rate limiting (in-memory fallback)
+dashmap = { workspace = true }

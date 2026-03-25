@@ -21,8 +21,9 @@ use serde::Deserialize;
 use sqlx::Row;
 use tracing::{info, warn};
 
-use super::{jwt, AuthState};
+use super::AuthState;
 use crate::auth::handlers::build_session_cookie;
+use scrapix_auth::jwt;
 
 // ============================================================================
 // Configuration
