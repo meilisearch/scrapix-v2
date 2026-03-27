@@ -952,6 +952,8 @@ impl ContentWorker {
         // Resolve per-job features and filter disabled fields
         let features = self.resolve_features(msg);
         let mut document = document;
+        // Set crawl job ID for stale document cleanup (Replace index strategy)
+        document._crawl_job_id = Some(msg.job_id.clone());
         // Set source for multi-tenant indexing (from crawl config, falls back to domain)
         document.source = Some(
             msg.source
@@ -1241,6 +1243,8 @@ impl ContentWorker {
         // Resolve per-job features and filter disabled fields
         let features = self.resolve_features(msg);
         let mut document = document;
+        // Set crawl job ID for stale document cleanup (Replace index strategy)
+        document._crawl_job_id = Some(msg.job_id.clone());
         // Set source for multi-tenant indexing (from crawl config, falls back to domain)
         document.source = Some(
             msg.source
@@ -1380,7 +1384,7 @@ impl ContentWorker {
         }
 
         Document {
-            uid: format!("{}-block-{}", parent_doc.uid, block.index),
+            uid: Document::uid_from_url(&block_url),
             url: parent_doc.url.clone(),
             block_url: Some(block_url),
             domain: parent_doc.domain.clone(),
@@ -1411,6 +1415,7 @@ impl ContentWorker {
             custom: None,
             ai_summary: None,
             ai_extraction: None,
+            _crawl_job_id: parent_doc._crawl_job_id.clone(),
         }
     }
 

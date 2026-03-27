@@ -396,12 +396,19 @@ fn test_dedup_stats_accurate() {
 // ============================================================================
 
 #[test]
-fn test_document_uid_uniqueness() {
+fn test_document_uid_deterministic() {
     let doc1 = Document::new("https://example.com/page", "example.com");
     let doc2 = Document::new("https://example.com/page", "example.com");
 
-    // Each Document::new generates a unique UUID
-    assert_ne!(doc1.uid, doc2.uid, "Documents should have unique UIDs");
+    // Same URL produces the same deterministic UID (UUIDv5)
+    assert_eq!(doc1.uid, doc2.uid, "Same URL must produce the same UID");
+
+    // Different URLs produce different UIDs
+    let doc3 = Document::new("https://example.com/other", "example.com");
+    assert_ne!(
+        doc1.uid, doc3.uid,
+        "Different URLs must produce different UIDs"
+    );
 }
 
 #[test]

@@ -1,8 +1,9 @@
-//! Document UID Uniqueness Tests (P2)
+//! Document UID Tests (P2)
 //!
-//! Document UIDs are UUIDv4 and must be unique. Block documents reference
-//! their parent via parent_document_id. These tests verify the UID system
-//! and document hierarchy.
+//! Document UIDs are UUIDv5 (deterministic from URL). The same URL always
+//! produces the same UID, enabling in-place updates across crawl runs.
+//! Block documents reference their parent via parent_document_id.
+//! These tests verify the UID system and document hierarchy.
 
 use scrapix_core::Document;
 use std::collections::HashSet;
@@ -25,11 +26,12 @@ fn test_document_uid_is_unique_across_many_documents() {
 }
 
 #[test]
-fn test_document_uid_unique_for_same_url() {
-    // Even the same URL should produce different UIDs (UUIDv4 is random)
+fn test_document_uid_deterministic_for_same_url() {
+    // Same URL must produce the same UID (UUIDv5 is deterministic from URL)
+    // This enables in-place updates: re-crawling a URL updates the existing document
     let doc1 = Document::new("https://example.com/page", "example.com");
     let doc2 = Document::new("https://example.com/page", "example.com");
-    assert_ne!(doc1.uid, doc2.uid, "Same URL should still get unique UIDs");
+    assert_eq!(doc1.uid, doc2.uid, "Same URL must produce the same UID");
 }
 
 #[test]

@@ -7,6 +7,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use meilisearch_sdk::{
     client::{Client, SwapIndexes},
+    documents::DocumentDeletionQuery,
     indexes::Index,
     settings::{PaginationSetting, Settings},
     task_info::TaskInfo,
@@ -68,6 +69,7 @@ impl Default for MeilisearchConfig {
                 "urls_tags".to_string(),
                 "language".to_string(),
                 "crawled_at".to_string(),
+                "_crawl_job_id".to_string(),
             ],
             sortable_attributes: vec!["crawled_at".to_string()],
             displayed_attributes: None,
@@ -604,6 +606,64 @@ impl MeilisearchStorage {
             );
         }
 
+        Ok(())
+    }
+
+    /// Delete all documents in an index that were NOT indexed by the given job.
+    /// Used by the Replace index strategy: after a crawl completes, this removes
+    /// stale documents from previous crawls while preserving freshly-crawled ones.
+    pub async fn delete_stale_documents(
+        meilisearch_url: &str,
+        api_key: Option<&str>,
+        index_uid: &str,
+        job_id: &str,
+    ) -> Result<()> {
+        let client = Client::new(meilisearch_url, api_key).map_err(|e| {
+            ScrapixError::Storage(format!(
+                "Failed to create Meilisearch client for stale cleanup: {}",
+                e,
+            ))
+        })?;
+
+        // Wait for all pending indexing tasks to settle first
+        Self::wait_for_index_idle_with_client(&client, index_uid, Duration::from_secs(300)).await?;
+
+        info!(
+            index = %index_uid,
+            job_id = %job_id,
+            "Deleting stale documents not indexed by this crawl job"
+        );
+
+        let index = client.index(index_uid);
+        let filter = format!("_crawl_job_id != '{}'", job_id);
+        let mut query = DocumentDeletionQuery::new(&index);
+        query.with_filter(&filter);
+        let task_info = index.delete_documents_with(&query).await.map_err(|e| {
+            ScrapixError::Storage(format!(
+                "Failed to delete stale documents from {}: {}",
+                index_uid, e,
+            ))
+        })?;
+
+        task_info
+            .wait_for_completion(
+                &client,
+                Some(Duration::from_millis(200)),
+                Some(Duration::from_secs(300)),
+            )
+            .await
+            .map_err(|e| {
+                ScrapixError::Storage(format!(
+                    "Delete stale documents task failed for {}: {}",
+                    index_uid, e,
+                ))
+            })?;
+
+        info!(
+            index = %index_uid,
+            job_id = %job_id,
+            "Stale document cleanup completed"
+        );
         Ok(())
     }
 

@@ -666,40 +666,8 @@ impl AppState {
                 }
             }
             CrawlEvent::JobFailed { error, .. } => {
-                // Best-effort cleanup of temp index if this was a replace_index job
-                let swap_info = {
-                    let jobs = self.crawl.jobs.read();
-                    jobs.get(job_id).and_then(|j| {
-                        if let (Some(temp), Some(url)) =
-                            (&j.swap_temp_index, &j.swap_meilisearch_url)
-                        {
-                            Some((
-                                temp.clone(),
-                                url.clone(),
-                                j.swap_meilisearch_api_key.clone(),
-                            ))
-                        } else {
-                            None
-                        }
-                    })
-                };
-
-                if let Some((temp_index, ms_url, ms_key)) = swap_info {
-                    tokio::spawn(async move {
-                        if let Err(e) =
-                            scrapix_storage::meilisearch::MeilisearchStorage::cleanup_temp_index(
-                                &ms_url,
-                                ms_key.as_deref(),
-                                &temp_index,
-                            )
-                            .await
-                        {
-                            warn!(temp = %temp_index, error = %e, "Failed to cleanup temp index after job failure");
-                        } else {
-                            info!(temp = %temp_index, "Cleaned up temp index after job failure");
-                        }
-                    });
-                }
+                // No temp index cleanup needed — Replace strategy writes directly to the real index.
+                // Stale documents from a failed job will be cleaned up by the next successful crawl.
 
                 // Capture job info before updating status
                 let (pages_crawled, account_id) = {
@@ -2224,14 +2192,11 @@ pub(crate) async fn do_create_crawl(
     // Generate job ID
     let job_id = uuid::Uuid::new_v4().to_string();
 
-    // If index_strategy is Replace, workers write to a temp index; we swap on completion
+    // For Replace strategy, workers write directly to the real index.
+    // On completion, stale documents (from previous crawls) are deleted by filter.
     let target_index_uid = config.index_uid.clone();
     let replace_index = config.index_strategy.is_replace();
-    let pipeline_index_uid = if replace_index {
-        format!("{}_tmp_{}", config.index_uid, &job_id[..8])
-    } else {
-        config.index_uid.clone()
-    };
+    let pipeline_index_uid = config.index_uid.clone();
 
     info!(
         job_id = %job_id,
@@ -2284,7 +2249,7 @@ pub(crate) async fn do_create_crawl(
         v
     });
     if replace_index {
-        job.swap_temp_index = Some(pipeline_index_uid.clone());
+        // Store Meilisearch connection info for post-crawl stale document cleanup
         job.swap_meilisearch_url = Some(config.meilisearch.url.clone());
         job.swap_meilisearch_api_key = Some(config.meilisearch.api_key.clone());
     }
@@ -2442,18 +2407,13 @@ pub(crate) async fn do_create_crawl(
     // Broadcast event for SSE
     state.broadcast_event(&job_id, event);
 
-    // Update job state (write back config, start_urls, max_pages, swap metadata)
-    let swap_temp = if replace_index {
-        Some(pipeline_index_uid.clone())
-    } else {
-        None
-    };
-    let swap_url = if replace_index {
+    // Update job state (write back config, start_urls, max_pages, replace metadata)
+    let replace_url = if replace_index {
         Some(config.meilisearch.url.clone())
     } else {
         None
     };
-    let swap_key = if replace_index {
+    let replace_key = if replace_index {
         Some(config.meilisearch.api_key.clone())
     } else {
         None
@@ -2475,9 +2435,9 @@ pub(crate) async fn do_create_crawl(
             v
         });
         j.started_at = Some(chrono::Utc::now());
-        j.swap_temp_index = swap_temp;
-        j.swap_meilisearch_url = swap_url;
-        j.swap_meilisearch_api_key = swap_key;
+        j.swap_temp_index = None;
+        j.swap_meilisearch_url = replace_url;
+        j.swap_meilisearch_api_key = replace_key;
     });
 
     // Persist new job to Postgres
@@ -4546,9 +4506,8 @@ pub async fn run_with_bus(
                     let idle_threshold = Duration::from_secs(10);
 
                     // Find running jobs that have been idle
-                    // Also extract swap metadata for atomic index swap
-                    // (job_id, pages_crawled, pages_indexed, errors, swap_temp_index, swap_target_index, swap_search_api_key, index_uid)
-                    type IdleJobInfo = (String, u64, u64, u64, Option<String>, Option<String>, Option<String>, String, Option<String>);
+                    // (job_id, pages_crawled, pages_indexed, errors, ms_url, ms_key, index_uid, account_id)
+                    type IdleJobInfo = (String, u64, u64, u64, Option<String>, Option<String>, String, Option<String>);
                     let idle_jobs: Vec<IdleJobInfo> = {
                         let jobs = idle_state.crawl.jobs.read();
                         let activity = idle_state.crawl.job_last_activity.read();
@@ -4565,7 +4524,6 @@ pub async fn run_with_bus(
                                 j.pages_crawled,
                                 j.pages_indexed,
                                 j.errors,
-                                j.swap_temp_index.clone(),
                                 j.swap_meilisearch_url.clone(),
                                 j.swap_meilisearch_api_key.clone(),
                                 j.index_uid.clone(),
@@ -4574,7 +4532,7 @@ pub async fn run_with_bus(
                             .collect()
                     };
 
-                    for (job_id, pages_crawled, documents_indexed, errors, swap_temp, swap_url, swap_key, index_uid, account_id) in idle_jobs {
+                    for (job_id, pages_crawled, documents_indexed, errors, ms_url, ms_key, index_uid, account_id) in idle_jobs {
                         let duration_secs = {
                             let jobs = idle_state.crawl.jobs.read();
                             jobs.get(&job_id)
@@ -4582,49 +4540,47 @@ pub async fn run_with_bus(
                                 .unwrap_or(0) as u64
                         };
 
-                        // If this job uses atomic index swap, perform the swap before completing
-                        if let (Some(temp_index), Some(ms_url)) = (&swap_temp, &swap_url) {
+                        // For Replace strategy jobs, delete stale documents from previous crawls
+                        if let Some(ref replace_url) = ms_url {
                             info!(
                                 job_id = %job_id,
-                                target = %index_uid,
-                                temp = %temp_index,
-                                "Performing atomic index swap before completing job"
+                                index = %index_uid,
+                                "Deleting stale documents before completing Replace job"
                             );
 
-                            match scrapix_storage::meilisearch::MeilisearchStorage::perform_swap(
-                                ms_url,
-                                swap_key.as_deref(),
+                            match scrapix_storage::meilisearch::MeilisearchStorage::delete_stale_documents(
+                                replace_url,
+                                ms_key.as_deref(),
                                 &index_uid,
-                                temp_index,
+                                &job_id,
                             ).await {
                                 Ok(()) => {
                                     info!(
                                         job_id = %job_id,
-                                        target = %index_uid,
-                                        temp = %temp_index,
-                                        "Index swap completed successfully"
+                                        index = %index_uid,
+                                        "Stale document cleanup completed successfully"
                                     );
                                 }
                                 Err(e) => {
                                     error!(
                                         job_id = %job_id,
                                         error = %e,
-                                        temp = %temp_index,
-                                        "Index swap failed, marking job as failed"
+                                        index = %index_uid,
+                                        "Stale document cleanup failed, marking job as failed"
                                     );
 
                                     let event = CrawlEvent::JobFailed {
                                         job_id: job_id.clone(),
                                         account_id: account_id.clone(),
                                         error: format!(
-                                            "Index swap failed: {}. Temp index '{}' preserved for manual recovery.",
-                                            e, temp_index
+                                            "Stale document cleanup failed: {}",
+                                            e,
                                         ),
                                         timestamp: chrono::Utc::now().timestamp_millis(),
                                     };
                                     let error_msg = format!(
-                                        "Index swap failed: {}. Temp index '{}' preserved for manual recovery.",
-                                        e, temp_index
+                                        "Stale document cleanup failed: {}",
+                                        e,
                                     );
                                     idle_state.process_event(&job_id, &event);
                                     idle_state.broadcast_event(&job_id, event);

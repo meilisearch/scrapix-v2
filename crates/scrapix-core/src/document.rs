@@ -5,6 +5,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 
+/// Fixed namespace UUID for generating deterministic document UIDs from URLs.
+const URL_NAMESPACE: Uuid = Uuid::from_bytes([
+    0x6b, 0xa7, 0xb8, 0x10, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8,
+]);
+
 /// A crawled and processed document ready for indexing
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Document {
@@ -102,14 +107,31 @@ pub struct Document {
     /// and `block_url` contains the URL with the fragment identifier.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_url: Option<String>,
+
+    /// Crawl job ID that last indexed this document.
+    /// Used by the Replace index strategy to delete stale documents
+    /// after a crawl completes (delete where `_crawl_job_id != current_job_id`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub _crawl_job_id: Option<String>,
 }
 
 impl Document {
-    /// Create a new document with required fields
+    /// Generate a deterministic UID from a URL.
+    /// Uses UUID v5 (SHA-1 based) with a fixed namespace so the same URL
+    /// always produces the same UID across crawl runs.
+    pub fn uid_from_url(url: &str) -> String {
+        Uuid::new_v5(&URL_NAMESPACE, url.as_bytes()).to_string()
+    }
+
+    /// Create a new document with required fields.
+    /// The UID is deterministic based on the URL, so re-crawling the same
+    /// URL updates the existing document instead of creating a duplicate.
     pub fn new(url: impl Into<String>, domain: impl Into<String>) -> Self {
+        let url = url.into();
+        let uid = Self::uid_from_url(&url);
         Self {
-            uid: Uuid::new_v4().to_string(),
-            url: url.into(),
+            uid,
+            url,
             domain: domain.into(),
             source: None,
             title: None,
@@ -121,7 +143,6 @@ impl Document {
             custom: None,
             ai_extraction: None,
             ai_summary: None,
-
             language: None,
             crawled_at: Utc::now(),
             parent_document_id: None,
@@ -134,13 +155,17 @@ impl Document {
             h6: None,
             anchor: None,
             block_url: None,
+            _crawl_job_id: None,
         }
     }
 
-    /// Create a block document from a parent
+    /// Create a block document from a parent.
+    /// The UID is deterministic based on the parent URL + block index.
     pub fn new_block(parent: &Document, block_index: u32) -> Self {
+        let block_key = format!("{}#block-{}", parent.url, block_index);
+        let uid = Self::uid_from_url(&block_key);
         Self {
-            uid: Uuid::new_v4().to_string(),
+            uid,
             url: parent.url.clone(),
             domain: parent.domain.clone(),
             source: parent.source.clone(),
@@ -153,7 +178,6 @@ impl Document {
             custom: None,
             ai_extraction: None,
             ai_summary: None,
-
             language: parent.language.clone(),
             crawled_at: parent.crawled_at,
             parent_document_id: Some(parent.uid.clone()),
@@ -166,6 +190,7 @@ impl Document {
             h6: None,
             anchor: None,
             block_url: None,
+            _crawl_job_id: parent._crawl_job_id.clone(),
         }
     }
 

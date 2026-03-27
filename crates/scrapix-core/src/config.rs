@@ -20,6 +20,7 @@ pub struct CrawlConfig {
 
     /// Meilisearch index UID (auto-generated from start_urls[0] if empty)
     #[serde(default)]
+    #[validate(length(min = 1, message = "index_uid must not be empty"))]
     pub index_uid: String,
 
     /// Crawler type (http or browser)
