@@ -274,10 +274,18 @@ impl BlockSplitter {
         // Find content container
         let content_root = self.find_content_root(document);
 
+        // Pre-scan for H1 outside the content root (e.g. inside <header> which is skipped
+        // during traversal). This seeds the hierarchy so all blocks inherit the page H1.
+        let initial_h1 = if self.config.include_hierarchy {
+            self.find_document_h1(document, content_root.as_ref())
+        } else {
+            None
+        };
+
         // Extract blocks
         let blocks = match content_root {
-            Some(root) => self.extract_blocks_from_element(&root),
-            None => self.extract_blocks_from_document(document),
+            Some(root) => self.extract_blocks_from_element(&root, initial_h1),
+            None => self.extract_blocks_from_document(document, initial_h1),
         };
 
         // Filter and limit blocks
@@ -324,11 +332,57 @@ impl BlockSplitter {
         document.select(body_selector).next()
     }
 
+    /// Find the page H1 anywhere in the document, used to seed hierarchy before traversal.
+    /// H1 is often inside a `<header>` element that gets skipped during content traversal,
+    /// so we scan the full document for it independently.
+    fn find_document_h1(
+        &self,
+        document: &Html,
+        content_root: Option<&ElementRef>,
+    ) -> Option<String> {
+        use std::sync::OnceLock;
+        static H1_SELECTOR: OnceLock<Selector> = OnceLock::new();
+        let selector =
+            H1_SELECTOR.get_or_init(|| Selector::parse("h1").expect("valid h1 selector"));
+
+        for h1 in document.select(selector) {
+            let text = h1.text().collect::<String>().trim().to_string();
+            if text.is_empty() {
+                continue;
+            }
+            // Skip H1 that is already inside the content root (it will be found during traversal)
+            if let Some(root) = content_root {
+                let h1_id = h1.id();
+                let is_inside_root = root.id() == h1_id
+                    || root.descendants().any(|d| {
+                        ElementRef::wrap(d)
+                            .map(|e| e.id() == h1_id)
+                            .unwrap_or(false)
+                    });
+                if is_inside_root {
+                    continue;
+                }
+            }
+            return Some(text);
+        }
+        None
+    }
+
     /// Extract blocks from a specific element
-    fn extract_blocks_from_element(&self, element: &ElementRef) -> Vec<ContentBlock> {
+    fn extract_blocks_from_element(
+        &self,
+        element: &ElementRef,
+        initial_h1: Option<String>,
+    ) -> Vec<ContentBlock> {
         let mut blocks = Vec::new();
         let mut current_block = ContentBlock::new(0);
         let mut heading_hierarchy = HeadingHierarchy::new();
+
+        // Seed hierarchy with H1 found outside the content root (e.g. in <header>)
+        if let Some(h1) = initial_h1 {
+            heading_hierarchy.set(1, h1.clone());
+            current_block.h1 = Some(h1);
+        }
 
         self.traverse_element(
             element,
@@ -346,13 +400,17 @@ impl BlockSplitter {
     }
 
     /// Extract blocks from the full document
-    fn extract_blocks_from_document(&self, document: &Html) -> Vec<ContentBlock> {
+    fn extract_blocks_from_document(
+        &self,
+        document: &Html,
+        initial_h1: Option<String>,
+    ) -> Vec<ContentBlock> {
         use std::sync::OnceLock;
         static BODY_SELECTOR: OnceLock<Selector> = OnceLock::new();
         let body_selector =
             BODY_SELECTOR.get_or_init(|| Selector::parse("body").expect("valid body selector"));
         if let Some(body) = document.select(body_selector).next() {
-            self.extract_blocks_from_element(&body)
+            self.extract_blocks_from_element(&body, initial_h1)
         } else {
             Vec::new()
         }
@@ -835,5 +893,47 @@ mod tests {
 
         assert_eq!(result.count, 0);
         assert!(!result.truncated);
+    }
+
+    #[test]
+    fn test_h1_inside_header_is_propagated() {
+        // Mintlify/common pattern: H1 is inside <header> which gets skipped during traversal.
+        // The fix pre-scans the document so all blocks inherit the page H1.
+        let html = r#"
+            <!DOCTYPE html>
+            <html>
+            <body>
+                <header>
+                    <h1 id="page-title">Java quick start</h1>
+                </header>
+                <main>
+                    <p>This guide walks you through setting up the SDK with your Java project.</p>
+                    <h2 id="prerequisites">Prerequisites</h2>
+                    <p>Before you begin you will need a running Meilisearch instance.</p>
+                    <h2 id="installation">Installation</h2>
+                    <p>Add the following dependency to your project build file.</p>
+                </main>
+            </body>
+            </html>
+        "#;
+
+        let splitter = BlockSplitter::with_defaults();
+        let result = splitter.split(html).unwrap();
+
+        assert_eq!(result.count, 3);
+
+        // Block 0: intro paragraph before first H2 — should inherit H1
+        assert_eq!(result.blocks[0].h1, Some("Java quick start".to_string()));
+        assert_eq!(result.blocks[0].h2, None);
+
+        // Block 1: Prerequisites — should have H1 and H2
+        assert_eq!(result.blocks[1].h1, Some("Java quick start".to_string()));
+        assert_eq!(result.blocks[1].h2, Some("Prerequisites".to_string()));
+        assert_eq!(result.blocks[1].anchor, Some("prerequisites".to_string()));
+
+        // Block 2: Installation — should have H1 and H2
+        assert_eq!(result.blocks[2].h1, Some("Java quick start".to_string()));
+        assert_eq!(result.blocks[2].h2, Some("Installation".to_string()));
+        assert_eq!(result.blocks[2].anchor, Some("installation".to_string()));
     }
 }
