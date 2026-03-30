@@ -15,71 +15,26 @@ on:
         default: false
 
 jobs:
-  # Run CI first — deploy only if checks pass
-  ci:
-    name: CI
-    uses: ./.github/workflows/ci.yml
+  # ── Console pipeline ─────────────────────────────────────────────────────────
 
-  # Detect which parts of the codebase changed
-  changes:
-    name: Detect changes
+  detect-console-changes:
+    name: Detect Console Changes
     runs-on: ubuntu-latest
     outputs:
-      api: ${{ steps.filter.outputs.api }}
-      console: ${{ steps.filter.outputs.console }}
+      changed: ${{ steps.filter.outputs.console }}
     steps:
       - uses: actions/checkout@v5
       - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
-            api:
-              - 'crates/**'
-              - 'bins/**'
-              - 'Cargo.toml'
-              - 'Cargo.lock'
-              - 'Dockerfile.heroku'
             console:
               - 'console/**'
 
-  deploy-api:
-    name: Deploy API
-    needs: [ci, changes]
-    if: needs.changes.outputs.api == 'true' || inputs.force_api == true
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Log in to Heroku Container Registry
-        run: echo "${{ secrets.HEROKU_API_KEY }}" | docker login registry.heroku.com -u _ --password-stdin
-
-      - name: Build and push API image
-        id: build-api
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: Dockerfile.heroku
-          push: true
-          provenance: false
-          tags: registry.heroku.com/scrapix-api/web
-          cache-from: type=gha,scope=heroku-api
-          cache-to: type=gha,mode=max,scope=heroku-api
-
-      - name: Release API on Heroku
-        run: |
-          curl -sf -X PATCH "https://api.heroku.com/apps/scrapix-api/formation" \
-            -H "Content-Type: application/json" \
-            -H "Accept: application/vnd.heroku+json; version=3.docker-releases" \
-            -H "Authorization: Bearer ${{ secrets.HEROKU_API_KEY }}" \
-            -d '{"updates": [{"type": "web", "docker_image": "${{ steps.build-api.outputs.imageid }}"}]}'
-
   deploy-console:
     name: Deploy Console
-    needs: [changes]
-    if: needs.changes.outputs.console == 'true' || inputs.force_console == true
+    needs: [detect-console-changes]
+    if: needs.detect-console-changes.outputs.changed == 'true' || inputs.force_console == true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -109,3 +64,74 @@ jobs:
             -H "Accept: application/vnd.heroku+json; version=3.docker-releases" \
             -H "Authorization: Bearer ${{ secrets.HEROKU_API_KEY }}" \
             -d '{"updates": [{"type": "web", "docker_image": "${{ steps.build-console.outputs.imageid }}"}]}'
+
+  # ── API pipeline ──────────────────────────────────────────────────────────────
+
+  detect-api-changes:
+    name: Detect API Changes
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.filter.outputs.api }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            api:
+              - 'crates/**'
+              - 'bins/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'Dockerfile.heroku'
+
+  check-api:
+    name: Cargo Check / Fmt
+    needs: [detect-api-changes]
+    if: needs.detect-api-changes.outputs.changed == 'true' || inputs.force_api == true
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+      RUSTFLAGS: -Dwarnings
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo check --all
+
+  deploy-api:
+    name: Deploy API
+    needs: [detect-api-changes, check-api]
+    if: needs.detect-api-changes.outputs.changed == 'true' || inputs.force_api == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to Heroku Container Registry
+        run: echo "${{ secrets.HEROKU_API_KEY }}" | docker login registry.heroku.com -u _ --password-stdin
+
+      - name: Build and push API image
+        id: build-api
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.heroku
+          push: true
+          provenance: false
+          tags: registry.heroku.com/scrapix-api/web
+          cache-from: type=gha,scope=heroku-api
+          cache-to: type=gha,mode=max,scope=heroku-api
+
+      - name: Release API on Heroku
+        run: |
+          curl -sf -X PATCH "https://api.heroku.com/apps/scrapix-api/formation" \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/vnd.heroku+json; version=3.docker-releases" \
+            -H "Authorization: Bearer ${{ secrets.HEROKU_API_KEY }}" \
+            -d '{"updates": [{"type": "web", "docker_image": "${{ steps.build-api.outputs.imageid }}"}]}'
