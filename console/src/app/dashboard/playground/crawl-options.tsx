@@ -90,6 +90,8 @@ export interface CrawlState {
   feat_ai_extraction: boolean;
   ai_extraction_prompt: string;
   feat_ai_summary: boolean;
+  feat_pdf: boolean;
+  pdf_max_size_mb: string;
   // Indexing
   index_strategy: "update" | "replace";
   // Advanced
@@ -136,6 +138,8 @@ export const defaultCrawlState: CrawlState = {
   feat_ai_extraction: false,
   ai_extraction_prompt: "",
   feat_ai_summary: false,
+  feat_pdf: false,
+  pdf_max_size_mb: "50",
   index_strategy: "update",
   headers: "",
   user_agents: "",
@@ -756,6 +760,26 @@ export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
               checked={state.feat_ai_summary}
               onCheckedChange={(v) => set("feat_ai_summary", v)}
             />
+
+            {/* PDF Scraping */}
+            <SwitchRow
+              id="feat-pdf"
+              label="PDF scraping"
+              description="Fetch and index PDF documents"
+              checked={state.feat_pdf}
+              onCheckedChange={(v) => set("feat_pdf", v)}
+            />
+            {state.feat_pdf && (
+              <div className="space-y-3 pl-1 border-l-2 border-primary/20 ml-1">
+                <NumericInput
+                  id="pdf-max-size"
+                  label="Max PDF size (MB)"
+                  value={state.pdf_max_size_mb}
+                  onChange={(v) => set("pdf_max_size_mb", v)}
+                  placeholder="50"
+                />
+              </div>
+            )}
           </div>
         </ScrollArea>
       </TabsContent>

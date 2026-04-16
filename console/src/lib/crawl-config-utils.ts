@@ -171,6 +171,12 @@ export function crawlStateToConfig(
     };
   }
   if (crawlState.feat_ai_summary) features.ai_summary = { enabled: true };
+  if (crawlState.feat_pdf) {
+    const pdf: Record<string, unknown> = { enabled: true };
+    const maxSizeMb = parseInt(crawlState.pdf_max_size_mb, 10);
+    if (maxSizeMb && maxSizeMb !== 50) pdf.max_size_mb = maxSizeMb;
+    features.pdf = pdf;
+  }
   if (Object.keys(features).length > 0) config.features = features;
 
   const headers = optJson(crawlState.headers);
@@ -296,6 +302,12 @@ export function configToCrawlState(config: AnyConfig): CrawlState {
 
     const aiSummary = features.ai_summary as AnyConfig | undefined;
     state.feat_ai_summary = aiSummary?.enabled === true;
+
+    const pdf = features.pdf as AnyConfig | undefined;
+    if (pdf) {
+      state.feat_pdf = pdf.enabled === true;
+      state.pdf_max_size_mb = str(pdf.max_size_mb) || "50";
+    }
   }
 
   // Headers
