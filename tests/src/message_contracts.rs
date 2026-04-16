@@ -202,6 +202,52 @@ fn test_raw_page_message_deserialize_without_optional_fields() {
 }
 
 #[test]
+fn test_raw_page_message_pdf_base64_round_trip() {
+    // PDFs are transported as base64-encoded bytes in the `html` field so the
+    // JSON-serialized RawPageMessage (which must be UTF-8) can carry binary
+    // content. This test asserts the contract end-to-end: encode raw bytes,
+    // round-trip through serde_json, then decode back to the original bytes.
+    use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+
+    // Minimal PDF header + binary bytes that are not valid UTF-8.
+    let pdf_bytes: Vec<u8> = b"%PDF-1.4\n\xFF\xFE\xFD\x00binary".to_vec();
+    let encoded = BASE64.encode(&pdf_bytes);
+
+    let msg = RawPageMessage {
+        url: "https://example.com/spec.pdf".to_string(),
+        final_url: "https://example.com/spec.pdf".to_string(),
+        status: 200,
+        html: encoded.clone(),
+        content_type: Some("application/pdf".to_string()),
+        content_length: pdf_bytes.len() as u64,
+        js_rendered: false,
+        fetched_at: 1704067200000,
+        fetch_duration_ms: 250,
+        job_id: "job-pdf".to_string(),
+        index_uid: "pdfs".to_string(),
+        account_id: None,
+        source: None,
+        message_id: "msg-pdf".to_string(),
+        etag: None,
+        last_modified: None,
+        meilisearch_url: None,
+        meilisearch_api_key: None,
+        features: None,
+    };
+
+    let json = serde_json::to_string(&msg).expect("serialize PDF message");
+    let d: RawPageMessage = serde_json::from_str(&json).expect("deserialize PDF message");
+
+    assert_eq!(d.content_type.as_deref(), Some("application/pdf"));
+    assert_eq!(d.content_length, pdf_bytes.len() as u64);
+
+    let decoded = BASE64
+        .decode(d.html.as_bytes())
+        .expect("base64 decode round-trip");
+    assert_eq!(decoded, pdf_bytes);
+}
+
+#[test]
 fn test_raw_page_message_with_large_html() {
     let large_html = "x".repeat(10_000_000); // 10MB
     let msg = RawPageMessage {

@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use chrono::Utc;
 use reqwest::{
     header::{
@@ -18,6 +19,34 @@ use tracing::{debug, instrument};
 use url::Url;
 
 use scrapix_core::{CrawlUrl, RawPage, Result, ScrapixError};
+
+/// Per-fetch options that override or extend the baseline fetcher config.
+///
+/// Defaulting everything to the "current behavior" means adding a new field
+/// here does not break existing callers — they just keep passing
+/// `FetchOptions::default()` (explicitly, or via the legacy `fetch` helper).
+#[derive(Debug, Clone, Default)]
+pub struct FetchOptions {
+    /// When `true`, `application/pdf` responses are accepted. The raw PDF
+    /// bytes are base64-encoded into `RawPage.html` so they can traverse the
+    /// Kafka `RawPageMessage.html: String` payload without a schema change.
+    pub allow_pdf: bool,
+
+    /// Maximum PDF size in bytes. When `None`, the fetcher's generic
+    /// `max_body_size` applies. Only consulted when `allow_pdf` is `true`.
+    pub pdf_max_size_bytes: Option<u64>,
+}
+
+impl FetchOptions {
+    /// Convenience constructor for the common case of enabling PDFs with a
+    /// size cap (use `None` to rely on the fetcher's global `max_body_size`).
+    pub fn with_pdf(max_size_bytes: Option<u64>) -> Self {
+        Self {
+            allow_pdf: true,
+            pdf_max_size_bytes: max_size_bytes,
+        }
+    }
+}
 
 use crate::dns::{CachingDnsResolver, DnsCacheStats, DnsConfig};
 use crate::robots::RobotsCache;
@@ -160,7 +189,7 @@ impl HttpFetcher {
         default_headers.insert(
             ACCEPT,
             HeaderValue::from_static(
-                "text/html,application/xhtml+xml,text/markdown,application/xml;q=0.8",
+                "text/html,application/xhtml+xml,text/markdown,application/xml;q=0.8,application/pdf;q=0.5",
             ),
         );
         default_headers.insert(
@@ -236,9 +265,19 @@ impl HttpFetcher {
         Self::new_with_dns(FetcherConfig::default(), robots_cache, Some(dns_resolver))
     }
 
-    /// Fetch a URL with retry logic
-    #[instrument(skip(self), fields(url = %url.url))]
+    /// Fetch a URL with retry logic (legacy entry point — equivalent to
+    /// `fetch_with_options(url, FetchOptions::default())`).
     pub async fn fetch(&self, url: &CrawlUrl) -> Result<RawPage> {
+        self.fetch_with_options(url, FetchOptions::default()).await
+    }
+
+    /// Fetch a URL with retry logic and per-call options (e.g., PDF support).
+    #[instrument(skip(self, options), fields(url = %url.url, allow_pdf = options.allow_pdf))]
+    pub async fn fetch_with_options(
+        &self,
+        url: &CrawlUrl,
+        options: FetchOptions,
+    ) -> Result<RawPage> {
         let parsed_url = Url::parse(&url.url)?;
 
         // Block raw IP addresses to prevent SSRF
@@ -270,7 +309,7 @@ impl HttpFetcher {
                 Ok((response, final_url)) => {
                     let fetch_duration = start.elapsed();
                     return self
-                        .process_response(url, response, final_url, fetch_duration)
+                        .process_response(url, response, final_url, fetch_duration, &options)
                         .await;
                 }
                 Err(e) => {
@@ -298,15 +337,30 @@ impl HttpFetcher {
         }))
     }
 
-    /// Fetch a URL with conditional headers for incremental crawling
+    /// Fetch a URL with conditional headers for incremental crawling.
     ///
-    /// This method sends If-None-Match and If-Modified-Since headers if provided,
-    /// allowing the server to return 304 Not Modified if content hasn't changed.
-    #[instrument(skip(self), fields(url = %url.url))]
+    /// Equivalent to `fetch_conditional_with_options(url, headers, FetchOptions::default())`.
     pub async fn fetch_conditional(
         &self,
         url: &CrawlUrl,
         conditional_headers: &ConditionalRequestHeaders,
+    ) -> Result<FetchResult> {
+        self.fetch_conditional_with_options(url, conditional_headers, FetchOptions::default())
+            .await
+    }
+
+    /// Fetch a URL with conditional headers and per-call options.
+    ///
+    /// `FetchOptions` lets callers opt in to PDF acceptance and override the
+    /// global `max_body_size` with a PDF-specific cap. Sends If-None-Match /
+    /// If-Modified-Since headers if provided, allowing the server to return
+    /// 304 Not Modified when content hasn't changed.
+    #[instrument(skip(self, options), fields(url = %url.url, allow_pdf = options.allow_pdf))]
+    pub async fn fetch_conditional_with_options(
+        &self,
+        url: &CrawlUrl,
+        conditional_headers: &ConditionalRequestHeaders,
+        options: FetchOptions,
     ) -> Result<FetchResult> {
         let parsed_url = Url::parse(&url.url)?;
 
@@ -352,7 +406,7 @@ impl HttpFetcher {
                     }
 
                     let page = self
-                        .process_response(url, response, final_url, fetch_duration)
+                        .process_response(url, response, final_url, fetch_duration, &options)
                         .await?;
                     return Ok(FetchResult::Fetched(page));
                 }
@@ -459,13 +513,20 @@ impl HttpFetcher {
         Ok((response, final_url))
     }
 
-    /// Process the response into a RawPage
+    /// Process the response into a RawPage.
+    ///
+    /// The `options` param allows per-fetch overrides: `allow_pdf` gates the
+    /// content-type allowlist and flips the body path to base64-encode bytes
+    /// (PDFs are binary; the Kafka payload `RawPageMessage.html` is a
+    /// `String`). When `options.allow_pdf` is `false`, behavior matches the
+    /// pre-PDF fetcher exactly.
     async fn process_response(
         &self,
         crawl_url: &CrawlUrl,
         response: Response,
         final_url: String,
         fetch_duration: Duration,
+        options: &FetchOptions,
     ) -> Result<RawPage> {
         let status = response.status().as_u16();
 
@@ -479,12 +540,19 @@ impl HttpFetcher {
 
         let content_type = headers.get("content-type").cloned();
 
-        // Check content type - we accept HTML and markdown
+        // Is this a PDF response? Only meaningful when PDF support is enabled.
+        let is_pdf = options.allow_pdf
+            && content_type
+                .as_deref()
+                .is_some_and(|ct| ct.contains("application/pdf"));
+
+        // Check content type — we accept HTML, markdown, and (when opted in) PDF.
         if let Some(ref ct) = content_type {
-            if !ct.contains("text/html")
-                && !ct.contains("application/xhtml")
-                && !ct.contains("text/markdown")
-            {
+            let accepted = ct.contains("text/html")
+                || ct.contains("application/xhtml")
+                || ct.contains("text/markdown")
+                || is_pdf;
+            if !accepted {
                 return Err(ScrapixError::Crawl(format!(
                     "Unsupported content type: {}",
                     ct
@@ -498,16 +566,33 @@ impl HttpFetcher {
             .await
             .map_err(|e| ScrapixError::Network(format!("Failed to read response body: {}", e)))?;
 
-        if bytes.len() > self.config.max_body_size {
+        // Effective size cap: PDFs may use a feature-specific cap that supersedes
+        // the generic `max_body_size` (since PDFs are often larger than HTML).
+        let effective_cap = if is_pdf {
+            options
+                .pdf_max_size_bytes
+                .map(|b| b as usize)
+                .unwrap_or(self.config.max_body_size)
+        } else {
+            self.config.max_body_size
+        };
+
+        if bytes.len() > effective_cap {
             return Err(ScrapixError::Crawl(format!(
                 "Response body too large: {} bytes (max: {})",
                 bytes.len(),
-                self.config.max_body_size
+                effective_cap
             )));
         }
 
-        // Decode as UTF-8 (with fallback)
-        let html = String::from_utf8_lossy(&bytes).into_owned();
+        // Encode body:
+        // - PDFs → base64 into `html` (binary-safe over Kafka JSON payloads).
+        // - Everything else → UTF-8 (with lossy fallback, matches legacy behavior).
+        let html = if is_pdf {
+            BASE64.encode(&bytes)
+        } else {
+            String::from_utf8_lossy(&bytes).into_owned()
+        };
 
         Ok(RawPage {
             url: crawl_url.url.clone(),

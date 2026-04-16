@@ -32,6 +32,8 @@ url = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 parking_lot = { workspace = true }
+# For PDF payload round-trip tests
+base64 = { workspace = true }
 
 [lib]
 name = "scrapix_tests"

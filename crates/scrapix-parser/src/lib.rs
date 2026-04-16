@@ -48,6 +48,7 @@ pub mod html;
 pub mod language;
 pub mod markdown;
 pub mod minihtml;
+pub mod pdf;
 pub mod readability;
 
 // Re-exports for convenience

@@ -25,6 +25,9 @@ html2md = { workspace = true }
 # Language detection
 whatlang = { workspace = true }
 
+# PDF text extraction (opt-in crawl feature; zero runtime cost when unused)
+pdf-extract = "0.9"
+
 # Utilities
 regex = { workspace = true }
 

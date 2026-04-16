@@ -367,13 +367,29 @@ impl UrlExtractor {
 ///
 /// Returns `true` if the URL's path ends with a known non-page file extension.
 /// This is used to filter out URLs that won't yield useful crawlable content.
+///
+/// Preserves pre-PDF behavior: `.pdf` links are always filtered out. Callers
+/// that support opt-in PDF scraping should use [`is_non_page_url_with_pdf`]
+/// and pass `pdf_enabled = true`.
 pub fn is_non_page_url(url: &str) -> bool {
+    is_non_page_url_with_pdf(url, false)
+}
+
+/// PDF-aware variant of [`is_non_page_url`].
+///
+/// When `pdf_enabled` is `true`, `.pdf` URLs are *not* filtered out — the
+/// crawler will fetch them and the content worker will parse them. All other
+/// non-page extensions are still rejected.
+pub fn is_non_page_url_with_pdf(url: &str, pdf_enabled: bool) -> bool {
     let path = url.split('?').next().unwrap_or(url);
     let path = path.split('#').next().unwrap_or(path);
     if let Some(dot_pos) = path.rfind('.') {
-        let ext = &path[dot_pos..];
+        let ext = &path[dot_pos..].to_ascii_lowercase();
+        if pdf_enabled && ext == ".pdf" {
+            return false;
+        }
         matches!(
-            ext.to_ascii_lowercase().as_str(),
+            ext.as_str(),
             // Images
             ".png" | ".jpg" | ".jpeg" | ".gif" | ".svg" | ".webp" | ".ico" | ".bmp" | ".tiff"
             // Documents
@@ -757,6 +773,41 @@ mod tests {
         // Case insensitive
         assert!(is_non_page_url("https://example.com/IMAGE.PNG"));
         assert!(is_non_page_url("https://example.com/style.CSS"));
+    }
+
+    #[test]
+    fn test_is_non_page_url_with_pdf_flag() {
+        // When PDF is disabled (default), `.pdf` still filtered out.
+        assert!(is_non_page_url_with_pdf(
+            "https://example.com/report.pdf",
+            false
+        ));
+        // When PDF is enabled, `.pdf` URLs are *not* filtered.
+        assert!(!is_non_page_url_with_pdf(
+            "https://example.com/report.pdf",
+            true
+        ));
+        // But other non-page extensions are still filtered regardless.
+        assert!(is_non_page_url_with_pdf(
+            "https://example.com/doc.docx",
+            true
+        ));
+        assert!(is_non_page_url_with_pdf(
+            "https://example.com/style.css",
+            true
+        ));
+        // Case-insensitive: `.PDF` is also passed through.
+        assert!(!is_non_page_url_with_pdf(
+            "https://example.com/Report.PDF",
+            true
+        ));
+        // Query params don't affect the check.
+        assert!(!is_non_page_url_with_pdf(
+            "https://example.com/doc.pdf?v=2",
+            true
+        ));
+        // Normal pages are unaffected by the flag.
+        assert!(!is_non_page_url_with_pdf("https://example.com/page", true));
     }
 
     #[test]

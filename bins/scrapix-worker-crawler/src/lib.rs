@@ -1081,10 +1081,24 @@ impl CrawlerWorker {
 
             self.metrics.record_http_fetch();
 
-            // Fetch the page with conditional headers
+            // Derive per-crawl fetch options from the job's feature config.
+            // PDF support travels with the UrlMessage so the fetcher can remain
+            // a long-lived, per-worker singleton while still honoring per-job
+            // opt-ins.
+            let fetch_options = if let Some(ref features) = msg.features {
+                if features.is_pdf_enabled() {
+                    scrapix_crawler::FetchOptions::with_pdf(features.pdf_max_size_bytes())
+                } else {
+                    scrapix_crawler::FetchOptions::default()
+                }
+            } else {
+                scrapix_crawler::FetchOptions::default()
+            };
+
+            // Fetch the page with conditional headers (+ per-job options).
             match self
                 .fetcher
-                .fetch_conditional(url, &conditional_headers)
+                .fetch_conditional_with_options(url, &conditional_headers, fetch_options)
                 .await
             {
                 Ok(result) => match result {

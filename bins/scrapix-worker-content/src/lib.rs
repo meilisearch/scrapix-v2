@@ -898,8 +898,14 @@ impl ContentWorker {
         let start = Instant::now();
         let page_size = msg.html.len() as u64;
 
-        // Route by content type: markdown gets its own path, non-HTML is skipped
+        // Route by content type: PDFs and markdown each get their own path,
+        // other non-HTML is skipped. PDF support requires the feature to have
+        // been enabled on the fetch side (otherwise `application/pdf` would
+        // have been rejected before reaching us).
         if let Some(ref content_type) = msg.content_type {
+            if content_type.contains("application/pdf") {
+                return self.process_pdf_page(msg).await;
+            }
             if content_type.contains("text/markdown") {
                 return self.process_markdown_page(msg).await;
             }
@@ -1279,6 +1285,121 @@ impl ContentWorker {
         let document = self.enrich_with_ai(document, &features).await;
 
         // Index single document (no block splitting for server-provided markdown)
+        self.metrics.record_success(page_size, 1);
+        self.index_single_document(&document, msg).await?;
+
+        Ok(())
+    }
+
+    /// Process a page whose Content-Type is `application/pdf`.
+    ///
+    /// The upstream fetcher base64-encodes PDF bytes into `msg.html` so they
+    /// survive the JSON Kafka payload. Here we decode, run the PDF parser,
+    /// and build a `Document` with the extracted text + metadata.
+    ///
+    /// Empty PDFs (typical of scanned images without OCR) are indexed with
+    /// empty content so operators see the URL in their index and can identify
+    /// quality gaps; we log a warning for visibility.
+    async fn process_pdf_page(&self, msg: &RawPageMessage) -> scrapix_core::Result<()> {
+        use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+        use scrapix_core::ScrapixError;
+
+        let start = Instant::now();
+
+        // Decode base64 back to raw PDF bytes.
+        let bytes = BASE64.decode(msg.html.as_bytes()).map_err(|e| {
+            ScrapixError::Parse(format!("Failed to base64-decode PDF payload: {}", e))
+        })?;
+
+        // Report true PDF size (not base64-inflated string size) in metrics.
+        let pdf_bytes_len = bytes.len();
+        let page_size = pdf_bytes_len as u64;
+
+        // Parse PDF bytes → text + metadata.
+        let parsed = match scrapix_parser::pdf::parse_pdf_bytes(&bytes, &msg.url) {
+            Ok(p) => p,
+            Err(e) => {
+                self.metrics.record_failure();
+                let event = CrawlEvent::PageFailed {
+                    job_id: msg.job_id.clone(),
+                    account_id: msg.account_id.clone(),
+                    url: msg.url.clone(),
+                    error: format!("PDF parse error: {}", e),
+                    retry_count: 0,
+                    timestamp: chrono::Utc::now().timestamp_millis(),
+                };
+                self.publish_event(&msg.job_id, &event).await?;
+                return Err(e);
+            }
+        };
+
+        // Build the indexable Document. The fallback title — derived from the
+        // URL basename — is only used when the PDF itself carries no title.
+        let fallback_title = scrapix_parser::pdf::title_from_url(&msg.final_url);
+        let mut document = match scrapix_parser::pdf::build_pdf_document(
+            &msg.final_url,
+            pdf_bytes_len,
+            parsed,
+            fallback_title,
+        ) {
+            Ok(doc) => doc,
+            Err(e) => {
+                self.metrics.record_failure();
+                let event = CrawlEvent::PageFailed {
+                    job_id: msg.job_id.clone(),
+                    account_id: msg.account_id.clone(),
+                    url: msg.url.clone(),
+                    error: format!("PDF document build error: {}", e),
+                    retry_count: 0,
+                    timestamp: chrono::Utc::now().timestamp_millis(),
+                };
+                self.publish_event(&msg.job_id, &event).await?;
+                return Err(e);
+            }
+        };
+
+        // Tag with job_id for stale-doc cleanup under Replace strategy.
+        document._crawl_job_id = Some(msg.job_id.clone());
+        // Stamp source for multi-tenant indexing (falls back to domain).
+        document.source = Some(
+            msg.source
+                .clone()
+                .unwrap_or_else(|| document.domain.clone()),
+        );
+
+        // Resolve per-job features for filter/AI enrichment parity with HTML.
+        let features = self.resolve_features(msg);
+        Self::filter_document(&mut document, &features);
+
+        // Configure index for the job's feature set (no-op after first call per index).
+        {
+            let mut configured = self.feature_configured_indexes.lock().await;
+            if configured.insert(msg.index_uid.clone()) {
+                if let Some(storage) = self.get_storage(msg).await {
+                    storage
+                        .configure_index_for_features(&msg.index_uid, &features)
+                        .await;
+                }
+            }
+        }
+
+        let parse_duration = start.elapsed();
+        let content_len = document.content.as_ref().map(|c| c.len()).unwrap_or(0);
+        info!(
+            url = %msg.url,
+            title = ?document.title,
+            content_len = content_len,
+            pdf_bytes = pdf_bytes_len,
+            language = ?document.language,
+            duration_ms = parse_duration.as_millis(),
+            "PDF page parsed successfully"
+        );
+
+        // Apply AI enrichment (summary/extraction) using per-job features.
+        let document = self.enrich_with_ai(document, &features).await;
+
+        // Index as a single document — PDFs have no semantic heading tree,
+        // so block-splitting does not apply.
         self.metrics.record_success(page_size, 1);
         self.index_single_document(&document, msg).await?;
 
