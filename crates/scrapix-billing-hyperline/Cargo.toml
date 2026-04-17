@@ -29,3 +29,8 @@ subtle = "2.6"
 
 [dev-dependencies]
 tokio = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[[example]]
+name = "seed_hyperline_products"
+path = "examples/seed_hyperline_products.rs"

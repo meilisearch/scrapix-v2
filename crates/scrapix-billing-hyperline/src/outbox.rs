@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use crate::client::HyperlineClient;
 use crate::error::HyperlineError;
-use crate::events::{OutboxPayload, UsageEvent};
+use crate::events::{build_record, OutboxPayload, UsageEvent};
 
 /// Max attempts per row before we stop retrying. Further retries require a
 /// manual replay (reset `attempts` / `sent_at` in the DB).
@@ -132,16 +132,15 @@ async fn deliver_row(
     };
 
     let id_string = row.id.to_string();
+    let record = build_record(&id_string, payload.quantity, payload.metadata.as_ref());
     let event = UsageEvent {
-        record_id: &id_string,
         customer_id: &row.hyperline_customer_id,
         event_type: &row.event_type,
         timestamp: row.created_at,
-        quantity: payload.quantity,
-        metadata: payload.metadata,
+        record,
     };
 
-    match client.ingest_events(std::slice::from_ref(&event)).await {
+    match client.ingest_event(&event).await {
         Ok(()) => {
             mark_sent(pool, row.id)
                 .await

@@ -79,7 +79,7 @@ impl HyperlineClient {
         Ok(self.config.ingest_base.join(trimmed)?)
     }
 
-    async fn get_json<T: DeserializeOwned>(
+    pub async fn get_json<T: DeserializeOwned>(
         &self,
         path: &str,
         query: &[(&str, &str)],
@@ -90,16 +90,51 @@ impl HyperlineClient {
         parse::<T>(resp).await
     }
 
-    /// POSTs a batch of usage events to the ingest API. Hyperline accepts
-    /// either a single event or an array; we always send an array so batching
-    /// is a no-op change at the call site.
-    pub async fn ingest_events(&self, events: &[UsageEvent<'_>]) -> Result<(), HyperlineError> {
+    /// POSTs `body` as JSON to `path` on the control-plane API (not the ingest
+    /// host) and deserializes the response. Used by seed/admin tooling.
+    pub async fn post_json<B: Serialize + ?Sized, T: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<T, HyperlineError> {
+        let url = self.api_url(path)?;
+        debug!(%url, "hyperline POST");
+        let resp = self.http.post(url).json(body).send().await?;
+        parse::<T>(resp).await
+    }
+
+    /// POSTs a single billable event to `/v1/events`. This is the endpoint
+    /// the outbox drain worker uses — one row → one request. Dedupe is keyed
+    /// on `event.record.id` (the outbox UUID), so retries are safe.
+    pub async fn ingest_event(&self, event: &UsageEvent<'_>) -> Result<(), HyperlineError> {
+        let url = self.ingest_url("/v1/events")?;
+        debug!(%url, "hyperline ingest one");
+        let resp = self.http.post(url).json(event).send().await?;
+        Self::check_ok(resp).await
+    }
+
+    /// POSTs a batch of billable events to `/v1/events/batch` (max 5000
+    /// per call, per Hyperline's schema). Retained for ops/replay tooling.
+    pub async fn ingest_events_batch(
+        &self,
+        events: &[UsageEvent<'_>],
+    ) -> Result<(), HyperlineError> {
         if events.is_empty() {
             return Ok(());
         }
-        let url = self.ingest_url("/v1/events")?;
-        debug!(%url, count = events.len(), "hyperline ingest");
+        if events.len() > 5000 {
+            return Err(HyperlineError::InvalidConfig(format!(
+                "batch too large: {} > 5000",
+                events.len()
+            )));
+        }
+        let url = self.ingest_url("/v1/events/batch")?;
+        debug!(%url, count = events.len(), "hyperline ingest batch");
         let resp = self.http.post(url).json(events).send().await?;
+        Self::check_ok(resp).await
+    }
+
+    async fn check_ok(resp: reqwest::Response) -> Result<(), HyperlineError> {
         let status = resp.status();
         if status.is_success() {
             return Ok(());
