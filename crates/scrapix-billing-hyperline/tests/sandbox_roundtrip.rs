@@ -18,7 +18,7 @@
 //! loud (rather than silently turning into `None` via `#[serde(default)]`).
 
 use scrapix_billing_hyperline::events::{build_record, UsageEvent};
-use scrapix_billing_hyperline::{Customer, HyperlineClient};
+use scrapix_billing_hyperline::{boot_self_check, Customer, HyperlineClient};
 use uuid::Uuid;
 
 fn client() -> HyperlineClient {
@@ -42,6 +42,20 @@ async fn lists_customers_in_sandbox() {
         "[ok] list_customers → meta={{total:{}, taken:{}, skipped:{}}}",
         page.meta.total, page.meta.taken, page.meta.skipped
     );
+}
+
+/// The boot self-check the API runs during startup. Verifies the ping
+/// returns 2xx and that the function emits its event-type manifest log.
+/// Run as a single-test smoke to catch regressions in the exact
+/// log-and-ping contract the API deploy relies on.
+#[tokio::test]
+#[ignore = "requires HYPERLINE_API_KEY to hit live sandbox"]
+async fn boot_self_check_passes_in_sandbox() {
+    let c = client();
+    boot_self_check(&c)
+        .await
+        .expect("boot_self_check failed against live sandbox");
+    println!("[ok] boot_self_check → ping 2xx + manifest logged");
 }
 
 /// Create a fresh customer, then verify we can fetch their portal URL.

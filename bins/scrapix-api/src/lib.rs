@@ -4507,8 +4507,14 @@ pub async fn run_with_bus(
                 // The billing handlers use this to fetch live wallet balance
                 // and generate hosted-portal URLs; absence degrades gracefully
                 // (handlers fall back to local ledger state only).
+                //
+                // Boot self-check pings Hyperline and logs the event-type
+                // manifest for ops cross-check. A failed ping is non-fatal:
+                // the outbox drain worker retries on its own cadence, so a
+                // transient Hyperline outage shouldn't crashloop the API.
                 match scrapix_billing_hyperline::HyperlineClient::from_env() {
                     Ok(client) => {
+                        let _ = scrapix_billing_hyperline::boot_self_check(&client).await;
                         state.hyperline_client = Some(client);
                         info!("Hyperline REST client enabled");
                     }
