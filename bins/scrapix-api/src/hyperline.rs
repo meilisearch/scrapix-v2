@@ -316,7 +316,47 @@ async fn dispatch_event(
             info!(event_type = %envelope.event_type, "hyperline: payment method issue (flag account is TODO)");
         }
         "subscription.cancelled" => {
-            info!(event_type = %envelope.event_type, "hyperline: subscription cancelled (deactivate account is TODO)");
+            // Hard lock: flip `accounts.active = false`. Both the credit
+            // ledger (`check_credits`) and the Postgres
+            // `lookup_api_key_account` function gate on `active = true`, so
+            // this simultaneously blocks new requests and rejects API key
+            // auth. Re-activation is a manual operator action — we never
+            // flip back to true from a webhook.
+            let customer_id = envelope
+                .data
+                .get("object")
+                .and_then(|o| o.get("customer_id"))
+                .and_then(|v| v.as_str());
+
+            let Some(cust) = customer_id else {
+                warn!(
+                    event_type = %envelope.event_type,
+                    "hyperline: subscription.cancelled missing customer_id — acking without action"
+                );
+                return Ok(());
+            };
+
+            let affected = sqlx::query(
+                "UPDATE accounts SET active = false \
+                 WHERE hyperline_customer_id = $1 AND active = true",
+            )
+            .bind(cust)
+            .execute(pool)
+            .await
+            .map_err(|e| format!("deactivate account: {e}"))?;
+
+            if affected.rows_affected() == 0 {
+                warn!(
+                    event_type = %envelope.event_type,
+                    customer_id = %cust,
+                    "hyperline: subscription.cancelled for unknown or already-inactive customer"
+                );
+            } else {
+                info!(
+                    customer_id = %cust,
+                    "hyperline: account deactivated on subscription.cancelled"
+                );
+            }
         }
         other => {
             info!(event_type = %other, "hyperline: unknown event type — acked and logged");
