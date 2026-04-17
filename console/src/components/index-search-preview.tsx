@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect, type ReactNode } from "react";
+import { memo, useState, useCallback, useRef, useEffect, type ReactNode } from "react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,7 +19,7 @@ import type { MeilisearchHit, MeilisearchSearchResponse } from "@/lib/api-types"
 import { formatDistanceToNow } from "date-fns";
 
 const HITS_PER_PAGE = 10;
-const DEBOUNCE_MS = 200;
+const DEBOUNCE_MS = 120;
 
 export interface IndexSearchPreviewProps {
   engineId: string;
@@ -100,15 +100,17 @@ export function IndexSearchPreview({
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    setPage(0);
     if (!query.trim()) {
       setSearchResult(null);
       setSearchError(null);
       setSearching(false);
+      setPage(0);
       return;
     }
-    setSearching(true);
-    debounceRef.current = setTimeout(() => performSearch(query, 0), DEBOUNCE_MS);
+    debounceRef.current = setTimeout(() => {
+      setPage(0);
+      performSearch(query, 0);
+    }, DEBOUNCE_MS);
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
@@ -216,7 +218,7 @@ export function IndexSearchPreview({
   );
 }
 
-function SearchHit({ hit }: { hit: MeilisearchHit }) {
+const SearchHit = memo(function SearchHit({ hit }: { hit: MeilisearchHit }) {
   const formatted = hit._formatted;
   const titleHtml = formatted?.title;
   const titleText = hit.title || hit.url || "Untitled";
@@ -276,4 +278,4 @@ function SearchHit({ hit }: { hit: MeilisearchHit }) {
       </div>
     </div>
   );
-}
+});
