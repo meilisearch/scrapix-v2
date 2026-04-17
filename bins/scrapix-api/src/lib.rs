@@ -4503,6 +4503,20 @@ pub async fn run_with_bus(
                     info!("Transactional emails disabled (RESEND_API_KEY not set)");
                 }
 
+                // Initialize Hyperline client if HYPERLINE_API_KEY is set.
+                // The billing handlers use this to fetch live wallet balance
+                // and generate hosted-portal URLs; absence degrades gracefully
+                // (handlers fall back to local ledger state only).
+                match scrapix_billing_hyperline::HyperlineClient::from_env() {
+                    Ok(client) => {
+                        state.hyperline_client = Some(client);
+                        info!("Hyperline REST client enabled");
+                    }
+                    Err(e) => {
+                        info!(error = %e, "Hyperline REST client disabled (HYPERLINE_API_KEY not set or invalid)");
+                    }
+                }
+
                 info!("Authentication enabled via PostgreSQL");
                 Some(Arc::new(state))
             }

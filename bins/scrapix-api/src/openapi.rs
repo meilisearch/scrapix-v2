@@ -76,6 +76,7 @@ use utoipa::OpenApi;
         crate::auth::handlers::create_api_key,
         crate::auth::handlers::revoke_api_key,
         crate::auth::handlers::get_billing,
+        crate::auth::handlers::get_billing_portal,
         crate::auth::handlers::update_billing,
         crate::auth::handlers::topup_credits,
         crate::auth::handlers::update_auto_topup,

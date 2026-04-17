@@ -101,9 +101,24 @@ pub(crate) struct BillingResponse {
     /// when the card is healthy. Set by the Hyperline payment_method.*
     /// webhooks; cleared on the next invoice.settled.
     pub(super) payment_method_status: Option<String>,
+    /// Live Hyperline wallet balance in the smallest currency unit
+    /// (cents for USD). `None` when either the account isn't linked to
+    /// Hyperline yet, the REST client is disabled, or the live read
+    /// failed — in which case the UI should fall back to
+    /// `credits_balance`. See `hyperline_wallet_currency` for the unit.
+    pub(super) hyperline_wallet_balance: Option<i64>,
+    /// ISO 4217 code (e.g. `"USD"`) paired with
+    /// `hyperline_wallet_balance`. `None` when the balance is.
+    pub(super) hyperline_wallet_currency: Option<String>,
     // NOTE: `auto_topup_*` and `stripe_customer_id` fields were removed
     // during the Hyperline migration — auto-recharge is now configured on
     // the Hyperline wallet and surfaced through the hosted billing portal.
+}
+
+/// Response from `GET /account/billing/portal` — hosted-portal deep link.
+#[derive(Serialize, utoipa::ToSchema)]
+pub(crate) struct PortalResponse {
+    pub(super) url: String,
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -355,12 +370,12 @@ pub(crate) use auth::{
     forgot_password, login, logout, resend_verification, reset_password, signup, verify_email,
 };
 pub(crate) use billing::{
-    __path_get_billing, __path_list_transactions, __path_topup_credits, __path_update_auto_topup,
-    __path_update_billing, __path_update_spend_limit,
+    __path_get_billing, __path_get_billing_portal, __path_list_transactions, __path_topup_credits,
+    __path_update_auto_topup, __path_update_billing, __path_update_spend_limit,
 };
 pub(crate) use billing::{
-    get_billing, list_transactions, topup_credits, update_auto_topup, update_billing,
-    update_spend_limit,
+    get_billing, get_billing_portal, list_transactions, topup_credits, update_auto_topup,
+    update_billing, update_spend_limit,
 };
 pub(crate) use team::{
     accept_invite, invite_member, list_invites, list_members, remove_member, revoke_invite,
@@ -409,6 +424,7 @@ pub fn session_routes(state: Arc<AuthState>) -> Router {
         .route("/account/billing/auto-topup", patch(update_auto_topup))
         .route("/account/billing/spend-limit", patch(update_spend_limit))
         .route("/account/billing/transactions", get(list_transactions))
+        .route("/account/billing/portal", get(get_billing_portal))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             super::validate_session,

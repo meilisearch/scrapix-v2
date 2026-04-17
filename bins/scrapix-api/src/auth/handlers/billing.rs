@@ -9,8 +9,8 @@ use tracing::{error, info};
 
 use super::{
     err, get_user_account_id, get_user_role, require_role, ApiError, AutoTopupRequest,
-    BillingResponse, ErrorBody, MessageResponse, SpendLimitRequest, TopupRequest, TopupResponse,
-    TransactionResponse, TransactionsListResponse, UpdateBillingRequest,
+    BillingResponse, ErrorBody, MessageResponse, PortalResponse, SpendLimitRequest, TopupRequest,
+    TopupResponse, TransactionResponse, TransactionsListResponse, UpdateBillingRequest,
 };
 use crate::auth::{AuthState, AuthenticatedUser};
 
@@ -53,14 +53,119 @@ pub(crate) async fn get_billing(
     })?
     .ok_or_else(|| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
 
+    let hyperline_customer_id: Option<String> = row.get("hyperline_customer_id");
+    let hyperline_wallet_id: Option<String> = row.get("hyperline_wallet_id");
+
+    // Best-effort live wallet read. Failures (no Hyperline client, not
+    // yet linked, network error, 404) all fall through to None — the
+    // local `credits_balance` is still authoritative for the ledger.
+    let (hyperline_wallet_balance, hyperline_wallet_currency) = match (
+        state.hyperline_client.as_ref(),
+        hyperline_wallet_id.as_deref(),
+    ) {
+        (Some(client), Some(wallet_id)) => match client.get_wallet(wallet_id).await {
+            Ok(wallet) => (Some(wallet.balance.amount), wallet.currency),
+            Err(e) => {
+                info!(
+                    account_id = %account_id,
+                    wallet_id = %wallet_id,
+                    error = %e,
+                    "hyperline live wallet read failed — returning local balance only"
+                );
+                (None, None)
+            }
+        },
+        _ => (None, None),
+    };
+
     Ok(Json(BillingResponse {
         tier: row.get("tier"),
         credits_balance: row.get("credits_balance"),
         monthly_spend_limit: row.get("monthly_spend_limit"),
-        hyperline_customer_id: row.get("hyperline_customer_id"),
-        hyperline_wallet_id: row.get("hyperline_wallet_id"),
+        hyperline_customer_id,
+        hyperline_wallet_id,
         payment_method_status: row.get("payment_method_status"),
+        hyperline_wallet_balance,
+        hyperline_wallet_currency,
     }))
+}
+
+/// `GET /account/billing/portal` — exchange for a Hyperline hosted-portal URL.
+///
+/// Replaces the old Stripe SetupIntent + 3DS payment-method UI. Users
+/// manage cards, invoices, and auto-recharge from the hosted portal;
+/// we just fetch the per-customer URL and redirect.
+///
+/// Returns 404 if the account hasn't been linked to Hyperline yet
+/// (expected during the customer-backfill window), 503 if the
+/// Hyperline REST client isn't configured, or 502 on an upstream
+/// failure.
+#[utoipa::path(
+    get,
+    path = "/account/billing/portal",
+    tag = "auth",
+    responses(
+        (status = 200, description = "Hosted-portal URL", body = PortalResponse),
+        (status = 404, description = "Account not linked to Hyperline", body = ErrorBody),
+        (status = 502, description = "Hyperline upstream error", body = ErrorBody),
+        (status = 503, description = "Hyperline client not configured", body = ErrorBody),
+    ),
+    security(("api_key" = []))
+)]
+pub(crate) async fn get_billing_portal(
+    State(state): State<Arc<AuthState>>,
+    Extension(user): Extension<AuthenticatedUser>,
+) -> Result<Json<PortalResponse>, ApiError> {
+    let account_id = get_user_account_id(&state.pool, user.user_id, user.selected_account_id)
+        .await
+        .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
+
+    let Some(client) = state.hyperline_client.as_ref() else {
+        return Err(err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Hyperline client not configured",
+            "hyperline_disabled",
+        ));
+    };
+
+    let customer_id: Option<String> =
+        sqlx::query_scalar("SELECT hyperline_customer_id FROM accounts WHERE id = $1")
+            .bind(account_id)
+            .fetch_optional(&state.pool)
+            .await
+            .map_err(|_| {
+                err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Database error",
+                    "internal_error",
+                )
+            })?
+            .flatten();
+
+    let Some(customer_id) = customer_id else {
+        return Err(err(
+            StatusCode::NOT_FOUND,
+            "Account is not linked to Hyperline yet",
+            "not_linked",
+        ));
+    };
+
+    match client.get_portal_url(&customer_id).await {
+        Ok(link) => Ok(Json(PortalResponse { url: link.url })),
+        Err(e) => {
+            error!(
+                account_id = %account_id,
+                customer_id = %customer_id,
+                error = %e,
+                "hyperline portal URL fetch failed"
+            );
+            Err(err(
+                StatusCode::BAD_GATEWAY,
+                "Hyperline portal URL unavailable",
+                "hyperline_upstream",
+            ))
+        }
+    }
 }
 
 #[utoipa::path(
