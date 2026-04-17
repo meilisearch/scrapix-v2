@@ -34,6 +34,40 @@ pub struct Customer {
     pub email: Option<String>,
 }
 
+/// Hyperline wallet — response shape for `GET /v1/wallets/{id}`.
+///
+/// `balance.amount` and `projected_balance.amount` are integers in the
+/// smallest currency unit (cents for USD). `projected_balance` is
+/// Hyperline's forecast given active subscriptions; the current spendable
+/// balance is `balance.amount`.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Wallet {
+    pub id: String,
+    pub customer_id: String,
+    #[serde(default)]
+    pub state: Option<String>,
+    #[serde(default)]
+    pub currency: Option<String>,
+    pub balance: MoneyAmount,
+    #[serde(default)]
+    pub projected_balance: Option<MoneyAmount>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct MoneyAmount {
+    pub amount: i64,
+}
+
+/// Customer portal response shape for `GET /v1/customers/{id}/portal`.
+///
+/// Per Hyperline docs the URL is deterministic per-customer and has no
+/// documented expiry — treat it like a permalink rather than an
+/// ephemeral session token.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct PortalLink {
+    pub url: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct HyperlineClient {
     http: reqwest::Client,
@@ -163,6 +197,26 @@ impl HyperlineClient {
     pub async fn ping(&self) -> Result<(), HyperlineError> {
         let _ = self.list_customers(1).await?;
         Ok(())
+    }
+
+    /// Fetches a wallet by its Hyperline id.
+    ///
+    /// Wallets are not auto-provisioned — if the customer has no wallet
+    /// yet the call 404s. Callers should treat a NotFound-style `Api`
+    /// error as "no wallet yet" rather than a hard failure.
+    pub async fn get_wallet(&self, wallet_id: &str) -> Result<Wallet, HyperlineError> {
+        let path = format!("/v1/wallets/{wallet_id}");
+        self.get_json(&path, &[]).await
+    }
+
+    /// Fetches the hosted customer-portal URL.
+    ///
+    /// Unlike Stripe's portal sessions, this is a GET (not a POST) and
+    /// the URL has no documented expiry — Hyperline treats it as a
+    /// per-customer permalink. Safe to cache briefly.
+    pub async fn get_portal_url(&self, customer_id: &str) -> Result<PortalLink, HyperlineError> {
+        let path = format!("/v1/customers/{customer_id}/portal");
+        self.get_json(&path, &[]).await
     }
 }
 

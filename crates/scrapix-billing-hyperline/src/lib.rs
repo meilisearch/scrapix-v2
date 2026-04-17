@@ -21,6 +21,6 @@ pub mod outbox;
 pub mod reconcile;
 pub mod webhooks;
 
-pub use client::HyperlineClient;
+pub use client::{Customer, HyperlineClient, MoneyAmount, PortalLink, Wallet};
 pub use config::HyperlineConfig;
 pub use error::HyperlineError;
