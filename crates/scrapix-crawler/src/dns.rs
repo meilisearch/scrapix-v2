@@ -166,7 +166,7 @@ impl CachingDnsResolver {
             // If still too large, remove half
             if cache.len() >= self.config.max_cache_size {
                 let mut entries: Vec<_> = cache.iter().collect();
-                entries.sort_by(|a, b| a.1.cached_at.cmp(&b.1.cached_at));
+                entries.sort_by_key(|entry| entry.1.cached_at);
                 let to_remove: Vec<_> = entries
                     .iter()
                     .take(cache.len() / 2)

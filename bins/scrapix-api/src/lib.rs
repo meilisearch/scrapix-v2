@@ -3658,7 +3658,7 @@ async fn handle_errors(
     }
 
     let mut by_domain: Vec<(String, u64)> = domain_counts.into_iter().collect();
-    by_domain.sort_by(|a, b| b.1.cmp(&a.1));
+    by_domain.sort_by_key(|entry| std::cmp::Reverse(entry.1));
     by_domain.truncate(10);
 
     Json(ErrorsResponse {
@@ -3692,7 +3692,7 @@ async fn handle_domains(
 
     // Sort by total requests and take top N
     let mut sorted: Vec<_> = filtered;
-    sorted.sort_by(|a, b| b.1.requests.cmp(&a.1.requests));
+    sorted.sort_by_key(|entry| std::cmp::Reverse(entry.1.requests));
     sorted.truncate(params.top);
 
     let domains: Vec<DomainInfo> = sorted
