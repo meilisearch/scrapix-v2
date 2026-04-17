@@ -20,6 +20,9 @@ pub enum HyperlineError {
     #[error("decode error: {0}")]
     Decode(#[from] serde_json::Error),
 
+    #[error("database error: {0}")]
+    Database(#[from] sqlx::Error),
+
     #[error("invalid webhook signature")]
     InvalidSignature,
 

@@ -7,6 +7,7 @@ use url::Url;
 
 use crate::config::HyperlineConfig;
 use crate::error::HyperlineError;
+use crate::events::UsageEvent;
 
 /// Envelope returned by Hyperline list endpoints: `{ meta, data }`.
 #[derive(Debug, Deserialize)]
@@ -73,6 +74,11 @@ impl HyperlineClient {
         Ok(self.config.api_base.join(trimmed)?)
     }
 
+    fn ingest_url(&self, path: &str) -> Result<Url, HyperlineError> {
+        let trimmed = path.trim_start_matches('/');
+        Ok(self.config.ingest_base.join(trimmed)?)
+    }
+
     async fn get_json<T: DeserializeOwned>(
         &self,
         path: &str,
@@ -82,6 +88,30 @@ impl HyperlineClient {
         debug!(%url, "hyperline GET");
         let resp = self.http.get(url).query(query).send().await?;
         parse::<T>(resp).await
+    }
+
+    /// POSTs a batch of usage events to the ingest API. Hyperline accepts
+    /// either a single event or an array; we always send an array so batching
+    /// is a no-op change at the call site.
+    pub async fn ingest_events(&self, events: &[UsageEvent<'_>]) -> Result<(), HyperlineError> {
+        if events.is_empty() {
+            return Ok(());
+        }
+        let url = self.ingest_url("/v1/events")?;
+        debug!(%url, count = events.len(), "hyperline ingest");
+        let resp = self.http.post(url).json(events).send().await?;
+        let status = resp.status();
+        if status.is_success() {
+            return Ok(());
+        }
+        let bytes = resp.bytes().await?;
+        let message = std::str::from_utf8(&bytes)
+            .unwrap_or("<non-utf8 body>")
+            .to_string();
+        Err(HyperlineError::Api {
+            status: status.as_u16(),
+            message: truncate(&message, 512),
+        })
     }
 
     /// Lists customers. Useful as a connectivity check.

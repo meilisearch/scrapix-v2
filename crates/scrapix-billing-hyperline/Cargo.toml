@@ -19,6 +19,7 @@ async-trait = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "uuid", "chrono", "json", "tls-rustls"] }
 
 # Webhook signature verification (HMAC-SHA256)
 hmac = "0.12"
