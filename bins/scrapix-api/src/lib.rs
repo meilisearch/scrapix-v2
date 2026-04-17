@@ -5170,7 +5170,11 @@ pub async fn run_with_bus(
         // the ingest-side `HYPERLINE_API_KEY`, since you can verify incoming
         // deliveries in one env without egressing events from it.
         if let Ok(secret) = std::env::var("HYPERLINE_WEBHOOK_SECRET") {
-            app = app.merge(hyperline::webhook_route(auth.pool.clone(), secret));
+            app = app.merge(hyperline::webhook_route(
+                auth.pool.clone(),
+                secret,
+                auth.email_client.clone(),
+            ));
             info!("Hyperline webhook route enabled (/webhooks/hyperline)");
         }
 

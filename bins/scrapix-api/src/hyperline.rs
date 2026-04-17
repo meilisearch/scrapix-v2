@@ -22,6 +22,8 @@ use axum::{
 use scrapix_billing_hyperline::webhooks::{verify_signature, WebhookEnvelope, WebhookHeaders};
 use tracing::{info, warn};
 
+use crate::email::{get_account_email, EmailClient};
+
 // ============================================================================
 // State
 // ============================================================================
@@ -30,15 +32,22 @@ use tracing::{info, warn};
 ///
 /// We keep this narrow — no full `HyperlineClient`, since webhook handling
 /// doesn't call the control-plane API. The secret is stored here rather
-/// than re-read from env on each request.
+/// than re-read from env on each request. The email client is optional
+/// because the webhook route should still mount even when Resend is
+/// unconfigured (dev / self-hosted) — low-balance emails just get
+/// skipped with a warning.
 #[derive(Clone)]
 pub struct HyperlineWebhookState {
     pub webhook_secret: String,
+    pub email_client: Option<EmailClient>,
 }
 
 impl HyperlineWebhookState {
-    pub fn new(webhook_secret: String) -> Self {
-        Self { webhook_secret }
+    pub fn new(webhook_secret: String, email_client: Option<EmailClient>) -> Self {
+        Self {
+            webhook_secret,
+            email_client,
+        }
     }
 }
 
@@ -124,7 +133,7 @@ async fn hyperline_webhook(
     }
 
     // 5. Dispatch. Unknown events get logged and acked to stop retries.
-    let dispatch_result = dispatch_event(&pool, &envelope).await;
+    let dispatch_result = dispatch_event(&pool, &state, &envelope).await;
 
     // 6. Mark processed (success or error) on the log row so ops can tell
     //    "we saw it and tried" from "we saw it and crashed".
@@ -152,7 +161,11 @@ async fn hyperline_webhook(
     Ok(StatusCode::OK)
 }
 
-async fn dispatch_event(pool: &sqlx::PgPool, envelope: &WebhookEnvelope) -> Result<(), String> {
+async fn dispatch_event(
+    pool: &sqlx::PgPool,
+    state: &HyperlineWebhookState,
+    envelope: &WebhookEnvelope,
+) -> Result<(), String> {
     match envelope.event_type.as_str() {
         "wallet.credited" | "credit.topup_transaction_created" => {
             // Resolve account + idempotency key from the envelope. Values
@@ -236,7 +249,65 @@ async fn dispatch_event(pool: &sqlx::PgPool, envelope: &WebhookEnvelope) -> Resu
             info!(event_type = %envelope.event_type, "hyperline: wallet debited (mirror of local debit)");
         }
         "wallet.low_projected_balance" => {
-            info!(event_type = %envelope.event_type, "hyperline: low balance (email dispatch is TODO)");
+            // Resolve (account, projected_balance) from the envelope and
+            // send a low-balance warning to the account owner. Same
+            // defensive extraction as wallet.credited.
+            let customer_id = envelope
+                .data
+                .get("object")
+                .and_then(|o| o.get("customer_id"))
+                .and_then(|v| v.as_str());
+            // `projected_balance` is Hyperline's post-window projection.
+            // We accept either int or float; floats are rounded down.
+            let projected_balance = envelope
+                .data
+                .get("object")
+                .and_then(|o| o.get("projected_balance"))
+                .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)));
+
+            match (state.email_client.as_ref(), customer_id, projected_balance) {
+                (Some(mailer), Some(cust), Some(balance)) => {
+                    let maybe_account: Option<uuid::Uuid> = sqlx::query_scalar(
+                        "SELECT id FROM accounts WHERE hyperline_customer_id = $1",
+                    )
+                    .bind(cust)
+                    .fetch_optional(pool)
+                    .await
+                    .map_err(|e| format!("account lookup: {e}"))?;
+
+                    let Some(account_id) = maybe_account else {
+                        warn!(
+                            event_type = %envelope.event_type,
+                            customer_id = %cust,
+                            "hyperline: low balance for unknown customer — acking"
+                        );
+                        return Ok(());
+                    };
+
+                    if let Some(email) = get_account_email(pool, account_id).await {
+                        mailer.send_low_balance_warning(&email, balance);
+                        info!(
+                            account_id = %account_id,
+                            projected_balance = balance,
+                            "hyperline: low balance email dispatched"
+                        );
+                    } else {
+                        warn!(
+                            account_id = %account_id,
+                            "hyperline: low balance — no owner email on file"
+                        );
+                    }
+                }
+                _ => {
+                    warn!(
+                        event_type = %envelope.event_type,
+                        has_email_client = state.email_client.is_some(),
+                        has_customer = customer_id.is_some(),
+                        has_balance = projected_balance.is_some(),
+                        "hyperline: low balance missing fields — acking without email"
+                    );
+                }
+            }
         }
         "invoice.settled" | "invoice.errored" => {
             info!(event_type = %envelope.event_type, "hyperline: invoice event (transaction history sync is TODO)");
@@ -287,8 +358,12 @@ fn header_str<'a>(headers: &'a HeaderMap, name: &str) -> Result<&'a str, (Status
 /// No auth middleware — verification is per-request against the HMAC secret
 /// in [`HyperlineWebhookState`]. Wire into the main app in `lib.rs` via
 /// `app = app.merge(hyperline::webhook_route(pool, secret))`.
-pub fn webhook_route(pool: sqlx::PgPool, webhook_secret: String) -> Router {
-    let state = HyperlineWebhookState::new(webhook_secret);
+pub fn webhook_route(
+    pool: sqlx::PgPool,
+    webhook_secret: String,
+    email_client: Option<EmailClient>,
+) -> Router {
+    let state = HyperlineWebhookState::new(webhook_secret, email_client);
     Router::new()
         .route("/webhooks/hyperline", post(hyperline_webhook))
         .layer(Extension(state))
