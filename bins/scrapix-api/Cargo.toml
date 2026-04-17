@@ -17,6 +17,7 @@ path = "src/main.rs"
 [dependencies]
 scrapix-core = { path = "../../crates/scrapix-core" }
 scrapix-billing = { path = "../../crates/scrapix-billing" }
+scrapix-billing-hyperline = { path = "../../crates/scrapix-billing-hyperline" }
 scrapix-auth = { path = "../../crates/scrapix-auth" }
 scrapix-queue = { path = "../../crates/scrapix-queue" }
 scrapix-storage = { path = "../../crates/scrapix-storage" }

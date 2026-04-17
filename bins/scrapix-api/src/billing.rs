@@ -6,7 +6,9 @@
 
 use crate::email::EmailClient;
 use crate::{ApiError, ScrapeFormat};
+use scrapix_billing_hyperline::events::{enqueue_usage_event, BillingEventType};
 use scrapix_core::{CrawlerType, FeaturesConfig};
+use tracing::warn;
 
 // Re-export constants from the billing crate.
 pub use scrapix_billing::{MAP_CREDITS, SEARCH_CREDITS};
@@ -121,7 +123,7 @@ pub(crate) async fn check_credits_and_deduct(
         .as_ref()
         .map(|p| p as &dyn scrapix_billing::PaymentProvider);
 
-    Ok(scrapix_billing::auto_topup::check_credits_and_deduct(
+    let new_balance = scrapix_billing::auto_topup::check_credits_and_deduct(
         pool,
         account_id,
         amount,
@@ -130,7 +132,46 @@ pub(crate) async fn check_credits_and_deduct(
         provider_ref,
         notifier_ref,
     )
-    .await?)
+    .await?;
+
+    // Mirror the local debit into the Hyperline outbox. Best-effort: if
+    // enqueue fails we log but don't unwind the debit — the drift-detection
+    // job (scrapix_billing_hyperline::reconcile) is the backstop. Full
+    // transactional atomicity requires refactoring the ledger to accept a
+    // shared `&mut Transaction`; tracked for Phase 1.
+    emit_usage_event(pool, account_id, operation, amount, description).await;
+
+    Ok(new_balance)
+}
+
+/// Enqueue a single `ApiRequest` outbox row per debit site. The `operation`
+/// ("scrape" / "map" / "crawl" / "search") and description are carried as
+/// metadata so Hyperline can slice pricing / analytics by endpoint.
+pub(crate) async fn emit_usage_event(
+    pool: &sqlx::PgPool,
+    account_id: &str,
+    operation: &str,
+    credits: i64,
+    description: &str,
+) {
+    let Ok(account_uuid) = uuid::Uuid::parse_str(account_id) else {
+        return;
+    };
+    let metadata = serde_json::json!({
+        "operation": operation,
+        "description": description,
+    });
+    if let Err(e) = enqueue_usage_event(
+        pool,
+        account_uuid,
+        BillingEventType::ApiRequest,
+        credits as f64,
+        Some(metadata),
+    )
+    .await
+    {
+        warn!(account_id, operation, error = %e, "failed to enqueue Hyperline outbox row");
+    }
 }
 
 // ============================================================================

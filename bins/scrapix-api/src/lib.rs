@@ -4655,6 +4655,35 @@ pub async fn run_with_bus(
         }
     }
 
+    // Spawn the Hyperline outbox drain worker when configured. Silent no-op
+    // otherwise — the enqueue side still writes outbox rows, so turning
+    // HYPERLINE_API_KEY on later replays any backlog on the next boot.
+    let hyperline_drain_handle = match (
+        state.db_pool.clone(),
+        scrapix_billing_hyperline::HyperlineClient::from_env(),
+    ) {
+        (Some(pool), Ok(client)) => {
+            info!(
+                sandbox = client.config().is_sandbox(),
+                "Hyperline outbox drain worker starting (interval=5s, batch=100)"
+            );
+            Some(scrapix_billing_hyperline::outbox::spawn_drain_worker(
+                pool,
+                client,
+                std::time::Duration::from_secs(5),
+                100,
+            ))
+        }
+        (None, _) => {
+            info!("Hyperline drain worker disabled: no DB pool");
+            None
+        }
+        (_, Err(e)) => {
+            info!(reason = %e, "Hyperline drain worker disabled: client not configured");
+            None
+        }
+    };
+
     // Shutdown coordination
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
@@ -5355,6 +5384,9 @@ pub async fn run_with_bus(
         }
     }
     if let Some(handle) = ai_receiver_handle {
+        handle.abort();
+    }
+    if let Some(handle) = hyperline_drain_handle {
         handle.abort();
     }
     info!("Shutdown complete");

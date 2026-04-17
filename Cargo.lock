@@ -5487,6 +5487,7 @@ dependencies = [
  "scrapix-ai",
  "scrapix-auth",
  "scrapix-billing",
+ "scrapix-billing-hyperline",
  "scrapix-core",
  "scrapix-crawler",
  "scrapix-extractor",
