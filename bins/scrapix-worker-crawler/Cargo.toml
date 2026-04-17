@@ -22,6 +22,7 @@ browser = ["scrapix-crawler/browser-cdp"]
 scrapix-core = { path = "../../crates/scrapix-core" }
 scrapix-crawler = { path = "../../crates/scrapix-crawler" }
 scrapix-frontier = { path = "../../crates/scrapix-frontier" }
+scrapix-lifecycle = { path = "../../crates/scrapix-lifecycle" }
 scrapix-queue = { path = "../../crates/scrapix-queue" }
 scrapix-storage = { path = "../../crates/scrapix-storage" }
 

@@ -1,14 +1,15 @@
+# scrapix-api — HTTP API server.
+# Image is pushed to GHCR by CI; deploys use `flyctl deploy --image ...`.
+
 app = "scrapix-api"
 primary_region = "cdg"
-
-[build]
-  dockerfile = "../../../Dockerfile"
-  build-target = "scrapix-api"
+kill_signal = "SIGTERM"
+kill_timeout = "30s"
 
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = "stop"
+  auto_stop_machines = "suspend"
   auto_start_machines = true
   min_machines_running = 0
   processes = ["app"]
@@ -32,3 +33,6 @@ primary_region = "cdg"
 
 [env]
   RUST_LOG = "info"
+  # Wake suspended worker apps on POST /crawl via bare-TCP connect. These
+  # hostnames resolve over Fly's private 6PN mesh.
+  WORKER_WAKE_HOSTS = "scrapix-frontier.internal:8081,scrapix-worker-crawler.internal:8081,scrapix-worker-content.internal:8081"

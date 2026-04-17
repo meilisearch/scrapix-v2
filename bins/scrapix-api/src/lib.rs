@@ -2097,12 +2097,44 @@ fn extract_links_from_html(html: &str, base_url: &str) -> Vec<String> {
     urls
 }
 
+/// Fire-and-forget TCP connect to each host in `WORKER_WAKE_HOSTS` (comma-separated
+/// `host:port` pairs). On Fly.io, connecting to `scrapix-worker-crawler.internal:8081`
+/// triggers the proxy to auto-start the machine from a suspended state. No-op when
+/// the env var is unset (local dev, tests).
+fn fan_out_worker_wakes() {
+    let hosts = match std::env::var("WORKER_WAKE_HOSTS") {
+        Ok(v) if !v.trim().is_empty() => v,
+        _ => return,
+    };
+    for host in hosts.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        let host = host.to_string();
+        tokio::spawn(async move {
+            let connect = tokio::net::TcpStream::connect(&host);
+            match tokio::time::timeout(Duration::from_millis(500), connect).await {
+                Ok(Ok(_)) => {
+                    tracing::debug!(host = %host, "Worker wake ping delivered");
+                }
+                Ok(Err(e)) => {
+                    tracing::debug!(host = %host, error = %e, "Worker wake ping failed");
+                }
+                Err(_) => {
+                    tracing::debug!(host = %host, "Worker wake ping timed out");
+                }
+            }
+        });
+    }
+}
+
 /// Core crawl creation logic, reusable from handler, trigger, and cron scheduler
 pub(crate) async fn do_create_crawl(
     state: &Arc<AppState>,
     config: CrawlConfig,
     account_ctx: Option<&AccountContext>,
 ) -> Result<CreateCrawlResponse, ApiError> {
+    // Fan out wake pings to suspended worker apps before any validation — even if
+    // validation fails this is cheap and benefits the next successful submit.
+    fan_out_worker_wakes();
+
     // Validate config
     if config.start_urls.is_empty() {
         return Err(ApiError::new(
@@ -3626,7 +3658,7 @@ async fn handle_errors(
     }
 
     let mut by_domain: Vec<(String, u64)> = domain_counts.into_iter().collect();
-    by_domain.sort_by(|a, b| b.1.cmp(&a.1));
+    by_domain.sort_by_key(|entry| std::cmp::Reverse(entry.1));
     by_domain.truncate(10);
 
     Json(ErrorsResponse {
@@ -3660,7 +3692,7 @@ async fn handle_domains(
 
     // Sort by total requests and take top N
     let mut sorted: Vec<_> = filtered;
-    sorted.sort_by(|a, b| b.1.requests.cmp(&a.1.requests));
+    sorted.sort_by_key(|entry| std::cmp::Reverse(entry.1.requests));
     sorted.truncate(params.top);
 
     let domains: Vec<DomainInfo> = sorted
@@ -5011,10 +5043,17 @@ pub async fn run_with_bus(
     info!("Listening on {}", addr);
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
-            tokio::signal::ctrl_c()
-                .await
-                .expect("failed to install ctrl+c handler");
-            info!("Shutdown signal received, draining connections...");
+            let mut term =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                    .expect("failed to install SIGTERM handler");
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {
+                    info!("SIGINT received, draining connections...");
+                }
+                _ = term.recv() => {
+                    info!("SIGTERM received, draining connections...");
+                }
+            }
             let _ = shutdown_tx.send(true);
         })
         .await?;

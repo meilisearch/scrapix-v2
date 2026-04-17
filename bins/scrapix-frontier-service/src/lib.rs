@@ -23,6 +23,10 @@ use std::time::Duration;
 
 use clap::Parser;
 use parking_lot::RwLock;
+use scrapix_lifecycle::{
+    idle_minutes_from_env, install_signal_handlers, spawn_idle_watchdog, spawn_wake_listener,
+    wake_port_from_env,
+};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info};
 
@@ -1026,11 +1030,6 @@ impl FrontierService {
         }))
     }
 
-    fn shutdown(&self) {
-        info!(instance_id = %self.instance_id, "Initiating graceful shutdown");
-        self.shutdown.store(true, Ordering::Relaxed);
-    }
-
     fn print_stats(&self) {
         let metrics = self.metrics.snapshot();
         info!(
@@ -1072,18 +1071,21 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 
     let service = Arc::new(FrontierService::new(&args).await?);
 
-    let service_shutdown = service.clone();
-    let shutdown_handle = tokio::spawn(async move {
-        if let Err(e) = tokio::signal::ctrl_c().await {
-            error!(error = %e, "Failed to listen for ctrl+c");
-        }
-        info!("Received shutdown signal");
-        service_shutdown.shutdown();
-    });
+    let signal_handle = install_signal_handlers(service.shutdown.clone());
+    let wake_handle = spawn_wake_listener(wake_port_from_env(), service.shutdown.clone());
+
+    let idle_metrics = service.metrics.clone();
+    let idle_handle = spawn_idle_watchdog(
+        move || idle_metrics.messages_consumed.load(Ordering::Relaxed),
+        idle_minutes_from_env(10.0),
+        service.shutdown.clone(),
+    );
 
     let result = service.run().await;
 
-    shutdown_handle.abort();
+    signal_handle.abort();
+    wake_handle.abort();
+    idle_handle.abort();
     service.print_stats();
 
     result

@@ -1,20 +1,30 @@
-app = "scrapix-crawler"
+# scrapix-worker-crawler — Kafka consumer that fetches pages (includes Chromium).
+# Horizontal scaling: `flyctl scale count N -a scrapix-worker-crawler`.
+# Max useful N = partition count of scrapix.urls.frontier (12).
+
+app = "scrapix-worker-crawler"
 primary_region = "cdg"
+kill_signal = "SIGTERM"
+kill_timeout = "30s"
 
-[build]
-  dockerfile = "../../../Dockerfile"
-  build-target = "scrapix-worker-crawler"
+# Wake service: bare TCP on port 8081. Fly's proxy autostarts the machine on
+# incoming connections (the API fans out wakes on POST /crawl). When the
+# worker is idle for IDLE_EXIT_MINUTES it exits cleanly and Fly suspends it.
+[[services]]
+  protocol = "tcp"
+  internal_port = 8081
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 0
 
-[processes]
-  app = ""
-
-# No HTTP service — this is a Kafka consumer
-# Disable auto-stop so it stays running to consume messages
+  [[services.ports]]
+    port = 8081
+    handlers = []
 
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "512mb"
-  cpus = 1
+  size = "shared-cpu-2x"
+  memory = "1024mb"
+  cpus = 2
 
 [env]
   RUST_LOG = "info"
@@ -24,3 +34,5 @@ primary_region = "cdg"
   REQUEST_TIMEOUT = "30"
   MAX_RETRIES = "3"
   RESPECT_ROBOTS = "true"
+  IDLE_EXIT_MINUTES = "10"
+  WAKE_PORT = "8081"

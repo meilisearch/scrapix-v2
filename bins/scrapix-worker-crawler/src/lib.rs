@@ -22,8 +22,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use clap::Parser;
+use scrapix_lifecycle::{
+    idle_minutes_from_env, install_signal_handlers, spawn_idle_watchdog, spawn_wake_listener,
+    wake_port_from_env,
+};
 use tokio::sync::Semaphore;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 use scrapix_core::{CrawlUrl, FeaturesConfig, ScrapixError, UrlPatterns};
 #[cfg(feature = "browser")]
@@ -1364,12 +1368,6 @@ impl CrawlerWorker {
             .await?;
         Ok(())
     }
-
-    /// Graceful shutdown
-    fn shutdown(&self) {
-        info!(worker_id = %self.worker_id, "Initiating graceful shutdown");
-        self.shutdown.store(true, Ordering::Relaxed);
-    }
 }
 
 /// Run the crawler worker with the given arguments.
@@ -1388,15 +1386,22 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
     // Create and run worker
     let worker = Arc::new(CrawlerWorker::new(&args).await?);
 
-    // Setup shutdown handler
-    let worker_shutdown = worker.clone();
-    let shutdown_handle = tokio::spawn(async move {
-        if let Err(e) = tokio::signal::ctrl_c().await {
-            error!(error = %e, "Failed to listen for ctrl+c");
-        }
-        info!("Received shutdown signal");
-        worker_shutdown.shutdown();
-    });
+    // Install SIGTERM + Ctrl-C handler — flips worker.shutdown on either signal.
+    let signal_handle = install_signal_handlers(worker.shutdown.clone());
+
+    // Bare-TCP wake listener on WAKE_PORT (default 8081) so Fly.io's proxy can
+    // autostart this machine from a suspended state when the API fans out
+    // wake requests on POST /crawl.
+    let wake_handle = spawn_wake_listener(wake_port_from_env(), worker.shutdown.clone());
+
+    // Idle watchdog: if no URLs processed for IDLE_EXIT_MINUTES (default 10),
+    // exit cleanly so Fly can suspend this machine to zero cost.
+    let idle_metrics = worker.metrics.clone();
+    let idle_handle = spawn_idle_watchdog(
+        move || idle_metrics.urls_processed.load(Ordering::Relaxed),
+        idle_minutes_from_env(10.0),
+        worker.shutdown.clone(),
+    );
 
     // Clone for metrics access after run completes
     let worker_for_metrics = worker.clone();
@@ -1405,7 +1410,9 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
     let result = worker.run().await;
 
     // Cleanup
-    shutdown_handle.abort();
+    signal_handle.abort();
+    wake_handle.abort();
+    idle_handle.abort();
 
     // Print final metrics
     let metrics = worker_for_metrics.metrics.snapshot();

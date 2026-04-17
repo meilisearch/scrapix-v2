@@ -5674,11 +5674,20 @@ dependencies = [
  "parking_lot",
  "scrapix-core",
  "scrapix-frontier",
+ "scrapix-lifecycle",
  "scrapix-queue",
  "tokio",
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "scrapix-lifecycle"
+version = "0.1.0"
+dependencies = [
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -5795,6 +5804,7 @@ dependencies = [
  "scrapix-core",
  "scrapix-extractor",
  "scrapix-frontier",
+ "scrapix-lifecycle",
  "scrapix-parser",
  "scrapix-queue",
  "scrapix-storage",
@@ -5818,6 +5828,7 @@ dependencies = [
  "scrapix-core",
  "scrapix-crawler",
  "scrapix-frontier",
+ "scrapix-lifecycle",
  "scrapix-queue",
  "scrapix-storage",
  "serde_json",
