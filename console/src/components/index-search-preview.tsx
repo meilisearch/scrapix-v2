@@ -41,7 +41,6 @@ export function IndexSearchPreview({
   const [searchResult, setSearchResult] = useState<MeilisearchSearchResponse | null>(null);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -52,6 +51,11 @@ export function IndexSearchPreview({
     setSearchError(null);
     setPage(0);
   }, [selectedIndex]);
+
+  // Abort any in-flight request on unmount
+  useEffect(() => {
+    return () => abortRef.current?.abort();
+  }, []);
 
   const performSearch = useCallback(
     async (q: string, offset: number) => {
@@ -129,7 +133,6 @@ export function IndexSearchPreview({
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <Input
-          ref={inputRef}
           placeholder="Search indexed content..."
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -215,8 +218,9 @@ export function IndexSearchPreview({
 
 function SearchHit({ hit }: { hit: MeilisearchHit }) {
   const formatted = hit._formatted;
-  const title = formatted?.title || hit.title || hit.url || "Untitled";
-  const snippet = formatted?.content || hit.content || "";
+  const titleHtml = formatted?.title;
+  const titleText = hit.title || hit.url || "Untitled";
+  const snippetHtml = formatted?.content;
   const url = hit.url;
   const domain = hit.domain;
 
@@ -234,16 +238,22 @@ function SearchHit({ hit }: { hit: MeilisearchHit }) {
         rel="noopener noreferrer"
         className="inline-flex items-center gap-1.5 group/link"
       >
-        <h3
-          className="text-lg font-medium text-primary group-hover/link:underline leading-snug"
-          dangerouslySetInnerHTML={{ __html: title }}
-        />
+        {titleHtml ? (
+          <h3
+            className="text-lg font-medium text-primary group-hover/link:underline leading-snug"
+            dangerouslySetInnerHTML={{ __html: titleHtml }}
+          />
+        ) : (
+          <h3 className="text-lg font-medium text-primary group-hover/link:underline leading-snug">
+            {titleText}
+          </h3>
+        )}
         <ExternalLink className="h-3.5 w-3.5 text-muted-foreground opacity-0 group-hover/link:opacity-100 transition-opacity flex-shrink-0" />
       </a>
-      {snippet && (
+      {snippetHtml && (
         <p
           className="text-sm text-muted-foreground mt-1 leading-relaxed line-clamp-3 [&>mark]:bg-yellow-200 [&>mark]:text-foreground [&>mark]:dark:bg-yellow-900/60 [&>mark]:rounded-sm [&>mark]:px-0.5"
-          dangerouslySetInnerHTML={{ __html: snippet }}
+          dangerouslySetInnerHTML={{ __html: snippetHtml }}
         />
       )}
       <div className="flex items-center gap-3 mt-1.5">
