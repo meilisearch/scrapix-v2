@@ -21,6 +21,7 @@ scrapix-frontier = { path = "../../crates/scrapix-frontier" }
 scrapix-parser = { path = "../../crates/scrapix-parser" }
 scrapix-storage = { path = "../../crates/scrapix-storage" }
 scrapix-queue = { path = "../../crates/scrapix-queue" }
+scrapix-lifecycle = { path = "../../crates/scrapix-lifecycle" }
 scrapix-ai = { path = "../../crates/scrapix-ai" }
 
 tokio = { workspace = true }

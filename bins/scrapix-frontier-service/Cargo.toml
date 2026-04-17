@@ -18,6 +18,7 @@ path = "src/main.rs"
 scrapix-core = { path = "../../crates/scrapix-core" }
 scrapix-frontier = { path = "../../crates/scrapix-frontier" }
 scrapix-queue = { path = "../../crates/scrapix-queue" }
+scrapix-lifecycle = { path = "../../crates/scrapix-lifecycle" }
 
 tokio = { workspace = true }
 anyhow = { workspace = true }

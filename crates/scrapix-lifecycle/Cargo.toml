@@ -1,0 +1,11 @@
+[package]
+name = "scrapix-lifecycle"
+description = "Shared process-lifecycle helpers: signal handlers, Fly.io wake listener, idle watchdog"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+tracing = { workspace = true }

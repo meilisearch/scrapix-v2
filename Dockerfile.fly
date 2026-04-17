@@ -1,0 +1,120 @@
+# =============================================================================
+# Scrapix Fly.io Multi-Target Dockerfile
+# =============================================================================
+# Builds all four Rust service binaries from a single cargo-chef-cached
+# workspace build, then exposes a separate runtime stage per binary. CI picks
+# the target via `docker buildx build --target <name>` and pushes each as its
+# own tag to ghcr.io/meilisearch/scrapix-<name>:<sha>.
+#
+# Why cargo-chef: the previous Dockerfile.heroku builds used a stub-files hack
+# to precompile dependencies; cargo-chef does this properly and survives
+# workspace member additions without manual Dockerfile edits.
+#
+# Build targets:
+#   scrapix-api                 — HTTP API server
+#   scrapix-frontier-service    — URL frontier Kafka consumer
+#   scrapix-worker-crawler      — Fetcher Kafka consumer (+ Chromium)
+#   scrapix-worker-content      — Content parser Kafka consumer
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Stage: chef-base — toolchain + system build deps, cached once.
+# -----------------------------------------------------------------------------
+FROM rust:1.93-bookworm AS chef-base
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        cmake \
+        libssl-dev \
+        libsasl2-dev \
+        libclang-dev \
+        libcurl4-openssl-dev \
+        pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+RUN cargo install cargo-chef --locked --version 0.1.68
+
+# -----------------------------------------------------------------------------
+# Stage: planner — emits recipe.json capturing the full dependency graph.
+# -----------------------------------------------------------------------------
+FROM chef-base AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+# -----------------------------------------------------------------------------
+# Stage: builder — compiles deps once (cached), then workspace sources.
+# -----------------------------------------------------------------------------
+FROM chef-base AS builder
+COPY --from=planner /app/recipe.json recipe.json
+# Cook only dependencies — this layer is reused across source changes.
+RUN cargo chef cook --release --recipe-path recipe.json --features browser
+# Copy real sources and build every binary we deploy.
+COPY . .
+RUN cargo build --release --features browser \
+        --bin scrapix-api \
+        --bin scrapix-frontier-service \
+        --bin scrapix-worker-crawler \
+        --bin scrapix-worker-content
+
+# -----------------------------------------------------------------------------
+# Shared runtime base — non-root user, ca-certificates, libssl.
+# -----------------------------------------------------------------------------
+FROM debian:bookworm-slim AS runtime-base
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libssl3 \
+        libsasl2-2 \
+        libcurl4 \
+        tini \
+    && rm -rf /var/lib/apt/lists/*
+RUN useradd -m -u 1000 -s /bin/bash scrapix
+USER scrapix
+WORKDIR /app
+ENV RUST_LOG=info
+ENTRYPOINT ["/usr/bin/tini", "--"]
+
+# -----------------------------------------------------------------------------
+# Target: scrapix-api
+# -----------------------------------------------------------------------------
+FROM runtime-base AS scrapix-api
+COPY --from=builder --chown=scrapix:scrapix /app/target/release/scrapix-api /app/scrapix-api
+EXPOSE 8080
+CMD ["/app/scrapix-api", "--port", "8080"]
+
+# -----------------------------------------------------------------------------
+# Target: scrapix-frontier-service
+# -----------------------------------------------------------------------------
+FROM runtime-base AS scrapix-frontier-service
+COPY --from=builder --chown=scrapix:scrapix /app/target/release/scrapix-frontier-service /app/scrapix-frontier-service
+EXPOSE 8081
+CMD ["/app/scrapix-frontier-service"]
+
+# -----------------------------------------------------------------------------
+# Target: scrapix-worker-crawler — adds Chromium for browser rendering.
+# -----------------------------------------------------------------------------
+FROM debian:bookworm-slim AS scrapix-worker-crawler
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libssl3 \
+        libsasl2-2 \
+        libcurl4 \
+        tini \
+        chromium \
+        fonts-liberation \
+        fonts-noto \
+    && rm -rf /var/lib/apt/lists/*
+RUN useradd -m -u 1000 -s /bin/bash scrapix
+USER scrapix
+WORKDIR /app
+ENV RUST_LOG=info \
+    CHROME_PATH=/usr/bin/chromium
+COPY --from=builder --chown=scrapix:scrapix /app/target/release/scrapix-worker-crawler /app/scrapix-worker-crawler
+EXPOSE 8081
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["/app/scrapix-worker-crawler"]
+
+# -----------------------------------------------------------------------------
+# Target: scrapix-worker-content
+# -----------------------------------------------------------------------------
+FROM runtime-base AS scrapix-worker-content
+COPY --from=builder --chown=scrapix:scrapix /app/target/release/scrapix-worker-content /app/scrapix-worker-content
+EXPOSE 8081
+CMD ["/app/scrapix-worker-content"]

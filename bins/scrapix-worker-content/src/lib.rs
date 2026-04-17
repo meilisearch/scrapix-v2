@@ -18,8 +18,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use clap::Parser;
+use scrapix_lifecycle::{
+    idle_minutes_from_env, install_signal_handlers, spawn_idle_watchdog, spawn_wake_listener,
+    wake_port_from_env,
+};
 use tokio::sync::Semaphore;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 use scrapix_ai::{AiClient, AiService};
 use scrapix_core::{Document, FeaturesConfig, RawPage, ScrapixError};
@@ -1576,12 +1580,6 @@ impl ContentWorker {
             _ => None,
         }
     }
-
-    /// Graceful shutdown
-    fn shutdown(&self) {
-        info!(worker_id = %self.worker_id, "Initiating graceful shutdown");
-        self.shutdown.store(true, Ordering::Relaxed);
-    }
 }
 
 pub async fn run(args: Args) -> anyhow::Result<()> {
@@ -1596,21 +1594,27 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
     // Create and run worker
     let worker = Arc::new(ContentWorker::new(&args).await?);
 
-    // Setup shutdown handler
-    let worker_shutdown = worker.clone();
-    let shutdown_handle = tokio::spawn(async move {
-        if let Err(e) = tokio::signal::ctrl_c().await {
-            error!(error = %e, "Failed to listen for ctrl+c");
-        }
-        info!("Received shutdown signal");
-        worker_shutdown.shutdown();
-    });
+    // Install SIGTERM + Ctrl-C handler.
+    let signal_handle = install_signal_handlers(worker.shutdown.clone());
+
+    // Wake listener for Fly.io autostart.
+    let wake_handle = spawn_wake_listener(wake_port_from_env(), worker.shutdown.clone());
+
+    // Idle watchdog: exit cleanly after IDLE_EXIT_MINUTES of no processed pages.
+    let idle_metrics = worker.metrics.clone();
+    let idle_handle = spawn_idle_watchdog(
+        move || idle_metrics.pages_processed.load(Ordering::Relaxed),
+        idle_minutes_from_env(10.0),
+        worker.shutdown.clone(),
+    );
 
     // Run the worker
     let result = worker.run().await;
 
     // Cleanup
-    shutdown_handle.abort();
+    signal_handle.abort();
+    wake_handle.abort();
+    idle_handle.abort();
 
     // Print final metrics
     let metrics = worker.metrics.snapshot();

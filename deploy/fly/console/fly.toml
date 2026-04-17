@@ -1,14 +1,15 @@
+# scrapix-console — Next.js 16 standalone output.
+# Image built from console/Dockerfile and pushed to GHCR by CI.
+
 app = "scrapix-console"
 primary_region = "cdg"
-
-[build]
-  dockerfile = "../../../console/Dockerfile"
-  build-context = "../../../console"
+kill_signal = "SIGTERM"
+kill_timeout = "15s"
 
 [http_service]
   internal_port = 3000
   force_https = true
-  auto_stop_machines = "stop"
+  auto_stop_machines = "suspend"
   auto_start_machines = true
   min_machines_running = 0
   processes = ["app"]

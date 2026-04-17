@@ -1,153 +1,94 @@
 ---
 title: Fly.io
-description: Distributed deployment on Fly.io with per-service apps
+description: Deploy Scrapix on Fly.io with aggressive scale-to-zero and CI-driven image builds
 ---
 
 # Fly.io
 
-Fly.io runs Scrapix in **distributed mode** with each service as a separate Fly app. The repository includes pre-configured `fly.toml` files in `deploy/fly/`.
-
-## Prerequisites
-
-- [Fly CLI](https://fly.io/docs/flyctl/install/) installed and authenticated
-- A Fly.io account
+Scrapix runs as **six Fly apps** with GitHub Actions building Docker images and deploying via `flyctl deploy --image`. All services except the Kafka broker scale to zero when idle, giving a baseline cost of ~$18/mo.
 
 ## Architecture
 
-Each service runs as a separate Fly app connected via Fly's internal network:
+| Fly app | Role | VM | Scale-to-zero |
+|---|---|---|---|
+| `scrapix-redpanda` | Kafka broker (`*.internal` only) | shared-cpu-2x, 1 GB + 10 GB volume | No — broker must stay up |
+| `scrapix-api` | HTTP API | shared-cpu-1x, 512 MB | Yes — auto-starts on HTTP request |
+| `scrapix-console` | Next.js web UI | shared-cpu-1x, 256 MB | Yes — auto-starts on HTTP request |
+| `scrapix-frontier` | URL frontier singleton | shared-cpu-1x, 256 MB | Yes — woken by API on `POST /crawl` |
+| `scrapix-worker-crawler` | Fetcher worker (Chromium) | shared-cpu-2x, 1 GB | Yes — horizontally scalable |
+| `scrapix-worker-content` | Content parser worker | shared-cpu-1x, 512 MB | Yes — horizontally scalable |
 
-| App | fly.toml | Memory | HTTP? | Description |
-|-----|----------|--------|-------|-------------|
-| `scrapix-api` | `deploy/fly/api/fly.toml` | 512 MB | Yes | API server |
-| `scrapix-frontier` | `deploy/fly/frontier/fly.toml` | 256 MB | No | Frontier service |
-| `scrapix-crawler` | `deploy/fly/crawler/fly.toml` | 512 MB | No | Crawler workers |
-| `scrapix-content` | `deploy/fly/content/fly.toml` | 512 MB | No | Content workers |
-| `scrapix-console` | `deploy/fly/console/fly.toml` | 256 MB | Yes | Web UI |
-| `scrapix-redpanda` | `deploy/fly/redpanda/fly.toml` | 1024 MB | No | Kafka broker |
-| `scrapix-meilisearch` | `deploy/fly/meilisearch/fly.toml` | 1024 MB | No | Search engine |
+External dependencies (unchanged): hosted Meilisearch, ClickHouse Cloud, managed Postgres, managed Redis/Dragonfly.
 
-## Step-by-Step Deployment
+## How scale-to-zero works for workers
 
-### 1. Create Apps
+Fly's proxy only auto-starts a machine when it sees an incoming TCP connection on a declared port. Kafka consumers don't receive incoming traffic, so:
+
+1. Each worker binary binds port `8081` with a bare-TCP wake listener (implemented in the shared `scrapix-lifecycle` crate).
+2. Fly's worker `[[services]]` block declares port 8081 with `auto_stop_machines = "suspend"` and `min_machines_running = 0`.
+3. The API binary, on `POST /crawl`, fires a fire-and-forget TCP connect to each worker at `<app>.internal:8081`. Fly sees the connect → autostarts the suspended machine.
+4. The worker spins up, joins its Kafka consumer group, rebalances partitions, processes messages.
+5. After `IDLE_EXIT_MINUTES` of zero Kafka messages (default 10), the worker exits cleanly with offsets committed. Fly's proxy sees zero connections + no process → suspends the machine.
+
+First-call latency: ~1–3 s from DNS cold. Acceptable for crawl jobs that run for minutes to hours.
+
+## Kafka on Fly
+
+Redpanda runs single-node on Fly with a 10 GB volume. Connectivity between apps uses Fly's private 6PN WireGuard mesh — no public exposure, no TLS/SASL, no add-ons:
+
+```
+KAFKA_BROKERS=scrapix-redpanda.internal:9092
+```
+
+Topic partition counts (created by `deploy/fly/create-topics.sh`) must match `docker-compose.yml` so that worker horizontal scaling works — max useful worker count per service = its topic's partition count.
+
+## CI/CD
+
+`.github/workflows/deploy-fly.yml` runs on every push to `main`:
+
+1. **Change detection** — `dorny/paths-filter` decides whether to rebuild Rust, Console, or both.
+2. **Cargo fmt + check** — fails fast on lint.
+3. **Build** — one matrix job per binary (`scrapix-api`, `scrapix-frontier-service`, `scrapix-worker-crawler`, `scrapix-worker-content`), all sharing the same `Dockerfile.fly` multi-target build and the same GHA cache scope (`scrapix-rust`). Images pushed to `ghcr.io/<owner>/<name>:<sha>` and `:main`.
+4. **Deploy** — one `flyctl deploy --image` job per Fly app, parallel, using the pre-built GHCR image (no Fly builder).
+
+Only secret required: `FLY_API_TOKEN` (org-scoped deploy token). `GITHUB_TOKEN` handles GHCR auth.
+
+## Horizontal scaling
 
 ```bash
-fly apps create scrapix-api
-fly apps create scrapix-frontier
-fly apps create scrapix-crawler
-fly apps create scrapix-content
-fly apps create scrapix-console
-fly apps create scrapix-redpanda
-fly apps create scrapix-meilisearch
+flyctl scale count 6 -a scrapix-worker-crawler   # cap: 12 (partitions on scrapix.urls.frontier)
+flyctl scale count 3 -a scrapix-worker-content   # cap: 6 (partitions on scrapix.pages.raw)
+flyctl scale count 0 -a scrapix-worker-crawler   # back to zero
 ```
 
-### 2. Create Volumes for Stateful Services
+Kafka consumer groups rebalance automatically when machines join or leave. Offset commits are manual (`enable.auto.commit = false`), so the worst-case on scale-down is that in-flight messages get reprocessed by another machine after the 30 s `kill_timeout` window.
 
-```bash
-fly volumes create redpanda_data --size 10 --app scrapix-redpanda --region cdg
-fly volumes create meili_data --size 10 --app scrapix-meilisearch --region cdg
-```
+`scrapix-frontier` is a **singleton** — never scale it beyond 1. The bloom filter is per-process state.
 
-### 3. Set Secrets
+## First deploy
 
-```bash
-# Shared across services
-fly secrets set KAFKA_BROKERS=scrapix-redpanda.internal:9092 --app scrapix-api
-fly secrets set KAFKA_BROKERS=scrapix-redpanda.internal:9092 --app scrapix-frontier
-fly secrets set KAFKA_BROKERS=scrapix-redpanda.internal:9092 --app scrapix-crawler
-fly secrets set KAFKA_BROKERS=scrapix-redpanda.internal:9092 --app scrapix-content
+See `deploy/fly/README.md` for the full runbook. At a high level:
 
-# Meilisearch
-fly secrets set MEILISEARCH_URL=http://scrapix-meilisearch.internal:7700 --app scrapix-api
-fly secrets set MEILISEARCH_URL=http://scrapix-meilisearch.internal:7700 --app scrapix-content
-fly secrets set MEILISEARCH_API_KEY=your-master-key --app scrapix-api
-fly secrets set MEILISEARCH_API_KEY=your-master-key --app scrapix-content
-fly secrets set MEILI_MASTER_KEY=your-master-key --app scrapix-meilisearch
-```
+1. Create the six Fly apps (`flyctl apps create …`).
+2. Create the 10 GB volume for Redpanda.
+3. Deploy Redpanda and run `./deploy/fly/create-topics.sh`.
+4. Set secrets per app (`flyctl secrets set …`).
+5. Push to `main` — CI builds and deploys.
+6. Add custom domains (`flyctl certs add …`) and flip DNS from Heroku.
 
-### 4. Deploy Infrastructure First
+## Environment variables
 
-```bash
-cd deploy/fly/redpanda && fly deploy
-cd deploy/fly/meilisearch && fly deploy
-```
+See `deploy/fly/README.md` for the complete list. The tuning knobs specific to scale-to-zero:
 
-### 5. Deploy Application Services
+| Variable | Apps | Purpose |
+|---|---|---|
+| `WORKER_WAKE_HOSTS` | `scrapix-api` | Comma-separated `host:port` list of workers to wake on `POST /crawl`. Unset = no fan-out (local dev). |
+| `IDLE_EXIT_MINUTES` | workers | Minutes of no Kafka messages before clean exit. `0` disables the watchdog (always-on workloads). |
+| `WAKE_PORT` | workers | Port the bare-TCP wake listener binds to. Default `8081`. |
 
-```bash
-# Build and deploy from repo root
-fly deploy --config deploy/fly/api/fly.toml --dockerfile Dockerfile --build-target scrapix-api
-fly deploy --config deploy/fly/frontier/fly.toml --dockerfile Dockerfile --build-target scrapix-frontier-service
-fly deploy --config deploy/fly/crawler/fly.toml --dockerfile Dockerfile --build-target scrapix-worker-crawler
-fly deploy --config deploy/fly/content/fly.toml --dockerfile Dockerfile --build-target scrapix-worker-content
-fly deploy --config deploy/fly/console/fly.toml --dockerfile console/Dockerfile
-```
+## Rollback
 
-### 6. Verify
+Two paths:
 
-```bash
-fly status --app scrapix-api
-curl https://scrapix-api.fly.dev/health
-```
-
-## Internal Networking
-
-Fly apps in the same organization communicate over the internal network using `.internal` DNS:
-
-- `scrapix-redpanda.internal:9092` — Kafka broker
-- `scrapix-meilisearch.internal:7700` — Meilisearch
-
-No public ports needed for internal services.
-
-## Auto-Scaling
-
-The API and console use Fly's auto-scaling:
-
-```toml
-# deploy/fly/api/fly.toml
-[http_service]
-  auto_stop_machines = "stop"
-  auto_start_machines = true
-  min_machines_running = 0
-  concurrency = 250
-```
-
-Workers (frontier, crawler, content) run as always-on machines since they consume from Kafka continuously.
-
-## Health Checks
-
-```toml
-# API health check
-[http_service.checks]
-  [http_service.checks.health]
-    interval = "10s"
-    timeout = "2s"
-    path = "/health"
-```
-
-## Scaling
-
-```bash
-# Scale crawler workers
-fly scale count 3 --app scrapix-crawler
-
-# Scale machine size
-fly scale vm shared-cpu-2x --app scrapix-crawler
-```
-
-## Cost Estimate
-
-| Component | Machine | Approx. Cost |
-|-----------|---------|-------------|
-| API | shared-cpu-1x, 512MB | $3/mo |
-| Frontier | shared-cpu-1x, 256MB | $2/mo |
-| Crawler (x2) | shared-cpu-1x, 512MB | $6/mo |
-| Content | shared-cpu-1x, 512MB | $3/mo |
-| Redpanda | shared-cpu-2x, 1GB | $7/mo |
-| Meilisearch | shared-cpu-2x, 1GB | $7/mo |
-| **Total** | | **~$28/mo** |
-
-## Limitations
-
-- Fly volumes are single-AZ — no cross-region replication for Redpanda/Meilisearch
-- Shared CPU machines may have noisy-neighbor effects
-- For high throughput, consider dedicated CPU machines (`performance-1x`)
+1. **Redeploy a previous image** — `flyctl releases -a scrapix-api` lists SHAs; `flyctl deploy --image ghcr.io/.../scrapix-api:<prev-sha> -a scrapix-api` rolls back.
+2. **DNS flip** — during the initial cutover window, Heroku stays warm. Revert the A/AAAA records at the registrar and traffic returns to Heroku within the TTL (60 s).

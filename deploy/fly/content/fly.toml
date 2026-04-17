@@ -1,15 +1,22 @@
-app = "scrapix-content"
+# scrapix-worker-content — Kafka consumer that parses HTML into documents.
+# Horizontal scaling: `flyctl scale count N -a scrapix-worker-content`.
+# Max useful N = partition count of scrapix.pages.raw (6).
+
+app = "scrapix-worker-content"
 primary_region = "cdg"
+kill_signal = "SIGTERM"
+kill_timeout = "30s"
 
-[build]
-  dockerfile = "../../../Dockerfile"
-  build-target = "scrapix-worker-content"
+[[services]]
+  protocol = "tcp"
+  internal_port = 8081
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 0
 
-[processes]
-  app = ""
-
-# No HTTP service — this is a Kafka consumer
-# Disable auto-stop so it stays running to consume messages
+  [[services.ports]]
+    port = 8081
+    handlers = []
 
 [[vm]]
   size = "shared-cpu-1x"
@@ -21,3 +28,5 @@ primary_region = "cdg"
   KAFKA_GROUP_ID = "scrapix-content"
   BATCH_SIZE = "2000"
   BATCH_TIMEOUT_SECS = "5"
+  IDLE_EXIT_MINUTES = "10"
+  WAKE_PORT = "8081"

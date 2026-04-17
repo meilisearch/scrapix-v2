@@ -1,0 +1,244 @@
+name: Deploy to Fly.io
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      force_api:
+        description: "Force deploy API"
+        type: boolean
+        default: false
+      force_console:
+        description: "Force deploy Console"
+        type: boolean
+        default: false
+      force_workers:
+        description: "Force deploy workers (frontier + crawler + content)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy-fly-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_OWNER: ${{ github.repository_owner }}
+
+jobs:
+  # ── Change detection ─────────────────────────────────────────────────────
+
+  detect:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      console: ${{ steps.filter.outputs.console }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            rust:
+              - 'crates/**'
+              - 'bins/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'Dockerfile.fly'
+              - 'deploy/fly/**'
+            console:
+              - 'console/**'
+              - 'deploy/fly/console/**'
+
+  # ── Rust build — one multi-target image build per service ────────────────
+
+  check-rust:
+    name: Cargo fmt + check
+    needs: [detect]
+    if: needs.detect.outputs.rust == 'true' || inputs.force_api == true || inputs.force_workers == true
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+      RUSTFLAGS: -Dwarnings
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo check --workspace
+
+  build-rust:
+    name: Build ${{ matrix.target }}
+    needs: [detect, check-rust]
+    if: needs.detect.outputs.rust == 'true' || inputs.force_api == true || inputs.force_workers == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - scrapix-api
+          - scrapix-frontier-service
+          - scrapix-worker-crawler
+          - scrapix-worker-content
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push ${{ matrix.target }}
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.fly
+          target: ${{ matrix.target }}
+          push: true
+          provenance: false
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ matrix.target }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/${{ matrix.target }}:main
+          # Shared cache across all Rust targets — same dependency graph.
+          cache-from: type=gha,scope=scrapix-rust
+          cache-to: type=gha,mode=max,scope=scrapix-rust
+
+  # ── Console build ────────────────────────────────────────────────────────
+
+  build-console:
+    name: Build Console
+    needs: [detect]
+    if: needs.detect.outputs.console == 'true' || inputs.force_console == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push console
+        uses: docker/build-push-action@v7
+        with:
+          context: ./console
+          file: ./console/Dockerfile
+          push: true
+          provenance: false
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/scrapix-console:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/scrapix-console:main
+          cache-from: type=gha,scope=scrapix-console
+          cache-to: type=gha,mode=max,scope=scrapix-console
+
+  # ── Fly deploys — one job per Fly app, all parallel ──────────────────────
+
+  deploy-api:
+    name: Deploy API
+    needs: [build-rust]
+    if: always() && needs.build-rust.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Deploy
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          flyctl deploy \
+            --config deploy/fly/api/fly.toml \
+            --image ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/scrapix-api:${{ github.sha }} \
+            --app scrapix-api \
+            --strategy rolling
+
+  deploy-frontier:
+    name: Deploy Frontier
+    needs: [build-rust]
+    if: always() && needs.build-rust.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Deploy
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          flyctl deploy \
+            --config deploy/fly/frontier/fly.toml \
+            --image ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/scrapix-frontier-service:${{ github.sha }} \
+            --app scrapix-frontier \
+            --strategy immediate
+
+  deploy-worker-crawler:
+    name: Deploy Worker Crawler
+    needs: [build-rust]
+    if: always() && needs.build-rust.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Deploy
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          flyctl deploy \
+            --config deploy/fly/crawler/fly.toml \
+            --image ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/scrapix-worker-crawler:${{ github.sha }} \
+            --app scrapix-worker-crawler \
+            --strategy rolling
+
+  deploy-worker-content:
+    name: Deploy Worker Content
+    needs: [build-rust]
+    if: always() && needs.build-rust.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Deploy
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          flyctl deploy \
+            --config deploy/fly/content/fly.toml \
+            --image ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/scrapix-worker-content:${{ github.sha }} \
+            --app scrapix-worker-content \
+            --strategy rolling
+
+  deploy-console:
+    name: Deploy Console
+    needs: [build-console]
+    if: always() && needs.build-console.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Deploy
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          flyctl deploy \
+            --config deploy/fly/console/fly.toml \
+            --image ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/scrapix-console:${{ github.sha }} \
+            --app scrapix-console \
+            --strategy rolling
