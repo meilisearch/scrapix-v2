@@ -28,23 +28,10 @@ impl From<scrapix_billing::BillingError> for ApiError {
 // Trait implementations for scrapix-billing
 // ============================================================================
 
-/// Implements [`scrapix_billing::PaymentProvider`] by delegating to the Stripe
-/// `charge_auto_topup` function in `crate::stripe`.
-pub(crate) struct StripePaymentProvider<'a> {
-    pub client: &'a stripe::Client,
-}
-
-#[async_trait::async_trait]
-impl scrapix_billing::PaymentProvider for StripePaymentProvider<'_> {
-    async fn charge_auto_topup(
-        &self,
-        pool: &sqlx::PgPool,
-        account_id: uuid::Uuid,
-        credits: i64,
-    ) -> Result<String, String> {
-        crate::stripe::charge_auto_topup(self.client, pool, account_id, credits).await
-    }
-}
+// NOTE: There is intentionally no `PaymentProvider` implementation here. After
+// the Hyperline migration, auto-recharge is handled by Hyperline wallet
+// rules — we no longer charge payment methods from our own process. Callers
+// of `check_credits_and_deduct` pass `None` for the provider.
 
 /// Implements [`scrapix_billing::BillingNotifier`] by sending emails via the
 /// Resend-backed `EmailClient`.
@@ -111,25 +98,22 @@ pub(crate) async fn check_credits_and_deduct(
     operation: &str,
     description: &str,
     email_client: Option<&EmailClient>,
-    stripe_client: Option<&stripe::Client>,
 ) -> Result<i64, ApiError> {
     let notifier = email_client.map(|ec| EmailBillingNotifier { email_client: ec });
     let notifier_ref: Option<&dyn scrapix_billing::BillingNotifier> = notifier
         .as_ref()
         .map(|n| n as &dyn scrapix_billing::BillingNotifier);
 
-    let provider = stripe_client.map(|client| StripePaymentProvider { client });
-    let provider_ref: Option<&dyn scrapix_billing::PaymentProvider> = provider
-        .as_ref()
-        .map(|p| p as &dyn scrapix_billing::PaymentProvider);
-
+    // Post-Hyperline-migration: no local payment provider. If the local
+    // ledger runs out, Hyperline wallet auto-recharge is what tops it back
+    // up (via a `wallet.credited` webhook → ledger credit).
     let new_balance = scrapix_billing::auto_topup::check_credits_and_deduct(
         pool,
         account_id,
         amount,
         operation,
         description,
-        provider_ref,
+        None,
         notifier_ref,
     )
     .await?;

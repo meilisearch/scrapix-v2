@@ -51,8 +51,10 @@ pub mod hyperline;
 pub mod jobs_db;
 pub mod mcp;
 pub mod openapi;
+// NOTE: `mod stripe;` was removed during the Hyperline migration. All
+// payment-processor plumbing now lives in `scrapix_billing_hyperline` and
+// the thin webhook handler in `hyperline.rs`.
 pub mod rate_limit;
-pub mod stripe;
 
 use axum::{
     extract::{
@@ -131,14 +133,6 @@ pub struct Args {
     /// Redis URL for rate limiting (optional, disables rate limiting if not set)
     #[arg(long, env = "REDIS_URL")]
     pub redis_url: Option<String>,
-
-    /// Stripe secret key (enables payment processing)
-    #[arg(long, env = "STRIPE_SECRET_KEY")]
-    pub stripe_secret_key: Option<String>,
-
-    /// Stripe webhook signing secret (for verifying webhook events)
-    #[arg(long, env = "STRIPE_WEBHOOK_SECRET")]
-    pub stripe_webhook_secret: Option<String>,
 
     /// Resend API key for transactional emails (optional, disables emails if not set)
     #[arg(long, env = "RESEND_API_KEY")]
@@ -230,8 +224,6 @@ struct AppState {
     db_pool: Option<sqlx::PgPool>,
     /// Optional email client for transactional emails
     email_client: Option<email::EmailClient>,
-    /// Optional Stripe client for payment-backed auto-topup
-    stripe_client: Option<::stripe::Client>,
     /// Optional ClickHouse analytics store (used for event history queries)
     analytics_store: Option<Arc<analytics::AnalyticsState>>,
 }
@@ -255,7 +247,6 @@ impl AppState {
         ai_service: Option<Arc<AiService>>,
         db_pool: Option<sqlx::PgPool>,
         email_client: Option<email::EmailClient>,
-        stripe_client: Option<::stripe::Client>,
         analytics_store: Option<Arc<analytics::AnalyticsState>>,
     ) -> Self {
         let (event_tx, _) = broadcast::channel(10_000);
@@ -284,7 +275,6 @@ impl AppState {
             ai_service,
             db_pool,
             email_client,
-            stripe_client,
             analytics_store,
         }
     }
@@ -646,7 +636,6 @@ impl AppState {
                         let pool = pool.clone();
                         let acct_id = acct_id.clone();
                         let job_id = job_id.to_string();
-                        let stripe_cl = self.stripe_client.clone();
                         tokio::spawn(async move {
                             match billing::check_credits_and_deduct(
                                 &pool,
@@ -658,7 +647,6 @@ impl AppState {
                                     job_id, total_pages, cost_per_page
                                 ),
                                 None,
-                                stripe_cl.as_ref(),
                             )
                             .await
                             {
@@ -2082,7 +2070,6 @@ async fn scrape_url(
             "scrape",
             &format!("{} ({} credits)", final_url, scrape_cost),
             None,
-            state.stripe_client.as_ref(),
         )
         .await
         {
@@ -3227,7 +3214,6 @@ async fn map_url(
             "map",
             &request.url,
             None,
-            state.stripe_client.as_ref(),
         )
         .await
         {
@@ -3457,7 +3443,6 @@ async fn search_url(
             "search",
             &format!("{} q={}", request.url, request.q),
             None,
-            state.stripe_client.as_ref(),
         )
         .await
         {
@@ -4618,7 +4603,6 @@ pub async fn run_with_bus(
     };
     let db_pool = auth_state.as_ref().map(|a| a.pool.clone());
     let email_client = auth_state.as_ref().and_then(|a| a.email_client.clone());
-    let stripe_client = args.stripe_secret_key.as_ref().map(::stripe::Client::new);
     let state = Arc::new(AppState::new(
         producer,
         config,
@@ -4631,7 +4615,6 @@ pub async fn run_with_bus(
         ai_service,
         db_pool,
         email_client,
-        stripe_client,
         analytics_state.clone(),
     ));
 
@@ -5181,23 +5164,6 @@ pub async fn run_with_bus(
             app = app.merge(social);
         }
         info!("Auth routes enabled (/auth/signup, /auth/login, /auth/me, /account/*, /oauth/*)");
-
-        // Stripe payment routes
-        if let Some(ref stripe_key) = args.stripe_secret_key {
-            let stripe_state =
-                stripe::StripeState::new(stripe_key, args.stripe_webhook_secret.clone());
-            app = app
-                .merge(stripe::stripe_session_routes(
-                    auth.clone(),
-                    stripe_state.clone(),
-                ))
-                .merge(stripe::stripe_webhook_route(
-                    auth.pool.clone(),
-                    stripe_state,
-                    auth.email_client.clone(),
-                ));
-            info!("Stripe routes enabled (/account/billing/setup-intent, /account/billing/payment-methods, /account/billing/purchase, /webhooks/stripe)");
-        }
 
         // Hyperline webhook receiver.
         // Enabled whenever HYPERLINE_WEBHOOK_SECRET is set — independent of

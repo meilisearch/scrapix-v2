@@ -87,8 +87,8 @@ rmcp-openapi = "0.25"
 # Cron scheduling
 croner = "3"
 
-# Stripe payments
-async-stripe = { version = "0.38", default-features = false, features = ["runtime-tokio-hyper", "checkout", "billing", "connect", "webhook-events"] }
+# Stripe integration was removed during the Hyperline migration — all
+# payment-processor calls now go through scrapix-billing-hyperline.
 hmac = "0.12"
 
 # OpenAPI
