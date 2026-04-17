@@ -47,6 +47,7 @@ pub mod configs;
 pub mod email;
 pub mod email_scheduler;
 pub mod engines;
+pub mod hyperline;
 pub mod jobs_db;
 pub mod mcp;
 pub mod openapi;
@@ -5196,6 +5197,15 @@ pub async fn run_with_bus(
                     auth.email_client.clone(),
                 ));
             info!("Stripe routes enabled (/account/billing/setup-intent, /account/billing/payment-methods, /account/billing/purchase, /webhooks/stripe)");
+        }
+
+        // Hyperline webhook receiver.
+        // Enabled whenever HYPERLINE_WEBHOOK_SECRET is set — independent of
+        // the ingest-side `HYPERLINE_API_KEY`, since you can verify incoming
+        // deliveries in one env without egressing events from it.
+        if let Ok(secret) = std::env::var("HYPERLINE_WEBHOOK_SECRET") {
+            app = app.merge(hyperline::webhook_route(auth.pool.clone(), secret));
+            info!("Hyperline webhook route enabled (/webhooks/hyperline)");
         }
 
         // MCP HTTP endpoint with Bearer token auth
