@@ -310,7 +310,118 @@ async fn dispatch_event(
             }
         }
         "invoice.settled" | "invoice.errored" => {
-            info!(event_type = %envelope.event_type, "hyperline: invoice event (transaction history sync is TODO)");
+            // Record the invoice event as an informational row in the
+            // transactions ledger with amount = 0 — the actual credit
+            // change rides in a separate wallet.credited event. This
+            // gives the console a unified activity feed ("paid invoice
+            // #abc for $X" next to "+1000 credits").
+            let event_id = envelope
+                .data
+                .get("object")
+                .and_then(|o| o.get("id"))
+                .and_then(|v| v.as_str());
+            let customer_id = envelope
+                .data
+                .get("object")
+                .and_then(|o| o.get("customer_id"))
+                .and_then(|v| v.as_str());
+            // `amount` is in the processor's minor unit (cents). Stored
+            // in `metadata.processor_amount` so the UI can render "$X"
+            // without touching `transactions.amount` (which is a credit
+            // delta, not a currency amount).
+            let processor_amount = envelope
+                .data
+                .get("object")
+                .and_then(|o| o.get("amount"))
+                .and_then(|v| v.as_i64());
+            let currency = envelope
+                .data
+                .get("object")
+                .and_then(|o| o.get("currency"))
+                .and_then(|v| v.as_str());
+
+            let (Some(event_id), Some(cust)) = (event_id, customer_id) else {
+                warn!(
+                    event_type = %envelope.event_type,
+                    has_id = event_id.is_some(),
+                    has_customer = customer_id.is_some(),
+                    "hyperline: invoice event missing id/customer — acking without write"
+                );
+                return Ok(());
+            };
+
+            // Idempotency: same (provider, event_id) means we already
+            // logged this invoice event. Short-circuit.
+            let exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS( \
+                   SELECT 1 FROM transactions \
+                   WHERE metadata->>'provider' = $1 \
+                     AND metadata->>'provider_event_id' = $2 \
+                 )",
+            )
+            .bind("hyperline")
+            .bind(event_id)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| format!("invoice dedupe check: {e}"))?;
+            if exists {
+                info!(
+                    event_type = %envelope.event_type,
+                    event_id = %event_id,
+                    "hyperline: invoice event already logged — skipping"
+                );
+                return Ok(());
+            }
+
+            let maybe_account: Option<(uuid::Uuid, i64)> = sqlx::query_as(
+                "SELECT id, credits_balance FROM accounts WHERE hyperline_customer_id = $1",
+            )
+            .bind(cust)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| format!("account lookup: {e}"))?;
+
+            let Some((account_id, balance_after)) = maybe_account else {
+                warn!(
+                    event_type = %envelope.event_type,
+                    customer_id = %cust,
+                    "hyperline: invoice event for unknown customer — acking"
+                );
+                return Ok(());
+            };
+
+            let tx_type = if envelope.event_type == "invoice.settled" {
+                "invoice_settled"
+            } else {
+                "invoice_errored"
+            };
+            let description = format!("Hyperline invoice {}", envelope.event_type);
+            let metadata = serde_json::json!({
+                "provider": "hyperline",
+                "provider_event_id": event_id,
+                "processor_amount": processor_amount,
+                "currency": currency,
+            });
+
+            sqlx::query(
+                "INSERT INTO transactions (account_id, type, amount, balance_after, description, metadata) \
+                 VALUES ($1, $2, 0, $3, $4, $5)",
+            )
+            .bind(account_id)
+            .bind(tx_type)
+            .bind(balance_after)
+            .bind(&description)
+            .bind(metadata)
+            .execute(pool)
+            .await
+            .map_err(|e| format!("insert invoice transaction: {e}"))?;
+
+            info!(
+                account_id = %account_id,
+                event_id = %event_id,
+                tx_type,
+                "hyperline: invoice event recorded in transactions"
+            );
         }
         "payment_method.errored" | "payment_method.expired" => {
             info!(event_type = %envelope.event_type, "hyperline: payment method issue (flag account is TODO)");
