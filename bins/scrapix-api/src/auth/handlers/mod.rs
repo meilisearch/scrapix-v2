@@ -90,12 +90,16 @@ pub(crate) struct CreatedApiKeyResponse {
 #[derive(Serialize, utoipa::ToSchema)]
 pub(crate) struct BillingResponse {
     pub(super) tier: String,
-    pub(super) stripe_customer_id: Option<String>,
     pub(super) credits_balance: i64,
-    pub(super) auto_topup_enabled: bool,
-    pub(super) auto_topup_amount: i64,
-    pub(super) auto_topup_threshold: i64,
     pub(super) monthly_spend_limit: Option<i64>,
+    /// Hyperline customer handle (null until the account has been linked
+    /// via the post-signup provisioning script).
+    pub(super) hyperline_customer_id: Option<String>,
+    /// Hyperline wallet handle (null until provisioned).
+    pub(super) hyperline_wallet_id: Option<String>,
+    // NOTE: `auto_topup_*` and `stripe_customer_id` fields were removed
+    // during the Hyperline migration — auto-recharge is now configured on
+    // the Hyperline wallet and surfaced through the hosted billing portal.
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -108,7 +112,11 @@ pub struct TopupRequest {
     pub(super) amount: i64,
 }
 
+/// Retained for OpenAPI back-compat — the endpoint now returns 410 Gone
+/// and redirects to the Hyperline hosted portal, but we still accept the
+/// body so old frontend builds don't crash on parsing the spec.
 #[derive(Deserialize, utoipa::ToSchema)]
+#[allow(dead_code)]
 pub struct AutoTopupRequest {
     pub(super) enabled: bool,
     pub(super) amount: Option<i64>,

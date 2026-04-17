@@ -32,9 +32,13 @@ pub(crate) async fn get_billing(
         .await
         .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
 
+    // Balance-source-of-truth is still the local ledger (hot path). The
+    // Hyperline handles are returned so the console can deep-link to the
+    // hosted portal; a live wallet-balance read is a follow-up once the
+    // reconcile worker is in place.
     let row = sqlx::query(
-        "SELECT tier, stripe_customer_id, credits_balance, \
-         auto_topup_enabled, auto_topup_amount, auto_topup_threshold, monthly_spend_limit \
+        "SELECT tier, credits_balance, monthly_spend_limit, \
+         hyperline_customer_id, hyperline_wallet_id \
          FROM accounts WHERE id = $1",
     )
     .bind(account_id)
@@ -51,12 +55,10 @@ pub(crate) async fn get_billing(
 
     Ok(Json(BillingResponse {
         tier: row.get("tier"),
-        stripe_customer_id: row.get("stripe_customer_id"),
         credits_balance: row.get("credits_balance"),
-        auto_topup_enabled: row.get("auto_topup_enabled"),
-        auto_topup_amount: row.get("auto_topup_amount"),
-        auto_topup_threshold: row.get("auto_topup_threshold"),
         monthly_spend_limit: row.get("monthly_spend_limit"),
+        hyperline_customer_id: row.get("hyperline_customer_id"),
+        hyperline_wallet_id: row.get("hyperline_wallet_id"),
     }))
 }
 
@@ -215,63 +217,24 @@ pub(crate) async fn topup_credits(
     tag = "auth",
     request_body = AutoTopupRequest,
     responses(
-        (status = 200, description = "Auto top-up settings updated", body = MessageResponse),
-        (status = 400, description = "Validation error", body = ErrorBody),
-        (status = 404, description = "Account not found", body = ErrorBody),
+        (status = 410, description = "Moved to Hyperline hosted portal", body = ErrorBody),
     ),
     security(("api_key" = []))
 )]
+/// Auto top-up moved to Hyperline wallet rules — this endpoint is a stub
+/// that returns 410 Gone so the frontend knows to redirect to the hosted
+/// portal instead of POSTing here.
 pub(crate) async fn update_auto_topup(
-    State(state): State<Arc<AuthState>>,
-    Extension(user): Extension<AuthenticatedUser>,
-    Json(req): Json<AutoTopupRequest>,
+    State(_state): State<Arc<AuthState>>,
+    Extension(_user): Extension<AuthenticatedUser>,
+    Json(_req): Json<AutoTopupRequest>,
 ) -> Result<Json<MessageResponse>, ApiError> {
-    let account_id = get_user_account_id(&state.pool, user.user_id, user.selected_account_id)
-        .await
-        .map_err(|_| err(StatusCode::NOT_FOUND, "Account not found", "not_found"))?;
-
-    if req.enabled {
-        let amount = req.amount.unwrap_or(5000);
-        let threshold = req.threshold.unwrap_or(500);
-        if amount <= 0 || threshold < 0 {
-            return Err(err(
-                StatusCode::BAD_REQUEST,
-                "Amount must be positive and threshold non-negative",
-                "validation_error",
-            ));
-        }
-        sqlx::query(
-            "UPDATE accounts SET auto_topup_enabled = true, auto_topup_amount = $1, auto_topup_threshold = $2 WHERE id = $3",
-        )
-        .bind(amount)
-        .bind(threshold)
-        .bind(account_id)
-        .execute(&state.pool)
-        .await
-        .map_err(|_| {
-            err(StatusCode::INTERNAL_SERVER_ERROR, "Failed to update", "internal_error")
-        })?;
-    } else {
-        sqlx::query("UPDATE accounts SET auto_topup_enabled = false WHERE id = $1")
-            .bind(account_id)
-            .execute(&state.pool)
-            .await
-            .map_err(|_| {
-                err(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "Failed to update",
-                    "internal_error",
-                )
-            })?;
-    }
-
-    Ok(Json(MessageResponse {
-        message: if req.enabled {
-            "Auto top-up enabled".to_string()
-        } else {
-            "Auto top-up disabled".to_string()
-        },
-    }))
+    Err(err(
+        StatusCode::GONE,
+        "Auto top-up is now configured on the Hyperline hosted portal. \
+         Use GET /account/billing/portal to obtain a portal session.",
+        "moved_to_hyperline",
+    ))
 }
 
 #[utoipa::path(
