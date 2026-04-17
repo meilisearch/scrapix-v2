@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, Suspense } from "react";
+import { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
@@ -40,10 +40,8 @@ function IndexesPageInner() {
     queryFn: fetchEngines,
   });
 
-  const defaultEngine = useMemo(() => {
-    if (!engines || engines.length === 0) return null;
-    return engines.find((e) => e.is_default) ?? engines[0];
-  }, [engines]);
+  const defaultEngine =
+    engines?.find((e) => e.is_default) ?? engines?.[0] ?? null;
 
   const engineId = defaultEngine?.id;
 
@@ -53,30 +51,31 @@ function IndexesPageInner() {
     enabled: !!engineId,
   });
 
-  const [selectedIndex, setSelectedIndex] = useState<string>("");
   const [comboOpen, setComboOpen] = useState(false);
 
-  // Initialise from ?uid= or fall back to first index
-  useEffect(() => {
-    if (indexes.length === 0) {
-      setSelectedIndex("");
-      return;
-    }
-    if (selectedIndex && indexes.some((i) => i.uid === selectedIndex)) return;
-    const fromParam = uidParam && indexes.find((i) => i.uid === uidParam);
-    setSelectedIndex(fromParam ? uidParam : indexes[0].uid);
-  }, [indexes, uidParam, selectedIndex]);
+  // URL (?uid=) is the source of truth. Derive the selected index each render.
+  const selectedIndex =
+    indexes.find((i) => i.uid === uidParam)?.uid ?? indexes[0]?.uid ?? "";
 
-  // Keep URL in sync with selection
+  // Sync the URL to the derived selection when indexes have finished loading
+  // and either ?uid= is missing or doesn't match any known index. This avoids
+  // the page rendering with a stale/invalid ?uid= and populates ?uid= on first visit.
   useEffect(() => {
-    if (!selectedIndex) return;
-    if (uidParam === selectedIndex) return;
-    router.replace(`/dashboard/indexes?uid=${encodeURIComponent(selectedIndex)}`);
-  }, [selectedIndex, uidParam, router]);
+    if (indexesLoading) return;
+    if (indexes.length === 0) return;
+    const uidMatches = indexes.some((i) => i.uid === uidParam);
+    if (!uidParam || !uidMatches) {
+      router.replace(
+        `/dashboard/indexes?uid=${encodeURIComponent(selectedIndex)}`,
+        { scroll: false }
+      );
+    }
+  }, [indexesLoading, indexes, uidParam, selectedIndex, router]);
 
   if (enginesLoading || (engineId && indexesLoading)) {
     return (
       <div className="max-w-3xl mx-auto space-y-6 pt-8">
+        {defaultEngine && <Header engine={defaultEngine} />}
         <Skeleton className="h-8 w-64" />
         <Skeleton className="h-12 w-full" />
         <Skeleton className="h-24 w-full" />
@@ -155,8 +154,11 @@ function IndexesPageInner() {
                   <CommandItem
                     key={idx.uid}
                     value={idx.uid}
-                    onSelect={(value) => {
-                      setSelectedIndex(value);
+                    onSelect={() => {
+                      router.replace(
+                        `/dashboard/indexes?uid=${encodeURIComponent(idx.uid)}`,
+                        { scroll: false }
+                      );
                       setComboOpen(false);
                     }}
                   >
