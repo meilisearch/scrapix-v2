@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, Suspense } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
@@ -30,7 +30,7 @@ import { fetchEngines, fetchEngineIndexes } from "@/lib/api";
 import { IndexSearchPreview } from "@/components/index-search-preview";
 import { cn } from "@/lib/utils";
 
-export default function IndexesPage() {
+function IndexesPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const uidParam = searchParams.get("uid") ?? "";
@@ -200,5 +200,13 @@ function Header({
         {engine.name} · {engine.url}
       </p>
     </div>
+  );
+}
+
+export default function IndexesPage() {
+  return (
+    <Suspense>
+      <IndexesPageInner />
+    </Suspense>
   );
 }
