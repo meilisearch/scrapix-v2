@@ -334,6 +334,58 @@ pub struct FeaturesConfig {
     /// AI-powered summarization
     #[serde(default)]
     pub ai_summary: Option<FeatureToggle>,
+
+    /// PDF scraping (opt-in). When enabled, the crawler fetches
+    /// `application/pdf` responses, extracts text + metadata, and indexes
+    /// them alongside HTML pages. Disabled by default.
+    #[serde(default)]
+    pub pdf: Option<PdfConfig>,
+}
+
+impl FeaturesConfig {
+    /// Returns true when PDF scraping is enabled for this crawl.
+    pub fn is_pdf_enabled(&self) -> bool {
+        self.pdf.as_ref().is_some_and(|c| c.enabled)
+    }
+
+    /// Returns the max PDF body size in bytes, if set.
+    pub fn pdf_max_size_bytes(&self) -> Option<u64> {
+        self.pdf
+            .as_ref()
+            .and_then(|c| c.max_size_mb)
+            .map(|mb| mb.saturating_mul(1024 * 1024))
+    }
+}
+
+/// Opt-in configuration for PDF scraping.
+///
+/// When `enabled = true`, PDFs are fetched (with base64-encoded transport
+/// through the content worker), parsed for text + metadata, and indexed into
+/// the same Meilisearch index. All other fields default to conservative values.
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct PdfConfig {
+    /// Whether PDF scraping is enabled.
+    pub enabled: bool,
+
+    /// Maximum PDF size in megabytes. PDFs larger than this are rejected.
+    /// When `None`, the global fetcher `max_body_size` applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_size_mb: Option<u64>,
+
+    /// Reserved flag for extracting URLs embedded inside PDF text.
+    /// Currently a no-op; will be wired up in a follow-up issue.
+    #[serde(default)]
+    pub extract_links: bool,
+}
+
+impl Default for PdfConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_size_mb: Some(50),
+            extract_links: false,
+        }
+    }
 }
 
 impl FeaturesConfig {
@@ -406,6 +458,7 @@ impl FeaturesConfig {
             } else {
                 None
             },
+            pdf: None,
         }
     }
 

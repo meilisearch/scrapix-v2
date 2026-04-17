@@ -49,6 +49,9 @@ fantoccini = { workspace = true, optional = true }
 # Utilities
 chrono = { workspace = true }
 parking_lot = { workspace = true }
+# Base64 encoding for binary payloads (PDFs) through the Kafka
+# RawPageMessage.html string without a schema change.
+base64 = { workspace = true }
 
 # Tracing
 tracing = { workspace = true }
