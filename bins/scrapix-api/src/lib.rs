@@ -4656,7 +4656,11 @@ pub async fn run_with_bus(
     // Spawn the Hyperline outbox drain worker when configured. Silent no-op
     // otherwise — the enqueue side still writes outbox rows, so turning
     // HYPERLINE_API_KEY on later replays any backlog on the next boot.
-    let hyperline_drain_handle = match (
+    //
+    // The reconcile scan worker shares the same (pool, client) and spins
+    // up alongside — it periodically pairs local credits with live
+    // Hyperline balance for shadow-mode observability (SCR-68 Phase 1).
+    let (hyperline_drain_handle, hyperline_reconcile_handle) = match (
         state.db_pool.clone(),
         scrapix_billing_hyperline::HyperlineClient::from_env(),
     ) {
@@ -4665,20 +4669,31 @@ pub async fn run_with_bus(
                 sandbox = client.config().is_sandbox(),
                 "Hyperline outbox drain worker starting (interval=5s, batch=100)"
             );
-            Some(scrapix_billing_hyperline::outbox::spawn_drain_worker(
-                pool,
-                client,
+            let drain = scrapix_billing_hyperline::outbox::spawn_drain_worker(
+                pool.clone(),
+                client.clone(),
                 std::time::Duration::from_secs(5),
                 100,
-            ))
+            );
+            // Reconcile interval is intentionally long: scan every 15 min.
+            // Hyperline is authoritative via webhooks on the millisecond
+            // scale; this worker is a drift backstop, not the primary
+            // sync path, so a tight loop would burn API quota for no gain.
+            info!("Hyperline reconcile scan worker starting (interval=15m)");
+            let reconcile = scrapix_billing_hyperline::reconcile::spawn_scan_worker(
+                pool,
+                client,
+                std::time::Duration::from_secs(15 * 60),
+            );
+            (Some(drain), Some(reconcile))
         }
         (None, _) => {
-            info!("Hyperline drain worker disabled: no DB pool");
-            None
+            info!("Hyperline workers disabled: no DB pool");
+            (None, None)
         }
         (_, Err(e)) => {
-            info!(reason = %e, "Hyperline drain worker disabled: client not configured");
-            None
+            info!(reason = %e, "Hyperline workers disabled: client not configured");
+            (None, None)
         }
     };
 
@@ -5381,6 +5396,9 @@ pub async fn run_with_bus(
         handle.abort();
     }
     if let Some(handle) = hyperline_drain_handle {
+        handle.abort();
+    }
+    if let Some(handle) = hyperline_reconcile_handle {
         handle.abort();
     }
     info!("Shutdown complete");
