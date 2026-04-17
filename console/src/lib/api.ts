@@ -247,10 +247,6 @@ export async function fetchEngines(): Promise<MeilisearchEngine[]> {
   return request("/engines");
 }
 
-export async function fetchEngine(id: string): Promise<MeilisearchEngine> {
-  return request(`/engines/${encodeURIComponent(id)}`);
-}
-
 export async function createEngine(req: CreateEngineRequest): Promise<MeilisearchEngine> {
   return request("/engines", {
     method: "POST",
@@ -264,23 +260,6 @@ export async function updateEngine(id: string, req: UpdateEngineRequest): Promis
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
-  });
-}
-
-export async function deleteEngine(id: string): Promise<void> {
-  const headers: Record<string, string> = {};
-  const accountId = useAccountStore.getState().selectedAccountId;
-  if (accountId) headers["X-Account-Id"] = accountId;
-  await fetch(`${BASE}/engines/${encodeURIComponent(id)}`, {
-    method: "DELETE",
-    credentials: "include",
-    headers,
-  });
-}
-
-export async function setDefaultEngine(id: string): Promise<MeilisearchEngine> {
-  return request(`/engines/${encodeURIComponent(id)}/default`, {
-    method: "POST",
   });
 }
 

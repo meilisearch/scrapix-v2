@@ -96,7 +96,7 @@ function IndexesPageInner() {
             Connect a Meilisearch engine to browse and search indexed content.
           </p>
           <Button asChild>
-            <Link href="/dashboard/engines">Go to Engines</Link>
+            <Link href="/dashboard/settings">Go to Settings</Link>
           </Button>
         </div>
       </div>
