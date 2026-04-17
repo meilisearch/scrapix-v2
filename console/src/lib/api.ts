@@ -26,11 +26,7 @@ import type {
   TopDomainRow,
   BillingInfo,
   TransactionsListResponse,
-  TopupResponse,
-  SetupIntentResponse,
-  PaymentMethodInfo,
-  PurchaseResponse,
-  InvoiceInfo,
+  PortalResponse,
   AccountListItem,
   MemberInfo,
   InviteInfo,
@@ -370,26 +366,6 @@ export async function fetchBilling(): Promise<BillingInfo> {
   return request("/account/billing");
 }
 
-export async function topupCredits(amount: number): Promise<TopupResponse> {
-  return request("/account/billing/topup", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ amount }),
-  });
-}
-
-export async function updateAutoTopup(config: {
-  enabled: boolean;
-  amount?: number;
-  threshold?: number;
-}): Promise<void> {
-  await request("/account/billing/auto-topup", {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(config),
-  });
-}
-
 export async function updateSpendLimit(monthly_spend_limit: number | null): Promise<void> {
   await request("/account/billing/spend-limit", {
     method: "PATCH",
@@ -403,39 +379,23 @@ export async function fetchTransactions(limit: number = 50, offset: number = 0):
 }
 
 // ============================================================================
-// Stripe / Payment Methods
+// Hyperline hosted portal
 // ============================================================================
 
-export async function createSetupIntent(): Promise<SetupIntentResponse> {
-  return request("/account/billing/setup-intent", { method: "POST" });
-}
-
-export async function fetchPaymentMethods(): Promise<PaymentMethodInfo[]> {
-  return request("/account/billing/payment-methods");
-}
-
-export async function deletePaymentMethod(id: string): Promise<void> {
-  await request(`/account/billing/payment-methods/${id}`, { method: "DELETE" });
-}
-
-export async function setDefaultPaymentMethod(paymentMethodId: string): Promise<void> {
-  await request("/account/billing/default-payment-method", {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ payment_method_id: paymentMethodId }),
-  });
-}
-
-export async function purchaseCredits(credits: number, paymentMethodId?: string): Promise<PurchaseResponse> {
-  return request("/account/billing/purchase", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ credits, payment_method_id: paymentMethodId }),
-  });
-}
-
-export async function fetchInvoices(): Promise<InvoiceInfo[]> {
-  return request("/account/billing/invoices");
+// Card management, invoice history, auto-recharge configuration, and
+// one-off top-ups all live on the Hyperline hosted portal. The console
+// exchanges for the portal URL via this endpoint, then redirects.
+//
+// Replaces the pre-Hyperline set of endpoints:
+//   - POST /account/billing/topup          (one-off top-up)
+//   - PATCH /account/billing/auto-topup    (auto-recharge config)
+//   - POST /account/billing/setup-intent   (add payment method UI)
+//   - GET /account/billing/payment-methods (list cards)
+//   - DELETE /account/billing/payment-methods/:id (remove card)
+//   - POST /account/billing/purchase       (charge + credit)
+//   - GET /account/billing/invoices        (history)
+export async function fetchBillingPortal(): Promise<PortalResponse> {
+  return request("/account/billing/portal");
 }
 
 // ============================================================================

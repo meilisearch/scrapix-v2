@@ -81,9 +81,11 @@ export default function PrivacyPolicyPage() {
 
         <h3>3.3 Payment Data</h3>
         <p>
-          Payment processing is handled by Stripe, Inc. We do not store credit
-          card numbers or bank account details. We retain your Stripe customer
-          ID and payment method identifiers for billing purposes.
+          Billing is handled by our billing provider Hyperline, which uses
+          Stripe, Inc. as its downstream payment processor. We do not store
+          credit card numbers or bank account details. We retain the billing
+          provider&apos;s customer and wallet identifiers for billing
+          purposes.
         </p>
 
         <h3>3.4 Technical Data</h3>
@@ -163,9 +165,10 @@ export default function PrivacyPolicyPage() {
         <ul>
           <li>
             <strong className="text-zinc-200">Service providers</strong> —
-            Stripe (payment processing), Resend (transactional emails),
-            Heroku/cloud infrastructure providers (hosting). These processors
-            act on our instructions and are bound by data processing agreements.
+            Hyperline (billing) with Stripe as its downstream payment
+            processor, Resend (transactional emails), Heroku/cloud
+            infrastructure providers (hosting). These processors act on
+            our instructions and are bound by data processing agreements.
           </li>
           <li>
             <strong className="text-zinc-200">Affiliates</strong> — companies

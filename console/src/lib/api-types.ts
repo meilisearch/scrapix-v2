@@ -268,12 +268,20 @@ export interface MapResult {
 
 export interface BillingInfo {
   tier: string;
-  stripe_customer_id: string | null;
   credits_balance: number;
-  auto_topup_enabled: boolean;
-  auto_topup_amount: number;
-  auto_topup_threshold: number;
   monthly_spend_limit: number | null;
+  // Hyperline handles — present once the account is linked via the
+  // post-signup provisioning path.
+  hyperline_customer_id: string | null;
+  hyperline_wallet_id: string | null;
+  // Live Hyperline wallet balance in the smallest currency unit (cents
+  // for USD). Null when the account isn't linked yet or the live read
+  // failed; the UI should fall back to `credits_balance` in that case.
+  hyperline_wallet_balance: number | null;
+  hyperline_wallet_currency: string | null;
+  // Set by the Hyperline payment_method.* webhooks. Drives the
+  // "update your card" banner.
+  payment_method_status: "errored" | "expired" | null;
 }
 
 export interface Transaction {
@@ -290,52 +298,15 @@ export interface TransactionsListResponse {
   total: number;
 }
 
-export interface TopupResponse {
-  credits_balance: number;
-  transaction_id: string;
-  message: string;
-}
-
 // ============================================================================
-// Stripe / Payment Methods
+// Hyperline hosted portal
 // ============================================================================
 
-export interface SetupIntentResponse {
-  client_secret: string;
-}
-
-export interface PaymentMethodInfo {
-  id: string;
-  brand: string | null;
-  last4: string | null;
-  exp_month: number | null;
-  exp_year: number | null;
-  is_default: boolean;
-}
-
-export interface PurchaseCreditsRequest {
-  credits: number;
-  payment_method_id?: string;
-}
-
-export interface PurchaseResponse {
-  status: "succeeded" | "requires_action";
-  client_secret: string | null;
-  credits: number;
-  amount_cents: number;
-  message: string;
-}
-
-export interface InvoiceInfo {
-  id: string;
-  number: string | null;
-  amount_cents: number;
-  credits: number | null;
-  status: string;
-  description: string | null;
-  created_at: string;
-  invoice_pdf: string | null;
-  hosted_invoice_url: string | null;
+/// Response from `GET /account/billing/portal`. Redirect the user to this
+/// URL to let them manage cards, invoices, and auto-recharge on the
+/// Hyperline hosted portal.
+export interface PortalResponse {
+  url: string;
 }
 
 // ============================================================================
