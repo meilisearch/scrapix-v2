@@ -1,74 +1,61 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useState, useCallback, useRef, useEffect, type ReactNode } from "react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  ArrowLeft,
   Search,
   Globe,
   Clock,
   ExternalLink,
-  Database,
   ChevronLeft,
   ChevronRight,
   Loader2,
 } from "lucide-react";
-import { fetchEngine, fetchEngineIndexes, searchEngineIndex } from "@/lib/api";
-import type {
-  MeilisearchEngine,
-  MeilisearchIndex,
-  MeilisearchHit,
-  MeilisearchSearchResponse,
-} from "@/lib/api-types";
+import { searchEngineIndex } from "@/lib/api";
+import type { MeilisearchHit, MeilisearchSearchResponse } from "@/lib/api-types";
 import { formatDistanceToNow } from "date-fns";
-import { cn } from "@/lib/utils";
 
 const HITS_PER_PAGE = 10;
 const DEBOUNCE_MS = 200;
 
-export default function EngineDemoPage() {
-  const params = useParams();
-  const router = useRouter();
-  const engineId = params.id as string;
+export interface IndexSearchPreviewProps {
+  engineId: string;
+  selectedIndex: string;
+  /**
+   * Rendered above the search input. Host pages pass the index selector
+   * (Combobox or Select) along with any heading content here.
+   */
+  selector?: ReactNode;
+}
 
-  const [selectedIndex, setSelectedIndex] = useState<string>("");
+export function IndexSearchPreview({
+  engineId,
+  selectedIndex,
+  selector,
+}: IndexSearchPreviewProps) {
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(0);
   const [searchResult, setSearchResult] = useState<MeilisearchSearchResponse | null>(null);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  const { data: engine, isLoading: engineLoading } = useQuery({
-    queryKey: ["engine", engineId],
-    queryFn: () => fetchEngine(engineId),
-  });
-
-  const { data: indexes = [], isLoading: indexesLoading } = useQuery({
-    queryKey: ["engine-indexes", engineId],
-    queryFn: () => fetchEngineIndexes(engineId),
-  });
-
-  // Auto-select first index
+  // Reset state when the selected index changes
   useEffect(() => {
-    if (indexes.length > 0 && !selectedIndex) {
-      setSelectedIndex(indexes[0].uid);
-    }
-  }, [indexes, selectedIndex]);
+    setQuery("");
+    setSearchResult(null);
+    setSearchError(null);
+    setPage(0);
+  }, [selectedIndex]);
+
+  // Abort any in-flight request on unmount
+  useEffect(() => {
+    return () => abortRef.current?.abort();
+  }, []);
 
   const performSearch = useCallback(
     async (q: string, offset: number) => {
@@ -79,8 +66,6 @@ export default function EngineDemoPage() {
         }
         return;
       }
-
-      // Cancel any in-flight request
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
@@ -98,7 +83,6 @@ export default function EngineDemoPage() {
           highlightPreTag: "<mark>",
           highlightPostTag: "</mark>",
         });
-        // Only apply result if this request wasn't aborted
         if (!controller.signal.aborted) {
           setSearchResult(result);
           setSearching(false);
@@ -114,30 +98,19 @@ export default function EngineDemoPage() {
     [engineId, selectedIndex]
   );
 
-  // Debounced search on query change
   useEffect(() => {
-    if (debounceRef.current) {
-      clearTimeout(debounceRef.current);
-    }
-
+    if (debounceRef.current) clearTimeout(debounceRef.current);
     setPage(0);
-
     if (!query.trim()) {
       setSearchResult(null);
       setSearchError(null);
       setSearching(false);
       return;
     }
-
     setSearching(true);
-    debounceRef.current = setTimeout(() => {
-      performSearch(query, 0);
-    }, DEBOUNCE_MS);
-
+    debounceRef.current = setTimeout(() => performSearch(query, 0), DEBOUNCE_MS);
     return () => {
-      if (debounceRef.current) {
-        clearTimeout(debounceRef.current);
-      }
+      if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, [query, performSearch]);
 
@@ -150,71 +123,16 @@ export default function EngineDemoPage() {
   const totalPages = searchResult
     ? Math.ceil(searchResult.estimatedTotalHits / HITS_PER_PAGE)
     : 0;
-
-  if (engineLoading || indexesLoading) {
-    return (
-      <div className="max-w-3xl mx-auto space-y-6 pt-8">
-        <Skeleton className="h-8 w-64" />
-        <Skeleton className="h-12 w-full" />
-        <Skeleton className="h-24 w-full" />
-      </div>
-    );
-  }
-
   const hasResults = searchResult && searchResult.hits.length > 0;
   const hasSearched = query.trim().length > 0;
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
-      {/* Header */}
-      <div className="flex items-center gap-3">
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => router.push("/dashboard/engines")}
-        >
-          <ArrowLeft className="h-4 w-4" />
-        </Button>
-        <div className="flex-1 min-w-0">
-          <h2 className="text-xl font-bold tracking-tight truncate">
-            {engine?.name ?? "Engine"} — Search Preview
-          </h2>
-          <p className="text-sm text-muted-foreground truncate">
-            {engine?.url}
-          </p>
-        </div>
-        {indexes.length > 1 && (
-          <Select value={selectedIndex} onValueChange={(v) => {
-            setSelectedIndex(v);
-            setSearchResult(null);
-            setQuery("");
-          }}>
-            <SelectTrigger className="w-[200px]">
-              <Database className="h-4 w-4 mr-2 text-muted-foreground" />
-              <SelectValue placeholder="Select index" />
-            </SelectTrigger>
-            <SelectContent>
-              {indexes.map((idx) => (
-                <SelectItem key={idx.uid} value={idx.uid}>
-                  {idx.uid}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-        {indexes.length === 1 && (
-          <Badge variant="secondary" className="gap-1.5">
-            <Database className="h-3 w-3" />
-            {indexes[0].uid}
-          </Badge>
-        )}
-      </div>
+    <div className="space-y-6">
+      {selector && <div className="flex items-center gap-3">{selector}</div>}
 
-      {/* Search bar */}
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <Input
-          ref={inputRef}
           placeholder="Search indexed content..."
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -226,33 +144,20 @@ export default function EngineDemoPage() {
         )}
       </div>
 
-      {indexes.length === 0 && (
-        <div className="text-center py-12 text-muted-foreground">
-          <Database className="h-8 w-8 mx-auto mb-3 opacity-50" />
-          <p>No indexes found on this engine.</p>
-          <p className="text-sm mt-1">Crawl some content first to start searching.</p>
-        </div>
-      )}
-
-      {/* Error */}
       {searchError && (
         <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-4 text-sm text-destructive">
           {searchError}
         </div>
       )}
 
-      {/* Results meta */}
       {hasSearched && searchResult && !searching && (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <span>
-            About {searchResult.estimatedTotalHits.toLocaleString()} results
-          </span>
+          <span>About {searchResult.estimatedTotalHits.toLocaleString()} results</span>
           <span className="text-muted-foreground/50">·</span>
           <span>{searchResult.processingTimeMs}ms</span>
         </div>
       )}
 
-      {/* Results */}
       {searching && !searchResult && (
         <div className="space-y-8 pt-2">
           {Array.from({ length: 3 }).map((_, i) => (
@@ -282,7 +187,6 @@ export default function EngineDemoPage() {
         </div>
       )}
 
-      {/* Pagination */}
       {totalPages > 1 && (
         <div className="flex items-center justify-center gap-2 pt-4 pb-8">
           <Button
@@ -314,46 +218,44 @@ export default function EngineDemoPage() {
 
 function SearchHit({ hit }: { hit: MeilisearchHit }) {
   const formatted = hit._formatted;
-  const title = formatted?.title || hit.title || hit.url || "Untitled";
-  const snippet = formatted?.content || hit.content || "";
+  const titleHtml = formatted?.title;
+  const titleText = hit.title || hit.url || "Untitled";
+  const snippetHtml = formatted?.content;
   const url = hit.url;
   const domain = hit.domain;
 
   return (
     <div className="group">
-      {/* URL breadcrumb */}
       {url && (
         <div className="flex items-center gap-1.5 mb-0.5">
           <Globe className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-          <span className="text-sm text-muted-foreground truncate max-w-lg">
-            {url}
-          </span>
+          <span className="text-sm text-muted-foreground truncate max-w-lg">{url}</span>
         </div>
       )}
-
-      {/* Title */}
       <a
         href={url}
         target="_blank"
         rel="noopener noreferrer"
         className="inline-flex items-center gap-1.5 group/link"
       >
-        <h3
-          className="text-lg font-medium text-primary group-hover/link:underline leading-snug"
-          dangerouslySetInnerHTML={{ __html: title }}
-        />
+        {titleHtml ? (
+          <h3
+            className="text-lg font-medium text-primary group-hover/link:underline leading-snug"
+            dangerouslySetInnerHTML={{ __html: titleHtml }}
+          />
+        ) : (
+          <h3 className="text-lg font-medium text-primary group-hover/link:underline leading-snug">
+            {titleText}
+          </h3>
+        )}
         <ExternalLink className="h-3.5 w-3.5 text-muted-foreground opacity-0 group-hover/link:opacity-100 transition-opacity flex-shrink-0" />
       </a>
-
-      {/* Snippet */}
-      {snippet && (
+      {snippetHtml && (
         <p
           className="text-sm text-muted-foreground mt-1 leading-relaxed line-clamp-3 [&>mark]:bg-yellow-200 [&>mark]:text-foreground [&>mark]:dark:bg-yellow-900/60 [&>mark]:rounded-sm [&>mark]:px-0.5"
-          dangerouslySetInnerHTML={{ __html: snippet }}
+          dangerouslySetInnerHTML={{ __html: snippetHtml }}
         />
       )}
-
-      {/* Meta row */}
       <div className="flex items-center gap-3 mt-1.5">
         {domain && (
           <Badge variant="outline" className="text-xs font-normal gap-1">

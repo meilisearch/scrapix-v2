@@ -14,6 +14,7 @@ import {
   CreditCard,
   Settings,
   FolderCog,
+  Database,
   BarChart3,
   Network,
   Cable,
@@ -77,6 +78,7 @@ const navGroups = [
     items: [
       { name: "Jobs", href: "/dashboard/jobs", icon: ListTodo },
       { name: "Configs", href: "/dashboard/configs", icon: FolderCog },
+      { name: "Indexes", href: "/dashboard/indexes", icon: Database },
     ],
   },
   {
