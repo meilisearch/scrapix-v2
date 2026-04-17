@@ -416,6 +416,28 @@ async fn dispatch_event(
             .await
             .map_err(|e| format!("insert invoice transaction: {e}"))?;
 
+            // Successful invoice clears any prior payment_method flag —
+            // whatever went wrong, it's resolved now that money moved.
+            if envelope.event_type == "invoice.settled" {
+                if let Err(e) = sqlx::query(
+                    "UPDATE accounts SET payment_method_status = NULL \
+                     WHERE id = $1 AND payment_method_status IS NOT NULL",
+                )
+                .bind(account_id)
+                .execute(pool)
+                .await
+                {
+                    // Non-fatal: the transaction row already landed,
+                    // so we ack the webhook. Flag clears on the next
+                    // successful invoice or a manual operator action.
+                    warn!(
+                        account_id = %account_id,
+                        error = %e,
+                        "hyperline: failed to clear payment_method_status on invoice.settled"
+                    );
+                }
+            }
+
             info!(
                 account_id = %account_id,
                 event_id = %event_id,
@@ -424,7 +446,55 @@ async fn dispatch_event(
             );
         }
         "payment_method.errored" | "payment_method.expired" => {
-            info!(event_type = %envelope.event_type, "hyperline: payment method issue (flag account is TODO)");
+            // Flag the account so the console can show a "Your card
+            // needs attention" banner. The actual remediation (update
+            // card, retry payment) happens on the Hyperline hosted
+            // portal — we're just surfacing the state. Clearing the
+            // flag is an operator action or a successful invoice.settled
+            // (see the invoice.settled branch for that side effect).
+            let customer_id = envelope
+                .data
+                .get("object")
+                .and_then(|o| o.get("customer_id"))
+                .and_then(|v| v.as_str());
+
+            let Some(cust) = customer_id else {
+                warn!(
+                    event_type = %envelope.event_type,
+                    "hyperline: payment_method event missing customer_id — acking without action"
+                );
+                return Ok(());
+            };
+
+            let status = if envelope.event_type == "payment_method.errored" {
+                "errored"
+            } else {
+                "expired"
+            };
+
+            let affected = sqlx::query(
+                "UPDATE accounts SET payment_method_status = $1 \
+                 WHERE hyperline_customer_id = $2",
+            )
+            .bind(status)
+            .bind(cust)
+            .execute(pool)
+            .await
+            .map_err(|e| format!("flag payment method: {e}"))?;
+
+            if affected.rows_affected() == 0 {
+                warn!(
+                    event_type = %envelope.event_type,
+                    customer_id = %cust,
+                    "hyperline: payment_method event for unknown customer"
+                );
+            } else {
+                info!(
+                    customer_id = %cust,
+                    status,
+                    "hyperline: account payment_method_status flagged"
+                );
+            }
         }
         "subscription.cancelled" => {
             // Hard lock: flip `accounts.active = false`. Both the credit

@@ -97,6 +97,10 @@ pub(crate) struct BillingResponse {
     pub(super) hyperline_customer_id: Option<String>,
     /// Hyperline wallet handle (null until provisioned).
     pub(super) hyperline_wallet_id: Option<String>,
+    /// Payment-method issue flag: `"errored"` or `"expired"`, or null
+    /// when the card is healthy. Set by the Hyperline payment_method.*
+    /// webhooks; cleared on the next invoice.settled.
+    pub(super) payment_method_status: Option<String>,
     // NOTE: `auto_topup_*` and `stripe_customer_id` fields were removed
     // during the Hyperline migration — auto-recharge is now configured on
     // the Hyperline wallet and surfaced through the hosted billing portal.

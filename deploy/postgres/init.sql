@@ -30,6 +30,10 @@ CREATE TABLE IF NOT EXISTS accounts (
     active BOOLEAN NOT NULL DEFAULT true,
     hyperline_customer_id TEXT UNIQUE,
     hyperline_wallet_id TEXT,
+    -- Surfaced by the Hyperline payment_method.errored / .expired
+    -- webhooks. NULL means "no issue on file". The console reads this
+    -- to show a "Your card expired — update it on the portal" banner.
+    payment_method_status TEXT CHECK (payment_method_status IN ('errored', 'expired')),
     credits_balance BIGINT NOT NULL DEFAULT 100,
     monthly_spend_limit BIGINT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -344,6 +348,14 @@ DO $$ BEGIN
     END IF;
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'accounts' AND column_name = 'hyperline_wallet_id') THEN
         ALTER TABLE accounts ADD COLUMN hyperline_wallet_id TEXT;
+    END IF;
+
+    -- Flag surfaced by the Hyperline payment_method webhooks. NULL
+    -- means "no issue"; 'errored' / 'expired' come from the webhook
+    -- handler in bins/scrapix-api/src/hyperline.rs.
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'accounts' AND column_name = 'payment_method_status') THEN
+        ALTER TABLE accounts ADD COLUMN payment_method_status TEXT
+            CHECK (payment_method_status IN ('errored', 'expired'));
     END IF;
 
     -- Widen transactions.type CHECK constraint for Hyperline webhook rows.

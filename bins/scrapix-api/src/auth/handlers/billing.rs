@@ -38,7 +38,7 @@ pub(crate) async fn get_billing(
     // reconcile worker is in place.
     let row = sqlx::query(
         "SELECT tier, credits_balance, monthly_spend_limit, \
-         hyperline_customer_id, hyperline_wallet_id \
+         hyperline_customer_id, hyperline_wallet_id, payment_method_status \
          FROM accounts WHERE id = $1",
     )
     .bind(account_id)
@@ -59,6 +59,7 @@ pub(crate) async fn get_billing(
         monthly_spend_limit: row.get("monthly_spend_limit"),
         hyperline_customer_id: row.get("hyperline_customer_id"),
         hyperline_wallet_id: row.get("hyperline_wallet_id"),
+        payment_method_status: row.get("payment_method_status"),
     }))
 }
 
