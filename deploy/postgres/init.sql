@@ -248,9 +248,14 @@ END $$;
 CREATE TABLE IF NOT EXISTS transactions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     account_id UUID NOT NULL REFERENCES accounts (id) ON DELETE CASCADE,
+    -- type is the ledger semantic tag. `wallet_credit`, `invoice_settled`
+    -- and `invoice_errored` are Hyperline webhook-driven rows (see
+    -- bins/scrapix-api/src/hyperline.rs). `auto_topup` is retained for
+    -- historical rows from the pre-Hyperline auto-topup cron.
     type TEXT NOT NULL CHECK (type IN (
         'initial_deposit', 'manual_topup', 'auto_topup',
-        'usage_deduction', 'refund', 'adjustment'
+        'usage_deduction', 'refund', 'adjustment',
+        'wallet_credit', 'invoice_settled', 'invoice_errored'
     )),
     amount BIGINT NOT NULL,
     balance_after BIGINT NOT NULL,
@@ -339,6 +344,24 @@ DO $$ BEGIN
     END IF;
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'accounts' AND column_name = 'hyperline_wallet_id') THEN
         ALTER TABLE accounts ADD COLUMN hyperline_wallet_id TEXT;
+    END IF;
+
+    -- Widen transactions.type CHECK constraint for Hyperline webhook rows.
+    -- The webhook handler writes wallet_credit (from wallet.credited) and
+    -- invoice_settled / invoice_errored (from invoice.*). Drop + re-add
+    -- is safe here because we migrate the constraint definition, not row
+    -- data — existing rows all use the pre-existing values.
+    IF EXISTS (
+        SELECT 1 FROM information_schema.check_constraints
+        WHERE constraint_name = 'transactions_type_check'
+    ) THEN
+        ALTER TABLE transactions DROP CONSTRAINT IF EXISTS transactions_type_check;
+        ALTER TABLE transactions ADD CONSTRAINT transactions_type_check
+            CHECK (type IN (
+                'initial_deposit', 'manual_topup', 'auto_topup',
+                'usage_deduction', 'refund', 'adjustment',
+                'wallet_credit', 'invoice_settled', 'invoice_errored'
+            ));
     END IF;
 
     -- Add 'viewer' role to account_members if not already present
