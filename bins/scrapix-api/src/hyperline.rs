@@ -152,16 +152,82 @@ async fn hyperline_webhook(
     Ok(StatusCode::OK)
 }
 
-async fn dispatch_event(_pool: &sqlx::PgPool, envelope: &WebhookEnvelope) -> Result<(), String> {
+async fn dispatch_event(pool: &sqlx::PgPool, envelope: &WebhookEnvelope) -> Result<(), String> {
     match envelope.event_type.as_str() {
         "wallet.credited" | "credit.topup_transaction_created" => {
-            // TODO(SCR-68 follow-up): credit the local ledger. Requires the
-            // ledger's idempotency key to accept a Hyperline event id, not
-            // just a Stripe payment_intent_id.
-            info!(
-                event_type = %envelope.event_type,
-                "hyperline: wallet credited (local ledger update is TODO)"
-            );
+            // Resolve account + idempotency key from the envelope. Values
+            // are extracted defensively — if anything is missing we log a
+            // structured warning, ack the delivery (Hyperline retries are
+            // pointless for schema issues), and return Ok.
+            let id = envelope
+                .data
+                .get("object")
+                .and_then(|o| o.get("id"))
+                .and_then(|v| v.as_str());
+            let customer_id = envelope
+                .data
+                .get("object")
+                .and_then(|o| o.get("customer_id"))
+                .and_then(|v| v.as_str());
+            // Credits unit is read from a custom `credits` property we
+            // plan to ship on the Hyperline product-aggregator side. Real
+            // amount→credits conversion (currency-aware) ships with the
+            // reconcile worker.
+            let credits = envelope
+                .data
+                .get("object")
+                .and_then(|o| o.get("credits"))
+                .and_then(|v| v.as_i64());
+
+            match (id, customer_id, credits) {
+                (Some(event_id), Some(cust), Some(credits_amt)) if credits_amt > 0 => {
+                    let maybe_account: Option<uuid::Uuid> = sqlx::query_scalar(
+                        "SELECT id FROM accounts WHERE hyperline_customer_id = $1",
+                    )
+                    .bind(cust)
+                    .fetch_optional(pool)
+                    .await
+                    .map_err(|e| format!("account lookup: {e}"))?;
+
+                    let Some(account_id) = maybe_account else {
+                        warn!(
+                            event_type = %envelope.event_type,
+                            customer_id = %cust,
+                            event_id = %event_id,
+                            "hyperline: wallet.credited for unknown customer — acking"
+                        );
+                        return Ok(());
+                    };
+
+                    scrapix_billing::add_credits_from_provider(
+                        pool,
+                        account_id,
+                        credits_amt,
+                        "hyperline",
+                        event_id,
+                        "wallet_credit",
+                        "Hyperline wallet credit",
+                    )
+                    .await
+                    .map_err(|e| format!("ledger credit failed: {e}"))?;
+
+                    info!(
+                        account_id = %account_id,
+                        event_id = %event_id,
+                        credits = credits_amt,
+                        "hyperline: wallet credited → ledger"
+                    );
+                }
+                _ => {
+                    warn!(
+                        event_type = %envelope.event_type,
+                        has_id = id.is_some(),
+                        has_customer = customer_id.is_some(),
+                        has_credits = credits.is_some(),
+                        "hyperline: wallet.credited missing fields — acking without credit"
+                    );
+                }
+            }
         }
         "wallet.debited" => {
             // Informational only — we debit locally at request time; this
