@@ -4791,15 +4791,11 @@ pub async fn run_with_bus(
         protected_routes
     };
 
-    // Apply per-account rate limiting on protected routes (runs after auth)
-    let protected_routes = if let Some(ref rl) = rate_limit_state {
-        protected_routes.layer(middleware::from_fn_with_state(
-            rl.clone(),
-            rate_limit::rate_limit_middleware,
-        ))
-    } else {
-        protected_routes
-    };
+    // Per-account rate limiting on protected routes was removed — pricing is
+    // usage-based (credits), not per-request, so there's nothing to gate on the
+    // request rate. The brute-force rate limiter on auth endpoints below is
+    // kept; it protects against credential stuffing regardless of plan.
+    let _ = &rate_limit_state;
 
     let mut app = Router::new()
         .merge(public_routes)
