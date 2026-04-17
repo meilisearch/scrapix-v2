@@ -235,11 +235,9 @@ impl MetadataExtractor {
                     "canonical" => {
                         metadata.canonical_url = Some(href);
                     }
-                    "icon" | "shortcut icon" | "apple-touch-icon" => {
+                    "icon" | "shortcut icon" | "apple-touch-icon" if metadata.favicon.is_none() => {
                         // Prefer larger icons, but take first if none set
-                        if metadata.favicon.is_none() {
-                            metadata.favicon = Some(href);
-                        }
+                        metadata.favicon = Some(href);
                     }
                     "alternate" => {
                         // Check for RSS/Atom feeds
