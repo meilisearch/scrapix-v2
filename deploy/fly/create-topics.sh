@@ -7,9 +7,10 @@
 set -euo pipefail
 
 APP="${APP:-scrapix-redpanda}"
+BROKERS="${BROKERS:-scrapix-redpanda.internal:9092}"
 
 run_rpk() {
-    flyctl ssh console --app "$APP" --command "rpk $*"
+    flyctl ssh console --app "$APP" --command "rpk $* --brokers $BROKERS"
 }
 
 echo "Creating Kafka topics on $APP..."

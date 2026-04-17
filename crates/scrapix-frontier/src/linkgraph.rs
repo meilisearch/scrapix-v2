@@ -386,7 +386,7 @@ impl LinkGraph {
             .map(|(url, node)| (url.clone(), node.inbound.len()))
             .collect();
 
-        linked.sort_by(|a, b| b.1.cmp(&a.1));
+        linked.sort_by_key(|entry| std::cmp::Reverse(entry.1));
         linked.truncate(n);
         linked
     }
