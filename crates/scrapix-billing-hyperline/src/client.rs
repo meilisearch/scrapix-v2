@@ -60,9 +60,10 @@ pub struct MoneyAmount {
 
 /// Customer portal response shape for `GET /v1/customers/{id}/portal`.
 ///
-/// Per Hyperline docs the URL is deterministic per-customer and has no
-/// documented expiry — treat it like a permalink rather than an
-/// ephemeral session token.
+/// The URL embeds a signed JWT (observed in sandbox: HS256 with a
+/// `type=portal,customerId,iat` payload), so **do not cache it** — treat
+/// each call as minting a fresh session token. The console hits this
+/// endpoint on click, not on page load, for exactly this reason.
 #[derive(Debug, Deserialize, Serialize)]
 pub struct PortalLink {
     pub url: String,
@@ -211,9 +212,11 @@ impl HyperlineClient {
 
     /// Fetches the hosted customer-portal URL.
     ///
-    /// Unlike Stripe's portal sessions, this is a GET (not a POST) and
-    /// the URL has no documented expiry — Hyperline treats it as a
-    /// per-customer permalink. Safe to cache briefly.
+    /// Unlike Stripe's portal sessions this is a GET, but the returned
+    /// URL embeds a signed JWT (observed in sandbox) so the link is
+    /// session-scoped, not a permalink. Callers should hit this on-demand
+    /// (e.g. on button click) and redirect the browser immediately
+    /// rather than caching the URL.
     pub async fn get_portal_url(&self, customer_id: &str) -> Result<PortalLink, HyperlineError> {
         let path = format!("/v1/customers/{customer_id}/portal");
         self.get_json(&path, &[]).await
