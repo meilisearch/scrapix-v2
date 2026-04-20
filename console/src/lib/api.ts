@@ -34,6 +34,7 @@ import type {
   AccountListItem,
   MemberInfo,
   InviteInfo,
+  JobEventsHistoryResponse,
 } from "./api-types";
 import { useAccountStore } from "./account-store";
 
@@ -95,6 +96,17 @@ export async function fetchJobs(): Promise<Job[]> {
 
 export async function fetchJobStatus(id: string): Promise<JobStatus> {
   return request(`/job/${encodeURIComponent(id)}/status`);
+}
+
+export async function fetchJobEventHistory(
+  jobId: string,
+  filter?: string,
+  limit = 1000,
+  offset = 0
+): Promise<JobEventsHistoryResponse> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (filter) params.set("filter", filter);
+  return request(`/job/${encodeURIComponent(jobId)}/events/history?${params}`);
 }
 
 export async function deleteJob(id: string): Promise<void> {

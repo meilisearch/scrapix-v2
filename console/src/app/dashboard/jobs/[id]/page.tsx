@@ -48,7 +48,7 @@ import {
   Eraser,
   RotateCw,
 } from "lucide-react";
-import { fetchJobStatus, deleteJob, createCrawl, wsUrl } from "@/lib/api";
+import { fetchJobStatus, deleteJob, createCrawl, wsUrl, fetchJobEventHistory } from "@/lib/api";
 import type { JobStatus, WsServerMessage, CrawlEvent } from "@/lib/api-types";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
@@ -212,6 +212,15 @@ export default function JobDetailPage() {
     refetchInterval: 3_000,
   });
 
+  // Fetch event history for completed/failed jobs (from ClickHouse)
+  const isTerminal = status?.status === "completed" || status?.status === "failed";
+  const { data: eventHistory, isLoading: historyLoading } = useQuery({
+    queryKey: ["job-events-history", id],
+    queryFn: () => fetchJobEventHistory(id as string),
+    enabled: !!id && isTerminal,
+    staleTime: Infinity,
+  });
+
   const addLog = useCallback(
     (message: string, variant: "default" | "error" = "default", category: LogCategory = "info") => {
       setLogs((prev) => {
@@ -360,6 +369,39 @@ export default function JobDetailPage() {
       wsRef.current?.close();
     };
   }, [id, addLog, queryClient]);
+
+  // When event history loads for a completed/failed job, populate the log
+  useEffect(() => {
+    if (!eventHistory || eventHistory.events.length === 0) return;
+
+    for (const evt of eventHistory.events) {
+      switch (evt.event_type) {
+        case "page_crawled":
+          addLog(
+            `Crawled ${evt.url} (${evt.status_code}) in ${evt.duration_ms}ms`,
+            "default",
+            "crawled"
+          );
+          break;
+        case "page_failed":
+          addLog(`Failed ${evt.url}: ${evt.error}`, "error", "error");
+          break;
+        case "document_indexed":
+          addLog(`Indexed ${evt.url} → ${evt.document_id}`, "default", "indexed");
+          break;
+        case "urls_discovered":
+          addLog(`Discovered ${evt.urls_count} URLs from ${evt.source_url}`, "default", "crawled");
+          break;
+        case "page_skipped":
+          addLog(`Skipped ${evt.url}: ${evt.reason}`, "default", "info");
+          break;
+        case "rate_limited":
+          addLog(`Rate limited on ${evt.domain}, waiting ${evt.wait_ms}ms`, "default", "info");
+          break;
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventHistory]);
 
   // Auto-scroll logs
   useEffect(() => {
@@ -777,7 +819,13 @@ export default function JobDetailPage() {
             >
               {filteredLogs.length === 0 ? (
                 <div className="flex items-center justify-center h-[318px] text-muted-foreground">
-                  <p>{logs.length === 0 ? "Waiting for events..." : "No matching events"}</p>
+                  <p>
+                    {isTerminal && historyLoading
+                      ? "Loading event history..."
+                      : logs.length === 0
+                      ? "Waiting for events..."
+                      : "No matching events"}
+                  </p>
                 </div>
               ) : (
                 filteredLogs.map((log, i) => (
