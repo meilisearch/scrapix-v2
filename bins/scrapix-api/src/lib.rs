@@ -961,6 +961,7 @@ impl IntoResponse for ApiError {
             "conflict" => StatusCode::CONFLICT,
             "insufficient_credits" => StatusCode::PAYMENT_REQUIRED,
             "spend_limit_exceeded" => StatusCode::FORBIDDEN,
+            "service_unavailable" => StatusCode::SERVICE_UNAVAILABLE,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
         (status, Json(self)).into_response()
@@ -3677,7 +3678,7 @@ fn default_history_limit() -> u32 {
 #[derive(Debug, Serialize)]
 struct JobEventsHistoryResponse {
     events: Vec<PageEventRow>,
-    total: usize,
+    returned: usize,
     limit: u32,
     offset: u32,
 }
@@ -3768,11 +3769,10 @@ async fn get_job_events_history(
     }
 
     // Parse optional filter param
-    let filter_string = params.filter.clone();
-    let filter_types: Vec<&str> = if filter_string.is_empty() {
+    let filter_types: Vec<&str> = if params.filter.is_empty() {
         vec![]
     } else {
-        filter_string
+        params.filter
             .split(',')
             .map(str::trim)
             .filter(|s| !s.is_empty())
@@ -3791,12 +3791,12 @@ async fn get_job_events_history(
             )
         })?;
 
-    let total = raw_events.len();
+    let returned = raw_events.len();
     let events: Vec<PageEventRow> = raw_events.into_iter().map(PageEventRow::from).collect();
 
     Ok(Json(JobEventsHistoryResponse {
         events,
-        total,
+        returned,
         limit: params.limit,
         offset: params.offset,
     }))
