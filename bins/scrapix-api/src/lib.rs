@@ -98,8 +98,8 @@ use scrapix_queue::{
 };
 use scrapix_storage::clickhouse::{
     AiUsageBatcher, AiUsageEvent as ClickHouseAiUsageEvent, ClickHouseStorage,
-    JobEvent as ClickHouseJobEvent, JobEventBatcher, PageEventBatcher,
-    RequestEvent as ClickHouseRequestEvent, RequestEventBatcher,
+    JobEvent as ClickHouseJobEvent, JobEventBatcher, PageEvent as ClickHousePageEvent,
+    PageEventBatcher, RequestEvent as ClickHouseRequestEvent, RequestEventBatcher,
 };
 
 /// Scrapix API Server
@@ -204,7 +204,6 @@ struct AnalyticsState {
     /// Job event batcher (lifecycle: JobStarted/Completed/Failed)
     job_event_batcher: Option<Arc<JobEventBatcher>>,
     /// Page event batcher (one row per crawled/failed page)
-    #[allow(dead_code)]
     page_event_batcher: Option<Arc<PageEventBatcher>>,
 }
 
@@ -378,6 +377,18 @@ impl AppState {
                 tokio::spawn(async move {
                     if let Err(e) = batcher.add(job_event).await {
                         debug!(error = %e, "Failed to add job event to ClickHouse batcher");
+                    }
+                });
+            }
+        }
+
+        // Persist intermediate page events to ClickHouse page_events (7-day TTL)
+        if let Some(ref batcher) = self.analytics.page_event_batcher {
+            if let Some(page_event) = crawl_event_to_page_event(job_id, event) {
+                let batcher = batcher.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = batcher.add(page_event).await {
+                        debug!(error = %e, "Failed to add page event to ClickHouse batcher");
                     }
                 });
             }
@@ -821,6 +832,96 @@ fn crawl_event_to_job_event(job_id: &str, event: &CrawlEvent) -> Option<ClickHou
             ..Default::default()
         }),
         _ => None, // Only lifecycle events go to job_events
+    }
+}
+
+/// Convert an intermediate CrawlEvent to a ClickHousePageEvent for persistence.
+/// Returns None for lifecycle events (JobStarted/Completed/Failed) which are stored in job_events.
+fn crawl_event_to_page_event(job_id: &str, event: &CrawlEvent) -> Option<ClickHousePageEvent> {
+    let now = time::OffsetDateTime::now_utc();
+    let account_id = match event {
+        CrawlEvent::PageCrawled { account_id, .. }
+        | CrawlEvent::PageFailed { account_id, .. }
+        | CrawlEvent::DocumentIndexed { account_id, .. } => {
+            account_id.clone().unwrap_or_default()
+        }
+        _ => String::new(),
+    };
+
+    match event {
+        CrawlEvent::PageCrawled {
+            url,
+            status,
+            content_length,
+            duration_ms,
+            ..
+        } => Some(ClickHousePageEvent {
+            job_id: job_id.to_string(),
+            account_id,
+            event_type: "page_crawled".to_string(),
+            url: url.clone(),
+            status_code: *status,
+            content_length: *content_length,
+            duration_ms: *duration_ms as u32,
+            timestamp: now,
+            ..Default::default()
+        }),
+        CrawlEvent::PageFailed {
+            url,
+            error,
+            retry_count,
+            ..
+        } => Some(ClickHousePageEvent {
+            job_id: job_id.to_string(),
+            account_id,
+            event_type: "page_failed".to_string(),
+            url: url.clone(),
+            error: error.clone(),
+            retry_count: *retry_count as u8,
+            timestamp: now,
+            ..Default::default()
+        }),
+        CrawlEvent::DocumentIndexed {
+            url, document_id, ..
+        } => Some(ClickHousePageEvent {
+            job_id: job_id.to_string(),
+            account_id,
+            event_type: "document_indexed".to_string(),
+            url: url.clone(),
+            document_id: document_id.clone(),
+            timestamp: now,
+            ..Default::default()
+        }),
+        CrawlEvent::UrlsDiscovered {
+            source_url, count, ..
+        } => Some(ClickHousePageEvent {
+            job_id: job_id.to_string(),
+            event_type: "urls_discovered".to_string(),
+            source_url: source_url.clone(),
+            urls_count: *count as u32,
+            timestamp: now,
+            ..Default::default()
+        }),
+        CrawlEvent::PageSkipped { url, reason, .. } => Some(ClickHousePageEvent {
+            job_id: job_id.to_string(),
+            event_type: "page_skipped".to_string(),
+            url: url.clone(),
+            reason: reason.clone(),
+            timestamp: now,
+            ..Default::default()
+        }),
+        CrawlEvent::RateLimited {
+            domain, wait_ms, ..
+        } => Some(ClickHousePageEvent {
+            job_id: job_id.to_string(),
+            event_type: "rate_limited".to_string(),
+            domain: domain.clone(),
+            wait_ms: *wait_ms,
+            timestamp: now,
+            ..Default::default()
+        }),
+        // Lifecycle events are handled by job_event_batcher — skip here
+        _ => None,
     }
 }
 
