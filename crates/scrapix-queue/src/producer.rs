@@ -34,6 +34,8 @@ pub struct ProducerConfig {
     pub linger_ms: u64,
     /// Acks required (0, 1, all)
     pub acks: String,
+    /// Maximum message size in bytes (must match topic max.message.bytes)
+    pub max_message_bytes: usize,
 }
 
 impl Default for ProducerConfig {
@@ -48,6 +50,7 @@ impl Default for ProducerConfig {
             batch_size: 65536,
             linger_ms: 20,
             acks: "all".to_string(),
+            max_message_bytes: 10 * 1024 * 1024, // 10MB
         }
     }
 }
@@ -77,7 +80,8 @@ impl KafkaProducer {
             .set("compression.type", &config.compression)
             .set("batch.size", config.batch_size.to_string())
             .set("linger.ms", config.linger_ms.to_string())
-            .set("acks", &config.acks);
+            .set("acks", &config.acks)
+            .set("message.max.bytes", config.max_message_bytes.to_string());
 
         if config.idempotent {
             client_config.set("enable.idempotence", "true");
