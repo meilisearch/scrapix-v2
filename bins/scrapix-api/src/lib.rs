@@ -98,8 +98,8 @@ use scrapix_queue::{
 };
 use scrapix_storage::clickhouse::{
     AiUsageBatcher, AiUsageEvent as ClickHouseAiUsageEvent, ClickHouseStorage,
-    JobEvent as ClickHouseJobEvent, JobEventBatcher, RequestEvent as ClickHouseRequestEvent,
-    RequestEventBatcher,
+    JobEvent as ClickHouseJobEvent, JobEventBatcher, PageEventBatcher,
+    RequestEvent as ClickHouseRequestEvent, RequestEventBatcher,
 };
 
 /// Scrapix API Server
@@ -203,6 +203,9 @@ struct AnalyticsState {
     ai_usage_batcher: Option<Arc<AiUsageBatcher>>,
     /// Job event batcher (lifecycle: JobStarted/Completed/Failed)
     job_event_batcher: Option<Arc<JobEventBatcher>>,
+    /// Page event batcher (one row per crawled/failed page)
+    #[allow(dead_code)]
+    page_event_batcher: Option<Arc<PageEventBatcher>>,
 }
 
 /// Application state shared across handlers
@@ -244,6 +247,7 @@ impl AppState {
         request_batcher: Option<Arc<RequestEventBatcher>>,
         ai_usage_batcher: Option<Arc<AiUsageBatcher>>,
         job_event_batcher: Option<Arc<JobEventBatcher>>,
+        page_event_batcher: Option<Arc<PageEventBatcher>>,
         fetcher: Arc<HttpFetcher>,
         browser_renderer: Option<Arc<CdpRenderer>>,
         ai_service: Option<Arc<AiService>>,
@@ -270,6 +274,7 @@ impl AppState {
                 request_batcher,
                 ai_usage_batcher,
                 job_event_batcher,
+                page_event_batcher,
             },
             fetcher,
             browser_renderer,
@@ -4150,13 +4155,14 @@ async fn init_clickhouse() -> (
     Option<Arc<RequestEventBatcher>>,
     Option<Arc<AiUsageBatcher>>,
     Option<Arc<JobEventBatcher>>,
+    Option<Arc<PageEventBatcher>>,
 ) {
     // Check if ClickHouse is configured
     let config = match analytics::AnalyticsConfig::from_env() {
         Some(c) => c,
         None => {
             info!("ClickHouse not configured (CLICKHOUSE_URL not set)");
-            return (None, None, None, None);
+            return (None, None, None, None, None);
         }
     };
 
@@ -4174,7 +4180,7 @@ async fn init_clickhouse() -> (
         Ok(s) => s,
         Err(e) => {
             warn!(error = %e, "Failed to connect to ClickHouse. Analytics and event persistence disabled.");
-            return (None, None, None, None);
+            return (None, None, None, None, None);
         }
     };
 
@@ -4197,6 +4203,9 @@ async fn init_clickhouse() -> (
     // Create job event batcher (batch size of 50 — lifecycle events only)
     let job_batcher = Arc::new(JobEventBatcher::new(storage.clone(), 50, "job_events"));
 
+    // Create page event batcher (batch size of 100 — one row per crawled/failed page)
+    let page_batcher = Arc::new(PageEventBatcher::new(storage.clone(), 100, "page_events"));
+
     // Create analytics state (sharing the same storage connection)
     let analytics_state = Arc::new(analytics::AnalyticsState::with_storage(storage));
 
@@ -4205,6 +4214,7 @@ async fn init_clickhouse() -> (
         Some(batcher),
         Some(ai_batcher),
         Some(job_batcher),
+        Some(page_batcher),
     )
 }
 
@@ -4229,7 +4239,7 @@ pub async fn run_with_bus(
     );
 
     // Initialize ClickHouse for analytics (optional)
-    let (analytics_state, request_batcher, ai_usage_batcher, job_event_batcher) =
+    let (analytics_state, request_batcher, ai_usage_batcher, job_event_batcher, page_event_batcher) =
         init_clickhouse().await;
 
     // Initialize auth state if DATABASE_URL is provided
@@ -4365,6 +4375,7 @@ pub async fn run_with_bus(
         request_batcher.clone(),
         ai_usage_batcher.clone(),
         job_event_batcher.clone(),
+        page_event_batcher.clone(),
         fetcher,
         browser_renderer,
         ai_service,
