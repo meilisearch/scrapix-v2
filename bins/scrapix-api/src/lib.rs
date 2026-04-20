@@ -98,8 +98,8 @@ use scrapix_queue::{
 };
 use scrapix_storage::clickhouse::{
     AiUsageBatcher, AiUsageEvent as ClickHouseAiUsageEvent, ClickHouseStorage,
-    JobEvent as ClickHouseJobEvent, JobEventBatcher, RequestEvent as ClickHouseRequestEvent,
-    RequestEventBatcher,
+    JobEvent as ClickHouseJobEvent, JobEventBatcher, PageEvent as ClickHousePageEvent,
+    PageEventBatcher, RequestEvent as ClickHouseRequestEvent, RequestEventBatcher,
 };
 
 /// Scrapix API Server
@@ -203,6 +203,8 @@ struct AnalyticsState {
     ai_usage_batcher: Option<Arc<AiUsageBatcher>>,
     /// Job event batcher (lifecycle: JobStarted/Completed/Failed)
     job_event_batcher: Option<Arc<JobEventBatcher>>,
+    /// Page event batcher (one row per crawled/failed page)
+    page_event_batcher: Option<Arc<PageEventBatcher>>,
 }
 
 /// Application state shared across handlers
@@ -229,6 +231,8 @@ struct AppState {
     email_client: Option<email::EmailClient>,
     /// Optional Stripe client for payment-backed auto-topup
     stripe_client: Option<::stripe::Client>,
+    /// Optional ClickHouse analytics store (used for event history queries)
+    analytics_store: Option<Arc<analytics::AnalyticsState>>,
 }
 
 #[derive(Debug, Clone)]
@@ -244,12 +248,14 @@ impl AppState {
         request_batcher: Option<Arc<RequestEventBatcher>>,
         ai_usage_batcher: Option<Arc<AiUsageBatcher>>,
         job_event_batcher: Option<Arc<JobEventBatcher>>,
+        page_event_batcher: Option<Arc<PageEventBatcher>>,
         fetcher: Arc<HttpFetcher>,
         browser_renderer: Option<Arc<CdpRenderer>>,
         ai_service: Option<Arc<AiService>>,
         db_pool: Option<sqlx::PgPool>,
         email_client: Option<email::EmailClient>,
         stripe_client: Option<::stripe::Client>,
+        analytics_store: Option<Arc<analytics::AnalyticsState>>,
     ) -> Self {
         let (event_tx, _) = broadcast::channel(10_000);
         Self {
@@ -270,6 +276,7 @@ impl AppState {
                 request_batcher,
                 ai_usage_batcher,
                 job_event_batcher,
+                page_event_batcher,
             },
             fetcher,
             browser_renderer,
@@ -277,6 +284,7 @@ impl AppState {
             db_pool,
             email_client,
             stripe_client,
+            analytics_store,
         }
     }
 
@@ -373,6 +381,18 @@ impl AppState {
                 tokio::spawn(async move {
                     if let Err(e) = batcher.add(job_event).await {
                         debug!(error = %e, "Failed to add job event to ClickHouse batcher");
+                    }
+                });
+            }
+        }
+
+        // Persist intermediate page events to ClickHouse page_events (7-day TTL)
+        if let Some(ref batcher) = self.analytics.page_event_batcher {
+            if let Some(page_event) = crawl_event_to_page_event(job_id, event) {
+                let batcher = batcher.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = batcher.add(page_event).await {
+                        debug!(error = %e, "Failed to add page event to ClickHouse batcher");
                     }
                 });
             }
@@ -819,6 +839,94 @@ fn crawl_event_to_job_event(job_id: &str, event: &CrawlEvent) -> Option<ClickHou
     }
 }
 
+/// Convert an intermediate CrawlEvent to a ClickHousePageEvent for persistence.
+/// Returns None for lifecycle events (JobStarted/Completed/Failed) which are stored in job_events.
+fn crawl_event_to_page_event(job_id: &str, event: &CrawlEvent) -> Option<ClickHousePageEvent> {
+    let now = time::OffsetDateTime::now_utc();
+    let account_id = match event {
+        CrawlEvent::PageCrawled { account_id, .. }
+        | CrawlEvent::PageFailed { account_id, .. }
+        | CrawlEvent::DocumentIndexed { account_id, .. } => account_id.clone().unwrap_or_default(),
+        _ => String::new(),
+    };
+
+    match event {
+        CrawlEvent::PageCrawled {
+            url,
+            status,
+            content_length,
+            duration_ms,
+            ..
+        } => Some(ClickHousePageEvent {
+            job_id: job_id.to_string(),
+            account_id,
+            event_type: "page_crawled".to_string(),
+            url: url.clone(),
+            status_code: *status,
+            content_length: *content_length,
+            duration_ms: *duration_ms as u32,
+            timestamp: now,
+            ..Default::default()
+        }),
+        CrawlEvent::PageFailed {
+            url,
+            error,
+            retry_count,
+            ..
+        } => Some(ClickHousePageEvent {
+            job_id: job_id.to_string(),
+            account_id,
+            event_type: "page_failed".to_string(),
+            url: url.clone(),
+            error: error.clone(),
+            retry_count: *retry_count as u8,
+            timestamp: now,
+            ..Default::default()
+        }),
+        CrawlEvent::DocumentIndexed {
+            url, document_id, ..
+        } => Some(ClickHousePageEvent {
+            job_id: job_id.to_string(),
+            account_id,
+            event_type: "document_indexed".to_string(),
+            url: url.clone(),
+            document_id: document_id.clone(),
+            timestamp: now,
+            ..Default::default()
+        }),
+        CrawlEvent::UrlsDiscovered {
+            source_url, count, ..
+        } => Some(ClickHousePageEvent {
+            job_id: job_id.to_string(),
+            event_type: "urls_discovered".to_string(),
+            source_url: source_url.clone(),
+            urls_count: *count as u32,
+            timestamp: now,
+            ..Default::default()
+        }),
+        CrawlEvent::PageSkipped { url, reason, .. } => Some(ClickHousePageEvent {
+            job_id: job_id.to_string(),
+            event_type: "page_skipped".to_string(),
+            url: url.clone(),
+            reason: reason.clone(),
+            timestamp: now,
+            ..Default::default()
+        }),
+        CrawlEvent::RateLimited {
+            domain, wait_ms, ..
+        } => Some(ClickHousePageEvent {
+            job_id: job_id.to_string(),
+            event_type: "rate_limited".to_string(),
+            domain: domain.clone(),
+            wait_ms: *wait_ms,
+            timestamp: now,
+            ..Default::default()
+        }),
+        // Lifecycle events are handled by job_event_batcher — skip here
+        _ => None,
+    }
+}
+
 /// API error response
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct ApiError {
@@ -853,6 +961,7 @@ impl IntoResponse for ApiError {
             "conflict" => StatusCode::CONFLICT,
             "insufficient_credits" => StatusCode::PAYMENT_REQUIRED,
             "spend_limit_exceeded" => StatusCode::FORBIDDEN,
+            "service_unavailable" => StatusCode::SERVICE_UNAVAILABLE,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
         (status, Json(self)).into_response()
@@ -3547,6 +3656,151 @@ async fn job_events(
 }
 
 // ============================================================================
+// Job Event History (ClickHouse)
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+struct JobEventsHistoryParams {
+    #[serde(default = "default_history_limit")]
+    limit: u32,
+    #[serde(default)]
+    offset: u32,
+    /// Comma-separated event type filter: "page_crawled,page_failed,document_indexed"
+    /// Leave empty for all types.
+    #[serde(default)]
+    filter: String,
+}
+
+fn default_history_limit() -> u32 {
+    1000
+}
+
+#[derive(Debug, Serialize)]
+struct JobEventsHistoryResponse {
+    events: Vec<PageEventRow>,
+    returned: usize,
+    limit: u32,
+    offset: u32,
+}
+
+#[derive(Debug, Serialize)]
+struct PageEventRow {
+    event_type: String,
+    url: String,
+    status_code: u16,
+    content_length: u64,
+    duration_ms: u32,
+    error: String,
+    retry_count: u8,
+    document_id: String,
+    urls_count: u32,
+    source_url: String,
+    reason: String,
+    domain: String,
+    wait_ms: u64,
+    /// Unix timestamp in milliseconds
+    timestamp: i64,
+}
+
+impl From<ClickHousePageEvent> for PageEventRow {
+    fn from(e: ClickHousePageEvent) -> Self {
+        Self {
+            event_type: e.event_type,
+            url: e.url,
+            status_code: e.status_code,
+            content_length: e.content_length,
+            duration_ms: e.duration_ms,
+            error: e.error,
+            retry_count: e.retry_count,
+            document_id: e.document_id,
+            urls_count: e.urls_count,
+            source_url: e.source_url,
+            reason: e.reason,
+            domain: e.domain,
+            wait_ms: e.wait_ms,
+            timestamp: (e.timestamp.unix_timestamp_nanos() / 1_000_000) as i64,
+        }
+    }
+}
+
+/// Get the full persisted event history for a job from ClickHouse.
+async fn get_job_events_history(
+    State(state): State<Arc<AppState>>,
+    account_ext: Option<Extension<AuthenticatedAccount>>,
+    user_ext: Option<Extension<AuthenticatedUser>>,
+    Path(job_id): Path<String>,
+    Query(params): Query<JobEventsHistoryParams>,
+) -> Result<Json<JobEventsHistoryResponse>, ApiError> {
+    let account_ctx =
+        extract_account_context(state.db_pool.as_ref(), &account_ext, &user_ext).await;
+
+    // Verify the job exists (check in-memory then Postgres)
+    let job = if let Some(job) = state.get_job(&job_id) {
+        job
+    } else if let Some(ref pool) = state.db_pool {
+        if let Some(ctx) = &account_ctx {
+            jobs_db::get_job_for_account(pool, &job_id, &ctx.account_id).await
+        } else {
+            jobs_db::get_job_from_db(pool, &job_id).await
+        }
+        .ok_or_else(|| ApiError::new("Job not found", "not_found"))?
+    } else {
+        return Err(ApiError::new("Job not found", "not_found"));
+    };
+
+    check_job_ownership(&job, &account_ctx)?;
+
+    // Require ClickHouse to be configured
+    let analytics = state.analytics_store.as_ref().ok_or_else(|| {
+        ApiError::new(
+            "Event history requires ClickHouse to be configured",
+            "service_unavailable",
+        )
+    })?;
+
+    // Flush pending page events so recently-written rows are visible
+    if let Some(ref batcher) = state.analytics.page_event_batcher {
+        if let Err(e) = batcher.flush().await {
+            warn!(
+                "Failed to flush page_event_batcher before history query: {}",
+                e
+            );
+        }
+    }
+
+    // Parse optional filter param
+    let filter_types: Vec<&str> = if params.filter.is_empty() {
+        vec![]
+    } else {
+        params
+            .filter
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect()
+    };
+
+    let raw_events = analytics
+        .storage
+        .get_page_events(&job_id, params.limit, params.offset, &filter_types)
+        .await
+        .map_err(|e| {
+            error!("get_page_events query failed for job {}: {}", job_id, e);
+            ApiError::new(format!("Failed to query event history: {e}"), "query_error")
+        })?;
+
+    let returned = raw_events.len();
+    let events: Vec<PageEventRow> = raw_events.into_iter().map(PageEventRow::from).collect();
+
+    Ok(Json(JobEventsHistoryResponse {
+        events,
+        returned,
+        limit: params.limit,
+        offset: params.offset,
+    }))
+}
+
+// ============================================================================
 // Diagnostic Handlers
 // ============================================================================
 
@@ -4144,19 +4398,20 @@ fn start_event_consumer(
 // ============================================================================
 
 /// Initialize ClickHouse storage and event batchers.
-/// Returns (AnalyticsState for API, RequestEventBatcher, AiUsageBatcher, JobEventBatcher).
+/// Returns (AnalyticsState for API, RequestEventBatcher, AiUsageBatcher, JobEventBatcher, PageEventBatcher).
 async fn init_clickhouse() -> (
     Option<Arc<analytics::AnalyticsState>>,
     Option<Arc<RequestEventBatcher>>,
     Option<Arc<AiUsageBatcher>>,
     Option<Arc<JobEventBatcher>>,
+    Option<Arc<PageEventBatcher>>,
 ) {
     // Check if ClickHouse is configured
     let config = match analytics::AnalyticsConfig::from_env() {
         Some(c) => c,
         None => {
             info!("ClickHouse not configured (CLICKHOUSE_URL not set)");
-            return (None, None, None, None);
+            return (None, None, None, None, None);
         }
     };
 
@@ -4174,7 +4429,7 @@ async fn init_clickhouse() -> (
         Ok(s) => s,
         Err(e) => {
             warn!(error = %e, "Failed to connect to ClickHouse. Analytics and event persistence disabled.");
-            return (None, None, None, None);
+            return (None, None, None, None, None);
         }
     };
 
@@ -4197,6 +4452,9 @@ async fn init_clickhouse() -> (
     // Create job event batcher (batch size of 50 — lifecycle events only)
     let job_batcher = Arc::new(JobEventBatcher::new(storage.clone(), 50, "job_events"));
 
+    // Create page event batcher (batch size of 100 — one row per crawled/failed page)
+    let page_batcher = Arc::new(PageEventBatcher::new(storage.clone(), 100, "page_events"));
+
     // Create analytics state (sharing the same storage connection)
     let analytics_state = Arc::new(analytics::AnalyticsState::with_storage(storage));
 
@@ -4205,6 +4463,7 @@ async fn init_clickhouse() -> (
         Some(batcher),
         Some(ai_batcher),
         Some(job_batcher),
+        Some(page_batcher),
     )
 }
 
@@ -4229,7 +4488,7 @@ pub async fn run_with_bus(
     );
 
     // Initialize ClickHouse for analytics (optional)
-    let (analytics_state, request_batcher, ai_usage_batcher, job_event_batcher) =
+    let (analytics_state, request_batcher, ai_usage_batcher, job_event_batcher, page_event_batcher) =
         init_clickhouse().await;
 
     // Initialize auth state if DATABASE_URL is provided
@@ -4365,12 +4624,14 @@ pub async fn run_with_bus(
         request_batcher.clone(),
         ai_usage_batcher.clone(),
         job_event_batcher.clone(),
+        page_event_batcher.clone(),
         fetcher,
         browser_renderer,
         ai_service,
         db_pool,
         email_client,
         stripe_client,
+        analytics_state.clone(),
     ));
 
     // Recover active jobs from Postgres on startup
@@ -4744,6 +5005,7 @@ pub async fn run_with_bus(
         .route("/jobs", get(list_jobs))
         .route("/job/{id}/status", get(job_status))
         .route("/job/{id}/events", get(job_events))
+        .route("/job/{id}/events/history", get(get_job_events_history))
         .route("/job/{id}", delete(cancel_job));
 
     // Protected routes (API key auth required when enabled)

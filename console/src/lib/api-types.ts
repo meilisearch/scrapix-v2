@@ -450,3 +450,29 @@ export interface TopDomainRow {
   avg_duration_ms: number;
   total_bytes: number;
 }
+
+// From GET /job/{id}/events/history
+export interface PageEventRecord {
+  event_type: "page_crawled" | "page_failed" | "document_indexed" | "urls_discovered" | "page_skipped" | "rate_limited";
+  url: string;
+  status_code: number;
+  content_length: number;
+  duration_ms: number;
+  error: string;
+  retry_count: number;
+  document_id: string;
+  urls_count: number;
+  source_url: string;
+  reason: string;
+  domain: string;
+  wait_ms: number;
+  /** Unix timestamp in milliseconds */
+  timestamp: number;
+}
+
+export interface JobEventsHistoryResponse {
+  events: PageEventRecord[];
+  returned: number;
+  limit: number;
+  offset: number;
+}

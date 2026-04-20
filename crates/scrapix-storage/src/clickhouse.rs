@@ -313,6 +313,77 @@ impl Default for AiUsageEvent {
 }
 
 // ============================================================================
+// Data Types — Page Events (intermediate crawl events, 7-day TTL)
+// ============================================================================
+
+/// One row per intermediate crawl event (page_crawled, page_failed, document_indexed, etc.).
+/// Stored for 7 days for live-event replay on completed jobs.
+#[derive(Debug, Clone, Serialize, Deserialize, Row)]
+pub struct PageEvent {
+    pub job_id: String,
+    #[serde(default)]
+    pub account_id: String,
+    /// Event type: "page_crawled", "page_failed", "document_indexed",
+    /// "urls_discovered", "page_skipped", "rate_limited".
+    pub event_type: String,
+    /// URL of the page (empty for rate_limited).
+    #[serde(default)]
+    pub url: String,
+    /// HTTP status code (page_crawled only, 0 otherwise).
+    pub status_code: u16,
+    /// Bytes downloaded (page_crawled only, 0 otherwise).
+    pub content_length: u64,
+    /// Request duration in ms (page_crawled only, 0 otherwise).
+    pub duration_ms: u32,
+    /// Error message (page_failed only).
+    #[serde(default)]
+    pub error: String,
+    /// Retry count (page_failed only, 0 otherwise).
+    pub retry_count: u8,
+    /// Meilisearch document ID (document_indexed only).
+    #[serde(default)]
+    pub document_id: String,
+    /// Number of URLs discovered (urls_discovered only, 0 otherwise).
+    pub urls_count: u32,
+    /// Source URL for urls_discovered (empty otherwise).
+    #[serde(default)]
+    pub source_url: String,
+    /// Skip reason (page_skipped only).
+    #[serde(default)]
+    pub reason: String,
+    /// Domain being rate-limited (rate_limited only).
+    #[serde(default)]
+    pub domain: String,
+    /// Wait time in ms (rate_limited only, 0 otherwise).
+    pub wait_ms: u64,
+    #[serde(with = "clickhouse::serde::time::datetime")]
+    pub timestamp: time::OffsetDateTime,
+}
+
+impl Default for PageEvent {
+    fn default() -> Self {
+        Self {
+            job_id: String::new(),
+            account_id: String::new(),
+            event_type: String::new(),
+            url: String::new(),
+            status_code: 0,
+            content_length: 0,
+            duration_ms: 0,
+            error: String::new(),
+            retry_count: 0,
+            document_id: String::new(),
+            urls_count: 0,
+            source_url: String::new(),
+            reason: String::new(),
+            domain: String::new(),
+            wait_ms: 0,
+            timestamp: time::OffsetDateTime::now_utc(),
+        }
+    }
+}
+
+// ============================================================================
 // Aggregation Result Types
 // ============================================================================
 
@@ -649,6 +720,42 @@ impl ClickHouseStorage {
             .execute()
             .await?;
 
+        // page_events — intermediate crawl events (7-day TTL)
+        let page_events = self.table_name("page_events");
+        self.client
+            .query(&format!(
+                r#"
+                CREATE TABLE IF NOT EXISTS {} (
+                    job_id          String,
+                    account_id      LowCardinality(String),
+                    event_type      LowCardinality(String),
+                    url             String,
+                    status_code     UInt16,
+                    content_length  UInt64,
+                    duration_ms     UInt32,
+                    error           String,
+                    retry_count     UInt8,
+                    document_id     String,
+                    urls_count      UInt32,
+                    source_url      String,
+                    reason          String,
+                    domain          String,
+                    wait_ms         UInt64,
+                    timestamp       DateTime,
+                    INDEX idx_job_id job_id TYPE bloom_filter GRANULARITY 1,
+                    INDEX idx_account_id account_id TYPE bloom_filter GRANULARITY 1,
+                    INDEX idx_event_type event_type TYPE set(6) GRANULARITY 1,
+                    INDEX idx_domain domain TYPE bloom_filter GRANULARITY 1
+                ) ENGINE = MergeTree()
+                PARTITION BY toYYYYMM(timestamp)
+                ORDER BY (job_id, timestamp)
+                TTL timestamp + INTERVAL 7 DAY
+                "#,
+                page_events
+            ))
+            .execute()
+            .await?;
+
         info!("ClickHouse tables created successfully");
         Ok(())
     }
@@ -709,6 +816,80 @@ impl ClickHouseStorage {
         insert.end().await?;
         debug!(count = events.len(), "Inserted AI usage events batch");
         Ok(())
+    }
+
+    #[instrument(skip(self, events), fields(count = events.len()))]
+    pub async fn insert_page_events(&self, events: Vec<PageEvent>) -> Result<(), ClickHouseError> {
+        if events.is_empty() {
+            return Ok(());
+        }
+
+        let table = self.table_name("page_events");
+        let mut insert = self.client.insert(&table)?;
+        for event in &events {
+            insert.write(event).await?;
+        }
+        insert.end().await?;
+        debug!(count = events.len(), "Inserted page events batch");
+        Ok(())
+    }
+
+    #[instrument(skip(self))]
+    pub async fn get_page_events(
+        &self,
+        job_id: &str,
+        limit: u32,
+        offset: u32,
+        event_types: &[&str],
+    ) -> Result<Vec<PageEvent>, ClickHouseError> {
+        const VALID_EVENT_TYPES: &[&str] = &[
+            "page_crawled",
+            "page_failed",
+            "document_indexed",
+            "urls_discovered",
+            "page_skipped",
+            "rate_limited",
+        ];
+
+        for t in event_types {
+            if !VALID_EVENT_TYPES.contains(t) {
+                return Err(ClickHouseError::ConfigError(format!(
+                    "invalid event_type: {t}"
+                )));
+            }
+        }
+
+        let table = self.table_name("page_events");
+
+        let type_filter = if event_types.is_empty() {
+            String::new()
+        } else {
+            let quoted: Vec<String> = event_types.iter().map(|t| format!("'{}'", t)).collect();
+            format!("AND event_type IN ({})", quoted.join(", "))
+        };
+
+        let events = self
+            .client
+            .query(&format!(
+                r#"
+                SELECT
+                    job_id, account_id, event_type, url, status_code,
+                    content_length, duration_ms, error, retry_count,
+                    document_id, urls_count, source_url, reason,
+                    domain, wait_ms, timestamp
+                FROM {}
+                WHERE job_id = ? {}
+                ORDER BY timestamp ASC
+                LIMIT ? OFFSET ?
+                "#,
+                table, type_filter
+            ))
+            .bind(job_id)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all::<PageEvent>()
+            .await?;
+        Ok(events)
     }
 
     // ========================================================================
@@ -1266,6 +1447,13 @@ impl BatchInsert<AiUsageEvent> for ClickHouseStorage {
     }
 }
 
+#[async_trait::async_trait]
+impl BatchInsert<PageEvent> for ClickHouseStorage {
+    async fn insert_batch(&self, events: Vec<PageEvent>) -> Result<(), ClickHouseError> {
+        self.insert_page_events(events).await
+    }
+}
+
 pub struct EventBatcher<T: Send> {
     storage: ClickHouseStorage,
     batch: parking_lot::Mutex<Vec<T>>,
@@ -1335,6 +1523,7 @@ impl<T: Send> Drop for EventBatcher<T> {
 pub type RequestEventBatcher = EventBatcher<RequestEvent>;
 pub type JobEventBatcher = EventBatcher<JobEvent>;
 pub type AiUsageBatcher = EventBatcher<AiUsageEvent>;
+pub type PageEventBatcher = EventBatcher<PageEvent>;
 
 // ============================================================================
 // Tests
