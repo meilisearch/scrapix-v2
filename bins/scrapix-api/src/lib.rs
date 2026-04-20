@@ -231,6 +231,8 @@ struct AppState {
     email_client: Option<email::EmailClient>,
     /// Optional Stripe client for payment-backed auto-topup
     stripe_client: Option<::stripe::Client>,
+    /// Optional ClickHouse analytics store (used for event history queries)
+    analytics_store: Option<Arc<analytics::AnalyticsState>>,
 }
 
 #[derive(Debug, Clone)]
@@ -253,6 +255,7 @@ impl AppState {
         db_pool: Option<sqlx::PgPool>,
         email_client: Option<email::EmailClient>,
         stripe_client: Option<::stripe::Client>,
+        analytics_store: Option<Arc<analytics::AnalyticsState>>,
     ) -> Self {
         let (event_tx, _) = broadcast::channel(10_000);
         Self {
@@ -281,6 +284,7 @@ impl AppState {
             db_pool,
             email_client,
             stripe_client,
+            analytics_store,
         }
     }
 
@@ -842,9 +846,7 @@ fn crawl_event_to_page_event(job_id: &str, event: &CrawlEvent) -> Option<ClickHo
     let account_id = match event {
         CrawlEvent::PageCrawled { account_id, .. }
         | CrawlEvent::PageFailed { account_id, .. }
-        | CrawlEvent::DocumentIndexed { account_id, .. } => {
-            account_id.clone().unwrap_or_default()
-        }
+        | CrawlEvent::DocumentIndexed { account_id, .. } => account_id.clone().unwrap_or_default(),
         _ => String::new(),
     };
 
@@ -3653,6 +3655,154 @@ async fn job_events(
 }
 
 // ============================================================================
+// Job Event History (ClickHouse)
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+struct JobEventsHistoryParams {
+    #[serde(default = "default_history_limit")]
+    limit: u32,
+    #[serde(default)]
+    offset: u32,
+    /// Comma-separated event type filter: "page_crawled,page_failed,document_indexed"
+    /// Leave empty for all types.
+    #[serde(default)]
+    filter: String,
+}
+
+fn default_history_limit() -> u32 {
+    1000
+}
+
+#[derive(Debug, Serialize)]
+struct JobEventsHistoryResponse {
+    events: Vec<PageEventRow>,
+    total: usize,
+    limit: u32,
+    offset: u32,
+}
+
+#[derive(Debug, Serialize)]
+struct PageEventRow {
+    event_type: String,
+    url: String,
+    status_code: u16,
+    content_length: u64,
+    duration_ms: u32,
+    error: String,
+    retry_count: u8,
+    document_id: String,
+    urls_count: u32,
+    source_url: String,
+    reason: String,
+    domain: String,
+    wait_ms: u64,
+    /// Unix timestamp in milliseconds
+    timestamp: i64,
+}
+
+impl From<ClickHousePageEvent> for PageEventRow {
+    fn from(e: ClickHousePageEvent) -> Self {
+        Self {
+            event_type: e.event_type,
+            url: e.url,
+            status_code: e.status_code,
+            content_length: e.content_length,
+            duration_ms: e.duration_ms,
+            error: e.error,
+            retry_count: e.retry_count,
+            document_id: e.document_id,
+            urls_count: e.urls_count,
+            source_url: e.source_url,
+            reason: e.reason,
+            domain: e.domain,
+            wait_ms: e.wait_ms,
+            timestamp: (e.timestamp.unix_timestamp_nanos() / 1_000_000) as i64,
+        }
+    }
+}
+
+/// Get the full persisted event history for a job from ClickHouse.
+async fn get_job_events_history(
+    State(state): State<Arc<AppState>>,
+    account_ext: Option<Extension<AuthenticatedAccount>>,
+    user_ext: Option<Extension<AuthenticatedUser>>,
+    Path(job_id): Path<String>,
+    Query(params): Query<JobEventsHistoryParams>,
+) -> Result<Json<JobEventsHistoryResponse>, ApiError> {
+    let account_ctx =
+        extract_account_context(state.db_pool.as_ref(), &account_ext, &user_ext).await;
+
+    // Verify the job exists (check in-memory then Postgres)
+    let job = if let Some(job) = state.get_job(&job_id) {
+        job
+    } else if let Some(ref pool) = state.db_pool {
+        if let Some(ctx) = &account_ctx {
+            jobs_db::get_job_for_account(pool, &job_id, &ctx.account_id).await
+        } else {
+            jobs_db::get_job_from_db(pool, &job_id).await
+        }
+        .ok_or_else(|| ApiError::new("Job not found", "not_found"))?
+    } else {
+        return Err(ApiError::new("Job not found", "not_found"));
+    };
+
+    check_job_ownership(&job, &account_ctx)?;
+
+    // Require ClickHouse to be configured
+    let analytics = state.analytics_store.as_ref().ok_or_else(|| {
+        ApiError::new(
+            "Event history requires ClickHouse to be configured",
+            "service_unavailable",
+        )
+    })?;
+
+    // Flush pending page events so recently-written rows are visible
+    if let Some(ref batcher) = state.analytics.page_event_batcher {
+        if let Err(e) = batcher.flush().await {
+            warn!(
+                "Failed to flush page_event_batcher before history query: {}",
+                e
+            );
+        }
+    }
+
+    // Parse optional filter param
+    let filter_string = params.filter.clone();
+    let filter_types: Vec<&str> = if filter_string.is_empty() {
+        vec![]
+    } else {
+        filter_string
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect()
+    };
+
+    let raw_events = analytics
+        .storage
+        .get_page_events(&job_id, params.limit, params.offset, &filter_types)
+        .await
+        .map_err(|e| {
+            error!("get_page_events query failed for job {}: {}", job_id, e);
+            ApiError::new(
+                format!("Failed to query event history: {e}"),
+                "query_error",
+            )
+        })?;
+
+    let total = raw_events.len();
+    let events: Vec<PageEventRow> = raw_events.into_iter().map(PageEventRow::from).collect();
+
+    Ok(Json(JobEventsHistoryResponse {
+        events,
+        total,
+        limit: params.limit,
+        offset: params.offset,
+    }))
+}
+
+// ============================================================================
 // Diagnostic Handlers
 // ============================================================================
 
@@ -4483,6 +4633,7 @@ pub async fn run_with_bus(
         db_pool,
         email_client,
         stripe_client,
+        analytics_state.clone(),
     ));
 
     // Recover active jobs from Postgres on startup
@@ -4856,6 +5007,7 @@ pub async fn run_with_bus(
         .route("/jobs", get(list_jobs))
         .route("/job/{id}/status", get(job_status))
         .route("/job/{id}/events", get(job_events))
+        .route("/job/{id}/events/history", get(get_job_events_history))
         .route("/job/{id}", delete(cancel_job));
 
     // Protected routes (API key auth required when enabled)
