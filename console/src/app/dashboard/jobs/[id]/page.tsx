@@ -201,6 +201,7 @@ export default function JobDetailPage() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const historyAppliedRef = useRef(false);
 
   const {
     data: status,
@@ -372,7 +373,8 @@ export default function JobDetailPage() {
 
   // When event history loads for a completed/failed job, populate the log
   useEffect(() => {
-    if (!eventHistory || eventHistory.events.length === 0) return;
+    if (!eventHistory || historyAppliedRef.current) return;
+    historyAppliedRef.current = true;
 
     for (const evt of eventHistory.events) {
       switch (evt.event_type) {
@@ -400,8 +402,7 @@ export default function JobDetailPage() {
           break;
       }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eventHistory]);
+  }, [eventHistory, addLog]);
 
   // Auto-scroll logs
   useEffect(() => {
