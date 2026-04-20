@@ -29,93 +29,21 @@ use scrapix_lifecycle::{
 use tokio::sync::Semaphore;
 use tracing::{debug, info, warn};
 
-use scrapix_core::{CrawlUrl, FeaturesConfig, ScrapixError, UrlPatterns};
+use scrapix_core::{CrawlUrl, FeaturesConfig, UrlPatterns};
 #[cfg(feature = "browser")]
 use scrapix_crawler::{CdpRenderer, CdpRendererBuilder};
 use scrapix_crawler::{
-    ConditionalRequestHeaders, ExtractorConfig, HttpFetcher, HttpFetcherBuilder,
-    PersistentRobotsCache, RobotsCache, RobotsConfig, RobotsPersistence, SitemapParser,
-    UrlExtractor,
+    ConditionalRequestHeaders, ExtractorConfig, HttpFetcher, HttpFetcherBuilder, RobotsCache,
+    RobotsConfig, SitemapConfig, SitemapParser, UrlExtractor,
 };
 use scrapix_frontier::LinkGraph;
 use scrapix_queue::{
     topic_names, AnyConsumer, AnyProducer, ConsumerBuilder, CrawlEvent, LinksMessage,
     ProducerBuilder, RawPageMessage, UrlMessage,
 };
-use scrapix_storage::{
-    RedisCrawlHistory, RedisStorage, RocksConfig, RocksStorage, RocksStorageAdapter,
-};
+use scrapix_storage::{RedisCrawlHistory, RedisStorage};
 
 use std::collections::HashSet;
-
-/// Adapter to implement RocksDbOps for RocksStorageAdapter
-struct RocksRobotsPersistenceAdapter {
-    storage: Arc<RocksStorageAdapter>,
-}
-
-impl RocksRobotsPersistenceAdapter {
-    fn new(storage: Arc<RocksStorageAdapter>) -> Self {
-        Self { storage }
-    }
-}
-
-impl RobotsPersistence for RocksRobotsPersistenceAdapter {
-    fn get(
-        &self,
-        domain: &str,
-    ) -> scrapix_core::Result<Option<scrapix_crawler::PersistentRobotsEntry>> {
-        let key = format!("robots:{}", domain).into_bytes();
-        match self.storage.get_cf("robots_cache", &key)? {
-            Some(data) => {
-                let entry = serde_json::from_slice(&data)
-                    .map_err(|e| ScrapixError::Storage(format!("Failed to deserialize: {}", e)))?;
-                Ok(Some(entry))
-            }
-            None => Ok(None),
-        }
-    }
-
-    fn put(
-        &self,
-        domain: &str,
-        entry: &scrapix_crawler::PersistentRobotsEntry,
-    ) -> scrapix_core::Result<()> {
-        let key = format!("robots:{}", domain).into_bytes();
-        let data = serde_json::to_vec(entry)
-            .map_err(|e| ScrapixError::Storage(format!("Failed to serialize: {}", e)))?;
-        self.storage.put_cf("robots_cache", &key, &data)
-    }
-
-    fn delete(&self, domain: &str) -> scrapix_core::Result<()> {
-        let key = format!("robots:{}", domain).into_bytes();
-        self.storage.delete_cf("robots_cache", &key)
-    }
-
-    fn list_domains(&self) -> scrapix_core::Result<Vec<String>> {
-        let prefix = b"robots:";
-        let entries = self.storage.prefix_iter_cf("robots_cache", prefix)?;
-        let domains = entries
-            .into_iter()
-            .filter_map(|(key, _)| {
-                String::from_utf8(key)
-                    .ok()
-                    .and_then(|s| s.strip_prefix("robots:").map(|d| d.to_string()))
-            })
-            .collect();
-        Ok(domains)
-    }
-
-    fn count(&self) -> scrapix_core::Result<usize> {
-        Ok(self.list_domains()?.len())
-    }
-
-    fn clear(&self) -> scrapix_core::Result<()> {
-        for domain in self.list_domains()? {
-            self.delete(&domain)?;
-        }
-        Ok(())
-    }
-}
 
 /// Crawler worker for fetching web pages from the URL frontier
 #[derive(Parser, Debug)]
@@ -232,10 +160,6 @@ pub struct Args {
     #[arg(short, long)]
     pub verbose: bool,
 
-    /// RocksDB path for persistent state (robots.txt cache, etc.)
-    #[arg(long, env = "ROCKSDB_PATH", default_value = "./data/crawler-rocksdb")]
-    pub rocksdb_path: String,
-
     /// Enable sitemap discovery from robots.txt
     #[arg(long, env = "SITEMAP_DISCOVERY", default_value = "true")]
     pub sitemap_discovery: bool,
@@ -349,9 +273,7 @@ struct MetricsSnapshot {
     dns_cache_misses: u64,
     browser_renders: u64,
     http_fetches: u64,
-    #[allow(dead_code)]
     sitemap_urls_discovered: u64,
-    #[allow(dead_code)]
     domains_with_sitemaps: u64,
 }
 
@@ -360,7 +282,6 @@ struct CrawlerWorker {
     consumer: AnyConsumer,
     producer: AnyProducer,
     fetcher: HttpFetcher,
-    robots_cache: Arc<PersistentRobotsCache>,
     sitemap_parser: Option<SitemapParser>,
     #[cfg(feature = "browser")]
     browser_renderer: Option<Arc<CdpRenderer>>,
@@ -381,7 +302,6 @@ struct CrawlerWorker {
     crawl_history: Option<Arc<RedisCrawlHistory>>,
     /// Tracks domains we've already discovered sitemaps for
     discovered_sitemap_domains: Arc<parking_lot::RwLock<std::collections::HashSet<String>>>,
-    max_sitemap_urls: usize,
 }
 
 impl CrawlerWorker {
@@ -460,41 +380,13 @@ impl CrawlerWorker {
         // Create simple in-memory robots cache for the HTTP fetcher
         let fetcher_robots_cache = Arc::new(RobotsCache::new(robots_config.clone())?);
 
-        // Create RocksDB storage for persistent state (sitemap discovery, robots persistence)
-        info!(path = %args.rocksdb_path, "Initializing RocksDB storage");
-        let rocks_config = RocksConfig {
-            path: args.rocksdb_path.clone(),
-            column_families: vec!["default".to_string(), "robots_cache".to_string()],
-            ..Default::default()
-        };
-        let rocks_storage = RocksStorage::new(rocks_config)?;
-        let rocks_adapter = Arc::new(RocksStorageAdapter::new(rocks_storage));
-
-        // Create RocksDB-backed persistence for persistent robots cache (used for sitemap discovery)
-        let robots_persistence: Arc<dyn RobotsPersistence> =
-            Arc::new(RocksRobotsPersistenceAdapter::new(rocks_adapter));
-        let persistent_robots_cache = Arc::new(PersistentRobotsCache::new(
-            robots_config,
-            robots_persistence,
-        )?);
-
-        // Warm up persistent robots cache from storage
-        match persistent_robots_cache.warm_memory_cache() {
-            Ok(loaded) => {
-                if loaded > 0 {
-                    info!(
-                        count = loaded,
-                        "Loaded robots.txt entries from persistent cache"
-                    );
-                }
-            }
-            Err(e) => warn!(error = %e, "Failed to warm robots cache"),
-        }
-
         // Create sitemap parser if enabled
         let sitemap_parser = if args.sitemap_discovery {
             info!("Sitemap discovery enabled");
-            Some(SitemapParser::with_defaults())
+            Some(SitemapParser::new(SitemapConfig {
+                max_urls: args.max_sitemap_urls,
+                ..SitemapConfig::default()
+            }))
         } else {
             None
         };
@@ -633,7 +525,6 @@ impl CrawlerWorker {
             consumer,
             producer,
             fetcher,
-            robots_cache: persistent_robots_cache,
             sitemap_parser,
             #[cfg(feature = "browser")]
             browser_renderer,
@@ -651,7 +542,6 @@ impl CrawlerWorker {
             publish_links: args.publish_links,
             crawl_history,
             discovered_sitemap_domains: Arc::new(parking_lot::RwLock::new(HashSet::new())),
-            max_sitemap_urls: args.max_sitemap_urls,
         })
     }
 
@@ -683,6 +573,8 @@ impl CrawlerWorker {
                     failed = snapshot.urls_failed,
                     not_modified = snapshot.urls_not_modified,
                     discovered = snapshot.urls_discovered,
+                    sitemap_urls = snapshot.sitemap_urls_discovered,
+                    sitemap_domains = snapshot.domains_with_sitemaps,
                     bytes_mb = snapshot.bytes_downloaded / (1024 * 1024),
                     active = snapshot.active_fetches,
                     http_fetches = snapshot.http_fetches,
@@ -827,85 +719,50 @@ impl CrawlerWorker {
             None => return Ok(0),
         };
 
-        // Get sitemap URLs from robots.txt (via persistent cache)
-        let mut sitemap_urls = match self.robots_cache.get_sitemaps(domain).await {
+        // Use the same full discovery as /map: fetch robots.txt, follow all sub-sitemaps
+        let base_url = format!("https://{domain}");
+        let sitemap_entries = match sitemap_parser.discover_all_urls(&base_url).await {
             Ok(urls) => urls,
             Err(e) => {
-                debug!(domain, error = %e, "Failed to get sitemaps from robots.txt");
-                vec![]
+                debug!(domain, error = %e, "Sitemap discovery failed");
+                return Ok(0);
             }
         };
 
-        // If robots.txt had no Sitemap: directives, try the default /sitemap.xml location
-        if sitemap_urls.is_empty() {
-            let default_sitemap = format!("https://{}/sitemap.xml", domain);
-            debug!(domain, url = %default_sitemap, "No sitemaps in robots.txt, trying default /sitemap.xml");
-            sitemap_urls.push(default_sitemap);
-        }
-
         info!(
             domain,
-            sitemap_count = sitemap_urls.len(),
-            "Found sitemaps in robots.txt"
+            found = sitemap_entries.len(),
+            "Discovered URLs from sitemaps"
         );
 
-        // Parse each sitemap and collect URLs
         let mut discovered_count = 0;
-        for sitemap_url in sitemap_urls {
-            // fetch_and_parse recursively expands sitemap indexes and returns all URLs
-            let urls = match sitemap_parser.fetch_and_parse(&sitemap_url).await {
-                Ok(urls) => urls,
-                Err(e) => {
-                    debug!(sitemap_url, error = %e, "Failed to fetch/parse sitemap");
-                    continue;
-                }
-            };
+        for sitemap_entry in sitemap_entries {
+            // Filter non-page URLs (images, PDFs, CSS, JS, fonts, etc.)
+            if scrapix_crawler::is_non_page_url(&sitemap_entry.loc) {
+                continue;
+            }
 
-            debug!(sitemap_url, url_count = urls.len(), "Parsed sitemap");
-
-            let urls_to_publish = urls
-                .into_iter()
-                .take(self.max_sitemap_urls - discovered_count);
-
-            for sitemap_entry in urls_to_publish {
-                // Filter non-page URLs (images, PDFs, CSS, JS, fonts, etc.)
-                if scrapix_crawler::is_non_page_url(&sitemap_entry.loc) {
-                    continue;
-                }
-
-                // Filter sitemap URLs using allowed_domains whitelist first (strictest check)
-                if let Some(ref patterns) = url_patterns {
-                    if !patterns.allowed_domains.is_empty() {
-                        // Extract domain from sitemap URL
-                        if let Ok(parsed_url) = url::Url::parse(&sitemap_entry.loc) {
-                            if let Some(url_domain) = parsed_url.host_str() {
-                                let domain_allowed = patterns
-                                    .allowed_domains
-                                    .iter()
-                                    .any(|d| d.eq_ignore_ascii_case(url_domain));
-                                if !domain_allowed {
-                                    continue; // Skip URLs from non-whitelisted domains
-                                }
+            // Filter by allowed_domains whitelist
+            if let Some(ref patterns) = url_patterns {
+                if !patterns.allowed_domains.is_empty() {
+                    if let Ok(parsed_url) = url::Url::parse(&sitemap_entry.loc) {
+                        if let Some(url_domain) = parsed_url.host_str() {
+                            if !patterns
+                                .allowed_domains
+                                .iter()
+                                .any(|d| d.eq_ignore_ascii_case(url_domain))
+                            {
+                                continue;
                             }
                         }
                     }
                 }
+            }
 
-                // Filter sitemap URLs using glob patterns if available
-                if let Some(ref patterns) = url_patterns {
-                    let matches_include = patterns.include.is_empty()
-                        || patterns.include.iter().any(|p| {
-                            if p.contains("**") {
-                                let parts: Vec<&str> = p.split("**").collect();
-                                parts.len() == 2
-                                    && sitemap_entry.loc.starts_with(parts[0])
-                                    && (parts[1].is_empty()
-                                        || sitemap_entry.loc.ends_with(parts[1]))
-                            } else {
-                                sitemap_entry.loc == *p
-                            }
-                        });
-                    let matches_exclude = patterns.exclude.iter().any(|p| {
+            // Filter by include/exclude glob patterns
+            if let Some(ref patterns) = url_patterns {
+                let matches_include = patterns.include.is_empty()
+                    || patterns.include.iter().any(|p| {
                         if p.contains("**") {
                             let parts: Vec<&str> = p.split("**").collect();
                             parts.len() == 2
@@ -915,59 +772,51 @@ impl CrawlerWorker {
                             sitemap_entry.loc == *p
                         }
                     });
-                    if !matches_include || matches_exclude {
-                        continue; // Skip URLs that don't match patterns
+                let matches_exclude = patterns.exclude.iter().any(|p| {
+                    if p.contains("**") {
+                        let parts: Vec<&str> = p.split("**").collect();
+                        parts.len() == 2
+                            && sitemap_entry.loc.starts_with(parts[0])
+                            && (parts[1].is_empty() || sitemap_entry.loc.ends_with(parts[1]))
+                    } else {
+                        sitemap_entry.loc == *p
                     }
+                });
+                if !matches_include || matches_exclude {
+                    continue;
                 }
+            }
 
-                // Create a CrawlUrl from the sitemap entry
-                let mut crawl_url = CrawlUrl::seed(&sitemap_entry.loc);
-                // Mark as discovered from sitemap via parent_url
-                crawl_url.parent_url = Some(format!("sitemap:{}", sitemap_url));
+            let mut crawl_url = CrawlUrl::seed(&sitemap_entry.loc);
+            crawl_url.parent_url = Some(format!("sitemap:{domain}"));
 
-                // Boost priority based on sitemap priority
-                if let Some(priority) = sitemap_entry.priority {
-                    crawl_url.priority = (priority * 100.0) as i32;
+            if let Some(priority) = sitemap_entry.priority {
+                crawl_url.priority = (priority * 100.0) as i32;
+            }
+
+            let url_msg = match &url_patterns {
+                Some(patterns) => {
+                    UrlMessage::with_patterns(crawl_url, job_id, index_uid, patterns.clone())
                 }
+                None => UrlMessage::new(crawl_url, job_id, index_uid),
+            }
+            .with_source(source.clone())
+            .with_meilisearch(meilisearch_url.clone(), meilisearch_api_key.clone())
+            .with_features(features.clone())
+            .with_incremental(incremental);
 
-                // Include patterns and meilisearch config when publishing sitemap URLs
-                let url_msg = match &url_patterns {
-                    Some(patterns) => {
-                        UrlMessage::with_patterns(crawl_url, job_id, index_uid, patterns.clone())
-                    }
-                    None => UrlMessage::new(crawl_url, job_id, index_uid),
-                }
-                .with_source(source.clone())
-                .with_meilisearch(meilisearch_url.clone(), meilisearch_api_key.clone())
-                .with_features(features.clone())
-                .with_incremental(incremental);
-
-                if let Err(e) = self
-                    .producer
-                    .send(
-                        topic_names::URL_FRONTIER,
-                        Some(&url_msg.partition_key()),
-                        &url_msg,
-                    )
-                    .await
-                {
-                    warn!(
-                        url = sitemap_entry.loc,
-                        error = %e,
-                        "Failed to publish sitemap URL"
-                    );
-                } else {
-                    discovered_count += 1;
-                }
-
-                if discovered_count >= self.max_sitemap_urls {
-                    info!(
-                        domain,
-                        max = self.max_sitemap_urls,
-                        "Reached max sitemap URLs limit"
-                    );
-                    break;
-                }
+            if let Err(e) = self
+                .producer
+                .send(
+                    topic_names::URL_FRONTIER,
+                    Some(&url_msg.partition_key()),
+                    &url_msg,
+                )
+                .await
+            {
+                warn!(url = sitemap_entry.loc, error = %e, "Failed to publish sitemap URL");
+            } else {
+                discovered_count += 1;
             }
         }
 
@@ -978,6 +827,16 @@ impl CrawlerWorker {
                 domain,
                 discovered_count, "Published sitemap URLs to frontier"
             );
+
+            let event = CrawlEvent::UrlsDiscovered {
+                job_id: job_id.to_string(),
+                source_url: format!("https://{domain}/sitemap.xml"),
+                count: discovered_count,
+                timestamp: chrono::Utc::now().timestamp_millis(),
+            };
+            if let Err(e) = self.publish_event(job_id, &event).await {
+                debug!(domain, error = %e, "Failed to publish sitemap discovery event");
+            }
         }
 
         Ok(discovered_count)
