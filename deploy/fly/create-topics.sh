@@ -14,8 +14,8 @@ run_rpk() {
 }
 
 echo "Creating Kafka topics on $APP..."
-run_rpk "topic create scrapix.urls.frontier    -p 12"
-run_rpk "topic create scrapix.urls.processing  -p 12"
+run_rpk "topic create scrapix.urls.frontier    -p 12 -c retention.ms=604800000"
+run_rpk "topic create scrapix.urls.processing  -p 12 -c retention.ms=604800000"
 run_rpk "topic create scrapix.pages.raw        -p 6"
 run_rpk "topic create scrapix.documents        -p 6"
 run_rpk "topic create scrapix.events           -p 3"
