@@ -3772,7 +3772,8 @@ async fn get_job_events_history(
     let filter_types: Vec<&str> = if params.filter.is_empty() {
         vec![]
     } else {
-        params.filter
+        params
+            .filter
             .split(',')
             .map(str::trim)
             .filter(|s| !s.is_empty())
@@ -3785,10 +3786,7 @@ async fn get_job_events_history(
         .await
         .map_err(|e| {
             error!("get_page_events query failed for job {}: {}", job_id, e);
-            ApiError::new(
-                format!("Failed to query event history: {e}"),
-                "query_error",
-            )
+            ApiError::new(format!("Failed to query event history: {e}"), "query_error")
         })?;
 
     let returned = raw_events.len();
