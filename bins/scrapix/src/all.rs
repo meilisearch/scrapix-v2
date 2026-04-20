@@ -189,7 +189,6 @@ async fn run_all_channels(args: &AllArgs) -> anyhow::Result<()> {
         browser_concurrency: args.browser_concurrency,
         browser_headless: true,
         verbose: args.verbose,
-        rocksdb_path: "./data/crawler-rocksdb".to_string(),
         sitemap_discovery: true,
         max_sitemap_urls: 10000,
     };
@@ -440,7 +439,6 @@ async fn run_all_kafka(args: &AllArgs, brokers: &str) -> anyhow::Result<()> {
         browser_concurrency: args.browser_concurrency,
         browser_headless: true,
         verbose: args.verbose,
-        rocksdb_path: "./data/crawler-rocksdb".to_string(),
         sitemap_discovery: true,
         max_sitemap_urls: 10000,
     };
