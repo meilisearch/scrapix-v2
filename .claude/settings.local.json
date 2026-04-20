@@ -256,7 +256,9 @@
       "mcp__plugin_serena_serena__list_dir",
       "Bash(cargo doc:*)",
       "WebFetch(domain:)",
-      "Bash(cargo info:*)"
+      "Bash(cargo info:*)",
+      "Bash(gh pr create --repo meilisearch/scrapix-v2 *)",
+      "Bash(./deploy/fly/workers.sh status *)"
     ]
   },
   "enableAllProjectMcpServers": true,

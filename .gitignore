@@ -37,6 +37,9 @@ tarpaulin-report.html
 # Documentation build
 /docs/book/
 
+# Next.js
+.next/
+
 # Local development
 storage/
 .cache/
