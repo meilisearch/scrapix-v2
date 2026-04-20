@@ -4149,7 +4149,7 @@ fn start_event_consumer(
 // ============================================================================
 
 /// Initialize ClickHouse storage and event batchers.
-/// Returns (AnalyticsState for API, RequestEventBatcher, AiUsageBatcher, JobEventBatcher).
+/// Returns (AnalyticsState for API, RequestEventBatcher, AiUsageBatcher, JobEventBatcher, PageEventBatcher).
 async fn init_clickhouse() -> (
     Option<Arc<analytics::AnalyticsState>>,
     Option<Arc<RequestEventBatcher>>,
