@@ -334,7 +334,7 @@ pub struct PageEvent {
     /// Bytes downloaded (page_crawled only, 0 otherwise).
     pub content_length: u64,
     /// Request duration in ms (page_crawled only, 0 otherwise).
-    pub duration_ms: u64,
+    pub duration_ms: u32,
     /// Error message (page_failed only).
     #[serde(default)]
     pub error: String,
@@ -732,16 +732,20 @@ impl ClickHouseStorage {
                     url             String,
                     status_code     UInt16,
                     content_length  UInt64,
-                    duration_ms     UInt64,
+                    duration_ms     UInt32,
                     error           String,
                     retry_count     UInt8,
                     document_id     String,
                     urls_count      UInt32,
                     source_url      String,
                     reason          String,
-                    domain          LowCardinality(String),
+                    domain          String,
                     wait_ms         UInt64,
-                    timestamp       DateTime DEFAULT now()
+                    timestamp       DateTime,
+                    INDEX idx_job_id job_id TYPE bloom_filter GRANULARITY 1,
+                    INDEX idx_account_id account_id TYPE bloom_filter GRANULARITY 1,
+                    INDEX idx_event_type event_type TYPE set(6) GRANULARITY 1,
+                    INDEX idx_domain domain TYPE bloom_filter GRANULARITY 1
                 ) ENGINE = MergeTree()
                 PARTITION BY toYYYYMM(timestamp)
                 ORDER BY (job_id, timestamp)
@@ -815,10 +819,7 @@ impl ClickHouseStorage {
     }
 
     #[instrument(skip(self, events), fields(count = events.len()))]
-    pub async fn insert_page_events(
-        &self,
-        events: Vec<PageEvent>,
-    ) -> Result<(), ClickHouseError> {
+    pub async fn insert_page_events(&self, events: Vec<PageEvent>) -> Result<(), ClickHouseError> {
         if events.is_empty() {
             return Ok(());
         }
@@ -841,6 +842,23 @@ impl ClickHouseStorage {
         offset: u32,
         event_types: &[&str],
     ) -> Result<Vec<PageEvent>, ClickHouseError> {
+        const VALID_EVENT_TYPES: &[&str] = &[
+            "page_crawled",
+            "page_failed",
+            "document_indexed",
+            "urls_discovered",
+            "page_skipped",
+            "rate_limited",
+        ];
+
+        for t in event_types {
+            if !VALID_EVENT_TYPES.contains(t) {
+                return Err(ClickHouseError::ConfigError(format!(
+                    "invalid event_type: {t}"
+                )));
+            }
+        }
+
         let table = self.table_name("page_events");
 
         let type_filter = if event_types.is_empty() {
@@ -854,7 +872,11 @@ impl ClickHouseStorage {
             .client
             .query(&format!(
                 r#"
-                SELECT *
+                SELECT
+                    job_id, account_id, event_type, url, status_code,
+                    content_length, duration_ms, error, retry_count,
+                    document_id, urls_count, source_url, reason,
+                    domain, wait_ms, timestamp
                 FROM {}
                 WHERE job_id = ? {}
                 ORDER BY timestamp ASC
