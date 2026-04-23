@@ -13,11 +13,6 @@ import {
 } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -42,7 +37,6 @@ import {
   AlertCircle,
   ExternalLink,
   Settings2,
-  ChevronDown,
   MoreVertical,
   Eraser,
   RotateCw,
@@ -188,6 +182,74 @@ function ConfigSummary({ config }: { config: Record<string, any> }) {
   );
 }
 
+function JobConfigPanel({ status }: { status: JobStatus }) {
+  const Row = ({
+    label,
+    children,
+  }: {
+    label: string;
+    children: React.ReactNode;
+  }) => (
+    <div className="grid grid-cols-[auto_1fr] gap-x-6 items-start">
+      <span className="text-sm text-muted-foreground whitespace-nowrap">
+        {label}
+      </span>
+      <span className="text-sm font-mono break-all">{children}</span>
+    </div>
+  );
+
+  return (
+    <Card className="h-full">
+      <CardHeader className="pb-3">
+        <div className="flex items-center gap-2">
+          <Settings2 className="h-4 w-4 text-muted-foreground" />
+          <CardTitle className="text-base">Configuration</CardTitle>
+        </div>
+        <CardDescription>Parameters used to start this job</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <Row label="Index">{status.index_uid}</Row>
+
+        {status.start_urls && status.start_urls.length > 0 && (
+          <div className="grid grid-cols-[auto_1fr] gap-x-6 items-start">
+            <span className="text-sm text-muted-foreground whitespace-nowrap">
+              Start URLs
+            </span>
+            <div className="space-y-1">
+              {status.start_urls.map((url) => (
+                <div key={url} className="flex items-center gap-1">
+                  <span className="text-sm font-mono break-all">{url}</span>
+                  <a
+                    href={url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-muted-foreground hover:text-foreground shrink-0"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {status.config && <ConfigSummary config={status.config} />}
+
+        <div className="border-t pt-3 space-y-1">
+          <Row label="Speed">
+            {status.crawl_rate > 0
+              ? `${status.crawl_rate.toFixed(1)} pages/s`
+              : "—"}
+          </Row>
+          <Row label="Pages indexed">
+            {status.pages_indexed} / {status.documents_sent} sent
+          </Row>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function JobDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -195,7 +257,6 @@ export default function JobDetailPage() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [wsConnected, setWsConnected] = useState(false);
   const [logFilter, setLogFilter] = useState<LogTab>("all");
-  const [urlsExpanded, setUrlsExpanded] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState<number | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
@@ -472,9 +533,6 @@ export default function JobDetailPage() {
     return logs.filter((l) => l.category === logFilter);
   }, [logs, logFilter]);
 
-  const visibleUrls = status?.start_urls?.slice(0, 3) ?? [];
-  const hiddenUrlCount = (status?.start_urls?.length ?? 0) - 3;
-
   return (
     <div className="space-y-4">
       {/* Unified header */}
@@ -513,54 +571,6 @@ export default function JobDetailPage() {
                 </span>
               )}
             </div>
-
-
-            {/* Start URLs */}
-            {status?.start_urls && status.start_urls.length > 0 && (
-              <div className="pt-1">
-                {visibleUrls.map((url) => (
-                  <div key={url} className="flex items-center gap-2">
-                    <p className="font-mono text-xs text-muted-foreground truncate max-w-md">
-                      {url}
-                    </p>
-                    <a
-                      href={url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-muted-foreground hover:text-foreground shrink-0"
-                    >
-                      <ExternalLink className="h-3 w-3" />
-                    </a>
-                  </div>
-                ))}
-                {hiddenUrlCount > 0 && (
-                  <Collapsible open={urlsExpanded} onOpenChange={setUrlsExpanded}>
-                    <CollapsibleContent>
-                      {status.start_urls.slice(3).map((url) => (
-                        <div key={url} className="flex items-center gap-2">
-                          <p className="font-mono text-xs text-muted-foreground truncate max-w-md">
-                            {url}
-                          </p>
-                          <a
-                            href={url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-muted-foreground hover:text-foreground shrink-0"
-                          >
-                            <ExternalLink className="h-3 w-3" />
-                          </a>
-                        </div>
-                      ))}
-                    </CollapsibleContent>
-                    <CollapsibleTrigger asChild>
-                      <Button variant="link" size="sm" className="h-auto p-0 text-xs">
-                        {urlsExpanded ? "Show less" : `Show ${hiddenUrlCount} more`}
-                      </Button>
-                    </CollapsibleTrigger>
-                  </Collapsible>
-                )}
-              </div>
-            )}
           </div>
         </div>
 
@@ -685,58 +695,7 @@ export default function JobDetailPage() {
             </Card>
           </div>
 
-          {/* Extra info row */}
-          <div className="grid gap-3 md:grid-cols-2">
-            <Card>
-              <CardContent className="py-4">
-                <p className="text-sm text-muted-foreground">Index</p>
-                <p className="font-mono text-sm mt-1">{status.index_uid}</p>
-              </CardContent>
-            </Card>
-            {status.max_pages == null ? (
-              <Card>
-                <CardContent className="py-4">
-                  <p className="text-sm text-muted-foreground">Pages</p>
-                  <p className="text-sm mt-1">
-                    {status.pages_crawled} crawled, {status.documents_sent}{" "}
-                    sent
-                    {status.eta_seconds != null && status.eta_seconds > 0 && (
-                      <span className="text-muted-foreground">
-                        {" "}
-                        &middot; ~{formatDuration(status.eta_seconds)} remaining
-                      </span>
-                    )}
-                  </p>
-                </CardContent>
-              </Card>
-            ) : status.config ? (
-              <Collapsible>
-                <Card>
-                  <CollapsibleTrigger asChild>
-                    <CardHeader className="group cursor-pointer select-none pb-3 hover:bg-muted/50 transition-colors">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <Settings2 className="h-4 w-4 text-muted-foreground" />
-                          <CardTitle className="text-base">
-                            Configuration
-                          </CardTitle>
-                        </div>
-                        <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
-                      </div>
-                      <CardDescription>
-                        Crawl parameters used for this job
-                      </CardDescription>
-                    </CardHeader>
-                  </CollapsibleTrigger>
-                  <CollapsibleContent>
-                    <CardContent className="pt-0">
-                      <ConfigSummary config={status.config} />
-                    </CardContent>
-                  </CollapsibleContent>
-                </Card>
-              </Collapsible>
-            ) : null}
-          </div>
+          <JobConfigPanel status={status} />
         </>
       )}
 
