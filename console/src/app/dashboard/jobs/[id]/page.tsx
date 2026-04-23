@@ -707,12 +707,11 @@ export default function JobDetailPage() {
             </Card>
           </div>
 
-          <JobConfigPanel status={status} />
-        </>
-      )}
+          <div className="grid gap-4 grid-cols-1 lg:grid-cols-[2fr_3fr] items-start">
+            <JobConfigPanel status={status} />
 
-      {/* Live Event Log */}
-      <Card>
+            {/* Live Event Log */}
+            <Card>
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <div>
@@ -751,13 +750,15 @@ export default function JobDetailPage() {
           {/* Search bar */}
           <div className="relative mt-2">
             <Input
-              placeholder="Filter by URL…"
+              placeholder="Search events…"
               value={logSearch}
               onChange={(e) => setLogSearch(e.target.value)}
               className="h-8 text-xs pr-7"
             />
             {logSearch && (
               <button
+                type="button"
+                aria-label="Clear search"
                 onClick={() => setLogSearch("")}
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
               >
@@ -810,7 +811,10 @@ export default function JobDetailPage() {
             </div>
           </ScrollArea>
         </CardContent>
-      </Card>
+            </Card>
+          </div>
+        </>
+      )}
 
       {/* Delete confirmation dialog */}
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
