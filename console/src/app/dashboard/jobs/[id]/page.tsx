@@ -35,7 +35,6 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   ArrowLeft,
@@ -93,7 +92,7 @@ function ConfigSummary({ config }: { config: Record<string, any> }) {
   const patterns: [string, string][] = [];
   const other: [string, string][] = [];
 
-  const skip = new Set(["start_urls", "index_uid"]);
+  const skip = new Set(["start_urls", "index_uid", "max_pages"]);
 
   const formatValue = (v: unknown): string => {
     if (v == null) return "—";
@@ -105,7 +104,6 @@ function ConfigSummary({ config }: { config: Record<string, any> }) {
 
   const labelMap: Record<string, string> = {
     max_depth: "Max Depth",
-    max_pages: "Max Pages",
     crawler_type: "Crawler Type",
     allowed_domains: "Allowed Domains",
   };
@@ -142,7 +140,7 @@ function ConfigSummary({ config }: { config: Record<string, any> }) {
       continue;
     }
 
-    if (key in labelMap || ["max_depth", "max_pages", "crawler_type", "allowed_domains"].includes(key)) {
+    if (key in labelMap || ["max_depth", "crawler_type", "allowed_domains"].includes(key)) {
       const display = formatValue(value);
       if (display !== "—") mainFields.push([labelMap[key] || key, display]);
     } else {
@@ -462,14 +460,6 @@ export default function JobDetailPage() {
     return `${m}m ${s}s`;
   };
 
-  const progressPercent =
-    status?.max_pages && status.max_pages > 0
-      ? Math.min(
-          100,
-          Math.round((status.pages_crawled / status.max_pages) * 100)
-        )
-      : null;
-
   const isRunning = status?.status === "running";
 
   const hostname = status?.start_urls?.[0]
@@ -524,22 +514,6 @@ export default function JobDetailPage() {
               )}
             </div>
 
-            {/* Inline progress bar */}
-            {isRunning && progressPercent !== null && (
-              <div className="flex items-center gap-3 pt-1">
-                <Progress value={progressPercent} className="h-2 w-48" />
-                <span className="text-sm text-muted-foreground">
-                  {status.pages_crawled}
-                  {status.max_pages ? ` / ${status.max_pages}` : ""} pages
-                  <span className="ml-1">({progressPercent}%)</span>
-                </span>
-                {status.eta_seconds != null && status.eta_seconds > 0 && (
-                  <span className="text-xs text-muted-foreground">
-                    ~{formatDuration(status.eta_seconds)} remaining
-                  </span>
-                )}
-              </div>
-            )}
 
             {/* Start URLs */}
             {status?.start_urls && status.start_urls.length > 0 && (
@@ -644,7 +618,7 @@ export default function JobDetailPage() {
       {status && (
         <>
           {/* Stats grid */}
-          <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
+          <div className="grid gap-3 grid-cols-2 md:grid-cols-3">
             <Card className="border-t-2 border-t-primary">
               <CardContent className="py-4">
                 <span className="text-sm text-muted-foreground">
@@ -708,24 +682,6 @@ export default function JobDetailPage() {
                 </div>
               </CardContent>
             </Card>
-
-            <Card className="border-t-2 border-t-muted">
-              <CardContent className="py-4">
-                <span className="text-sm text-muted-foreground">Speed</span>
-                <div className="flex items-baseline gap-2 mt-1">
-                  <span className="text-2xl font-bold">
-                    {status.crawl_rate > 0
-                      ? `${status.crawl_rate.toFixed(1)}/s`
-                      : "—"}
-                  </span>
-                  {status.documents_sent > 0 && (
-                    <span className="text-xs text-muted-foreground">
-                      {status.documents_sent} docs sent
-                    </span>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
           </div>
 
           {/* Extra info row */}
@@ -736,7 +692,7 @@ export default function JobDetailPage() {
                 <p className="font-mono text-sm mt-1">{status.index_uid}</p>
               </CardContent>
             </Card>
-            {progressPercent === null && status.max_pages == null ? (
+            {status.max_pages == null ? (
               <Card>
                 <CardContent className="py-4">
                   <p className="text-sm text-muted-foreground">Pages</p>
