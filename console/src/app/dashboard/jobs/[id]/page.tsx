@@ -43,7 +43,13 @@ import {
   RotateCw,
   X,
 } from "lucide-react";
-import { fetchJobStatus, deleteJob, createCrawl, wsUrl, fetchJobEventHistory } from "@/lib/api";
+import {
+  fetchJobStatus,
+  deleteJob,
+  createCrawl,
+  wsUrl,
+  fetchJobEventHistory,
+} from "@/lib/api";
 import type { JobStatus, WsServerMessage, CrawlEvent } from "@/lib/api-types";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
@@ -112,7 +118,7 @@ function ConfigSummary({ config }: { config: Record<string, any> }) {
           v != null &&
           v !== "" &&
           v !== false &&
-          !(Array.isArray(v) && v.length === 0)
+          !(Array.isArray(v) && v.length === 0),
       );
       if (entries.length === 0) continue;
 
@@ -136,7 +142,10 @@ function ConfigSummary({ config }: { config: Record<string, any> }) {
       continue;
     }
 
-    if (key in labelMap || ["max_depth", "crawler_type", "allowed_domains"].includes(key)) {
+    if (
+      key in labelMap ||
+      ["max_depth", "crawler_type", "allowed_domains"].includes(key)
+    ) {
       const display = formatValue(value);
       if (display !== "—") mainFields.push([labelMap[key] || key, display]);
     } else {
@@ -202,7 +211,6 @@ function ConfigRow({
 }
 
 function JobConfigPanel({ status }: { status: JobStatus }) {
-
   return (
     <Card className="h-full">
       <CardHeader className="pb-3">
@@ -270,10 +278,7 @@ export default function JobDetailPage() {
   const wsRef = useRef<WebSocket | null>(null);
   const historyAppliedRef = useRef(false);
 
-  const {
-    data: status,
-    error: apiError,
-  } = useQuery({
+  const { data: status, error: apiError } = useQuery({
     queryKey: ["job", id],
     queryFn: () => fetchJobStatus(id),
     enabled: !!id,
@@ -305,7 +310,8 @@ export default function JobDetailPage() {
   }, [logSearch]);
 
   // Fetch event history for completed/failed jobs (from ClickHouse)
-  const isTerminal = status?.status === "completed" || status?.status === "failed";
+  const isTerminal =
+    status?.status === "completed" || status?.status === "failed";
   const { data: eventHistory, isLoading: historyLoading } = useQuery({
     queryKey: ["job-events-history", id],
     queryFn: () => fetchJobEventHistory(id as string),
@@ -314,7 +320,11 @@ export default function JobDetailPage() {
   });
 
   const addLog = useCallback(
-    (message: string, variant: "default" | "error" = "default", category: LogCategory = "info") => {
+    (
+      message: string,
+      variant: "default" | "error" = "default",
+      category: LogCategory = "info",
+    ) => {
       setLogs((prev) => {
         const next = [
           ...prev,
@@ -323,7 +333,7 @@ export default function JobDetailPage() {
         return next.length > 5000 ? next.slice(-5000) : next;
       });
     },
-    []
+    [],
   );
 
   // WebSocket connection
@@ -352,7 +362,7 @@ export default function JobDetailPage() {
             addLog(
               `Status: ${msg.status.status} — ${msg.status.pages_crawled} crawled, ${msg.status.pages_indexed} indexed, ${msg.status.errors} errors`,
               "default",
-              "info"
+              "info",
             );
             return;
           }
@@ -364,37 +374,47 @@ export default function JobDetailPage() {
                 addLog(
                   `Crawled ${evt.url} (${evt.status}) in ${evt.duration_ms}ms`,
                   "default",
-                  "crawled"
+                  "crawled",
                 );
-                queryClient.setQueryData(["job", id], (prev: JobStatus | undefined) =>
-                  prev
-                    ? { ...prev, pages_crawled: prev.pages_crawled + 1 }
-                    : prev
+                queryClient.setQueryData(
+                  ["job", id],
+                  (prev: JobStatus | undefined) =>
+                    prev
+                      ? { ...prev, pages_crawled: prev.pages_crawled + 1 }
+                      : prev,
                 );
                 break;
               case "page_failed":
                 addLog(`Failed ${evt.url}: ${evt.error}`, "error", "error");
-                queryClient.setQueryData(["job", id], (prev: JobStatus | undefined) =>
-                  prev ? { ...prev, errors: prev.errors + 1 } : prev
+                queryClient.setQueryData(
+                  ["job", id],
+                  (prev: JobStatus | undefined) =>
+                    prev ? { ...prev, errors: prev.errors + 1 } : prev,
                 );
                 break;
               case "document_indexed":
-                addLog(`Indexed ${evt.url} → ${evt.document_id}`, "default", "indexed");
-                queryClient.setQueryData(["job", id], (prev: JobStatus | undefined) =>
-                  prev
-                    ? {
-                        ...prev,
-                        pages_indexed: prev.pages_indexed + 1,
-                        documents_sent: prev.documents_sent + 1,
-                      }
-                    : prev
+                addLog(
+                  `Indexed ${evt.url} → ${evt.document_id}`,
+                  "default",
+                  "indexed",
+                );
+                queryClient.setQueryData(
+                  ["job", id],
+                  (prev: JobStatus | undefined) =>
+                    prev
+                      ? {
+                          ...prev,
+                          pages_indexed: prev.pages_indexed + 1,
+                          documents_sent: prev.documents_sent + 1,
+                        }
+                      : prev,
                 );
                 break;
               case "urls_discovered":
                 addLog(
                   `Discovered ${evt.count} URLs from ${evt.source_url}`,
                   "default",
-                  "crawled"
+                  "crawled",
                 );
                 break;
               case "page_skipped":
@@ -404,33 +424,39 @@ export default function JobDetailPage() {
                 addLog(
                   `Rate limited on ${evt.domain}, waiting ${evt.wait_ms}ms`,
                   "default",
-                  "info"
+                  "info",
                 );
                 break;
               case "job_started":
                 addLog(
                   `Job started: crawling ${evt.start_urls.length} seed URL(s)`,
                   "default",
-                  "info"
+                  "info",
                 );
-                queryClient.setQueryData(["job", id], (prev: JobStatus | undefined) =>
-                  prev ? { ...prev, status: "running" } : prev
+                queryClient.setQueryData(
+                  ["job", id],
+                  (prev: JobStatus | undefined) =>
+                    prev ? { ...prev, status: "running" } : prev,
                 );
                 break;
               case "job_completed":
                 addLog(
                   `Job completed: ${evt.pages_crawled} crawled, ${evt.documents_indexed} indexed, ${evt.errors} errors in ${evt.duration_secs}s`,
                   "default",
-                  "info"
+                  "info",
                 );
-                queryClient.setQueryData(["job", id], (prev: JobStatus | undefined) =>
-                  prev ? { ...prev, status: "completed" } : prev
+                queryClient.setQueryData(
+                  ["job", id],
+                  (prev: JobStatus | undefined) =>
+                    prev ? { ...prev, status: "completed" } : prev,
                 );
                 break;
               case "job_failed":
                 addLog(`Job failed: ${evt.error}`, "error", "error");
-                queryClient.setQueryData(["job", id], (prev: JobStatus | undefined) =>
-                  prev ? { ...prev, status: "failed" } : prev
+                queryClient.setQueryData(
+                  ["job", id],
+                  (prev: JobStatus | undefined) =>
+                    prev ? { ...prev, status: "failed" } : prev,
                 );
                 break;
             }
@@ -473,23 +499,35 @@ export default function JobDetailPage() {
           addLog(
             `Crawled ${evt.url} (${evt.status_code}) in ${evt.duration_ms}ms`,
             "default",
-            "crawled"
+            "crawled",
           );
           break;
         case "page_failed":
           addLog(`Failed ${evt.url}: ${evt.error}`, "error", "error");
           break;
         case "document_indexed":
-          addLog(`Indexed ${evt.url} → ${evt.document_id}`, "default", "indexed");
+          addLog(
+            `Indexed ${evt.url} → ${evt.document_id}`,
+            "default",
+            "indexed",
+          );
           break;
         case "urls_discovered":
-          addLog(`Discovered ${evt.urls_count} URLs from ${evt.source_url}`, "default", "crawled");
+          addLog(
+            `Discovered ${evt.urls_count} URLs from ${evt.source_url}`,
+            "default",
+            "crawled",
+          );
           break;
         case "page_skipped":
           addLog(`Skipped ${evt.url}: ${evt.reason}`, "default", "info");
           break;
         case "rate_limited":
-          addLog(`Rate limited on ${evt.domain}, waiting ${evt.wait_ms}ms`, "default", "info");
+          addLog(
+            `Rate limited on ${evt.domain}, waiting ${evt.wait_ms}ms`,
+            "default",
+            "info",
+          );
           break;
       }
     }
@@ -541,8 +579,10 @@ export default function JobDetailPage() {
 
   const filteredLogs = useMemo(() => {
     let result = logs;
-    if (logFilter === "errors") result = result.filter((l) => l.category === "error");
-    else if (logFilter !== "all") result = result.filter((l) => l.category === logFilter);
+    if (logFilter === "errors")
+      result = result.filter((l) => l.category === "error");
+    else if (logFilter !== "all")
+      result = result.filter((l) => l.category === logFilter);
     if (debouncedSearch.trim()) {
       const q = debouncedSearch.toLowerCase();
       result = result.filter((l) => l.message.toLowerCase().includes(q));
@@ -632,7 +672,9 @@ export default function JobDetailPage() {
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>
-            {apiError instanceof Error ? apiError.message : "Failed to fetch job"}
+            {apiError instanceof Error
+              ? apiError.message
+              : "Failed to fetch job"}
           </AlertDescription>
         </Alert>
       )}
@@ -668,7 +710,7 @@ export default function JobDetailPage() {
             <Card
               className={cn(
                 "border-t-2",
-                status.errors > 0 ? "border-t-destructive" : "border-t-muted"
+                status.errors > 0 ? "border-t-destructive" : "border-t-muted",
               )}
             >
               <CardContent className="py-4">
@@ -677,7 +719,7 @@ export default function JobDetailPage() {
                   <span
                     className={cn(
                       "text-2xl font-bold",
-                      status.errors > 0 && "text-destructive"
+                      status.errors > 0 && "text-destructive",
                     )}
                   >
                     {status.errors}
@@ -688,12 +730,12 @@ export default function JobDetailPage() {
 
             <Card className="border-t-2 border-t-muted">
               <CardContent className="py-4">
-                <span className="text-sm text-muted-foreground">
-                  Duration
-                </span>
+                <span className="text-sm text-muted-foreground">Duration</span>
                 <div className="flex items-baseline gap-2 mt-1">
                   <span className="text-2xl font-bold">
-                    {status.started_at && elapsedSeconds !== null ? formatDuration(elapsedSeconds) : "—"}
+                    {status.started_at && elapsedSeconds !== null
+                      ? formatDuration(elapsedSeconds)
+                      : "—"}
                   </span>
                   {status.started_at && (
                     <span className="text-xs text-muted-foreground">
@@ -707,110 +749,122 @@ export default function JobDetailPage() {
             </Card>
           </div>
 
-          <div className="grid gap-4 grid-cols-1 lg:grid-cols-[2fr_3fr] items-start">
+          <div className="grid gap-4 lg:grid-cols-[2fr_3fr] items-start">
             <JobConfigPanel status={status} />
 
             {/* Live Event Log */}
             <Card>
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="text-base">Live Events</CardTitle>
-              <CardDescription>Real-time crawl activity</CardDescription>
-            </div>
-            <div className="flex items-center gap-2">
-              {logs.length > 0 && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 text-xs gap-1"
-                  onClick={() => setLogs([])}
-                >
-                  <Eraser className="h-3 w-3" />
-                  Clear
-                </Button>
-              )}
-              {logs.length > 0 && (
-                <Badge variant="outline" className="text-xs">
-                  {filteredLogs.length} events
-                </Badge>
-              )}
-              <Badge variant={wsConnected ? "default" : "outline"}>
-                <span
-                  className={cn(
-                    "mr-1.5 inline-block h-1.5 w-1.5 rounded-full",
-                    wsConnected ? "bg-green-400" : "bg-gray-400"
-                  )}
-                />
-                {wsConnected ? "Live" : "Disconnected"}
-              </Badge>
-            </div>
-          </div>
-
-          {/* Search bar */}
-          <div className="relative mt-2">
-            <Input
-              placeholder="Search events…"
-              value={logSearch}
-              onChange={(e) => setLogSearch(e.target.value)}
-              className="h-8 text-xs pr-7"
-            />
-            {logSearch && (
-              <button
-                type="button"
-                aria-label="Clear search"
-                onClick={() => setLogSearch("")}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            )}
-          </div>
-
-          <Tabs value={logFilter} onValueChange={(v) => setLogFilter(v as LogTab)} className="mt-2">
-            <TabsList className="h-8">
-              <TabsTrigger value="all" className="text-xs h-7 px-2.5">All</TabsTrigger>
-              <TabsTrigger value="crawled" className="text-xs h-7 px-2.5">Crawled</TabsTrigger>
-              <TabsTrigger value="indexed" className="text-xs h-7 px-2.5">Indexed</TabsTrigger>
-              <TabsTrigger value="errors" className="text-xs h-7 px-2.5">Errors</TabsTrigger>
-            </TabsList>
-          </Tabs>
-        </CardHeader>
-        <CardContent>
-          <ScrollArea className="h-[350px] rounded-lg bg-muted">
-            <div
-              ref={logRef}
-              className="p-4 font-mono text-xs space-y-0.5"
-            >
-              {filteredLogs.length === 0 ? (
-                <div className="flex items-center justify-center h-[318px] text-muted-foreground">
-                  <p>
-                    {isTerminal && historyLoading
-                      ? "Loading event history..."
-                      : logs.length === 0
-                      ? "Waiting for events..."
-                      : "No matching events"}
-                  </p>
-                </div>
-              ) : (
-                filteredLogs.map((log, i) => (
-                  <div
-                    key={i}
-                    className={cn(
-                      "py-0.5",
-                      log.variant === "error" && "text-destructive"
-                    )}
-                  >
-                    <span className="text-muted-foreground select-none">
-                      [{log.time}]
-                    </span>{" "}
-                    {log.message}
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-base">Live Events</CardTitle>
+                    <CardDescription>Real-time crawl activity</CardDescription>
                   </div>
-                ))
-              )}
-            </div>
-          </ScrollArea>
-        </CardContent>
+                  <div className="flex items-center gap-2">
+                    {logs.length > 0 && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-xs gap-1"
+                        onClick={() => setLogs([])}
+                      >
+                        <Eraser className="h-3 w-3" />
+                        Clear
+                      </Button>
+                    )}
+                    {logs.length > 0 && (
+                      <Badge variant="outline" className="text-xs">
+                        {filteredLogs.length} events
+                      </Badge>
+                    )}
+                    <Badge variant={wsConnected ? "default" : "outline"}>
+                      <span
+                        className={cn(
+                          "mr-1.5 inline-block h-1.5 w-1.5 rounded-full",
+                          wsConnected ? "bg-green-400" : "bg-gray-400",
+                        )}
+                      />
+                      {wsConnected ? "Live" : "Disconnected"}
+                    </Badge>
+                  </div>
+                </div>
+
+                {/* Search bar */}
+                <div className="relative mt-2">
+                  <Input
+                    placeholder="Search events…"
+                    value={logSearch}
+                    onChange={(e) => setLogSearch(e.target.value)}
+                    className="h-8 text-xs pr-7"
+                  />
+                  {logSearch && (
+                    <button
+                      type="button"
+                      aria-label="Clear search"
+                      onClick={() => setLogSearch("")}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
+
+                <Tabs
+                  value={logFilter}
+                  onValueChange={(v) => setLogFilter(v as LogTab)}
+                  className="mt-2"
+                >
+                  <TabsList className="h-8">
+                    <TabsTrigger value="all" className="text-xs h-7 px-2.5">
+                      All
+                    </TabsTrigger>
+                    <TabsTrigger value="crawled" className="text-xs h-7 px-2.5">
+                      Crawled
+                    </TabsTrigger>
+                    <TabsTrigger value="indexed" className="text-xs h-7 px-2.5">
+                      Indexed
+                    </TabsTrigger>
+                    <TabsTrigger value="errors" className="text-xs h-7 px-2.5">
+                      Errors
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
+              </CardHeader>
+              <CardContent>
+                <ScrollArea className="h-[350px] rounded-lg bg-muted">
+                  <div
+                    ref={logRef}
+                    className="p-4 font-mono text-xs space-y-0.5"
+                  >
+                    {filteredLogs.length === 0 ? (
+                      <div className="flex items-center justify-center h-[318px] text-muted-foreground">
+                        <p>
+                          {isTerminal && historyLoading
+                            ? "Loading event history..."
+                            : logs.length === 0
+                              ? "Waiting for events..."
+                              : "No matching events"}
+                        </p>
+                      </div>
+                    ) : (
+                      filteredLogs.map((log, i) => (
+                        <div
+                          key={i}
+                          className={cn(
+                            "py-0.5",
+                            log.variant === "error" && "text-destructive",
+                          )}
+                        >
+                          <span className="text-muted-foreground select-none">
+                            [{log.time}]
+                          </span>{" "}
+                          {log.message}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </ScrollArea>
+              </CardContent>
             </Card>
           </div>
         </>
@@ -823,8 +877,8 @@ export default function JobDetailPage() {
             <DialogTitle>Delete Job</DialogTitle>
             <DialogDescription>
               Are you sure you want to delete job{" "}
-              <span className="font-mono">{id?.slice(0, 8)}...</span>?
-              This action is permanent and cannot be undone.
+              <span className="font-mono">{id?.slice(0, 8)}...</span>? This
+              action is permanent and cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
