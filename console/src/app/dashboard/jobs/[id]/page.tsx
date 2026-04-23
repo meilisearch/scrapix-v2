@@ -617,6 +617,12 @@ export default function JobDetailPage() {
 
       {status && (
         <>
+          {status.status === "failed" && status.error_message && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{status.error_message}</AlertDescription>
+            </Alert>
+          )}
           {/* Stats grid */}
           <div className="grid gap-3 grid-cols-2 md:grid-cols-3">
             <Card className="border-t-2 border-t-primary">
@@ -654,11 +660,6 @@ export default function JobDetailPage() {
                   >
                     {status.errors}
                   </span>
-                  {status.error_message && (
-                    <span className="text-xs text-destructive truncate">
-                      {status.error_message}
-                    </span>
-                  )}
                 </div>
               </CardContent>
             </Card>
