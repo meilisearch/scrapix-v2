@@ -199,7 +199,7 @@ export default function JobDetailPage() {
   const [logFilter, setLogFilter] = useState<LogTab>("all");
   const [urlsExpanded, setUrlsExpanded] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [elapsedSeconds, setElapsedSeconds] = useState<number | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const historyAppliedRef = useRef(false);
@@ -227,10 +227,10 @@ export default function JobDetailPage() {
 
     computeElapsed();
 
-    if (status.status === "running") {
-      const interval = setInterval(computeElapsed, 1000);
-      return () => clearInterval(interval);
-    }
+    if (status.status !== "running") return;
+
+    const interval = setInterval(computeElapsed, 1000);
+    return () => clearInterval(interval);
   }, [status?.started_at, status?.completed_at, status?.status]);
 
   // Fetch event history for completed/failed jobs (from ClickHouse)
@@ -696,7 +696,7 @@ export default function JobDetailPage() {
                 </span>
                 <div className="flex items-baseline gap-2 mt-1">
                   <span className="text-2xl font-bold">
-                    {status.started_at ? formatDuration(elapsedSeconds) : "—"}
+                    {status.started_at && elapsedSeconds !== null ? formatDuration(elapsedSeconds) : "—"}
                   </span>
                   {status.started_at && (
                     <span className="text-xs text-muted-foreground">
