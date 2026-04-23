@@ -199,6 +199,7 @@ export default function JobDetailPage() {
   const [logFilter, setLogFilter] = useState<LogTab>("all");
   const [urlsExpanded, setUrlsExpanded] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const logRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const historyAppliedRef = useRef(false);
@@ -212,6 +213,25 @@ export default function JobDetailPage() {
     enabled: !!id,
     refetchInterval: 3_000,
   });
+
+  useEffect(() => {
+    if (!status?.started_at) return;
+
+    const computeElapsed = () => {
+      const start = new Date(status.started_at!).getTime();
+      const end = status.completed_at
+        ? new Date(status.completed_at).getTime()
+        : Date.now();
+      setElapsedSeconds(Math.floor((end - start) / 1000));
+    };
+
+    computeElapsed();
+
+    if (status.status === "running") {
+      const interval = setInterval(computeElapsed, 1000);
+      return () => clearInterval(interval);
+    }
+  }, [status?.started_at, status?.completed_at, status?.status]);
 
   // Fetch event history for completed/failed jobs (from ClickHouse)
   const isTerminal = status?.status === "completed" || status?.status === "failed";
@@ -676,9 +696,7 @@ export default function JobDetailPage() {
                 </span>
                 <div className="flex items-baseline gap-2 mt-1">
                   <span className="text-2xl font-bold">
-                    {status.duration_seconds != null
-                      ? formatDuration(status.duration_seconds)
-                      : "—"}
+                    {status.started_at ? formatDuration(elapsedSeconds) : "—"}
                   </span>
                   {status.started_at && (
                     <span className="text-xs text-muted-foreground">
