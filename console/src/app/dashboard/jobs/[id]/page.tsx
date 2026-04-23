@@ -31,6 +31,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Input } from "@/components/ui/input";
 import {
   ArrowLeft,
   Trash2,
@@ -40,6 +41,7 @@ import {
   MoreVertical,
   Eraser,
   RotateCw,
+  X,
 } from "lucide-react";
 import { fetchJobStatus, deleteJob, createCrawl, wsUrl, fetchJobEventHistory } from "@/lib/api";
 import type { JobStatus, WsServerMessage, CrawlEvent } from "@/lib/api-types";
@@ -260,6 +262,8 @@ export default function JobDetailPage() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [wsConnected, setWsConnected] = useState(false);
   const [logFilter, setLogFilter] = useState<LogTab>("all");
+  const [logSearch, setLogSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState<number | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
@@ -294,6 +298,11 @@ export default function JobDetailPage() {
     const interval = setInterval(computeElapsed, 1000);
     return () => clearInterval(interval);
   }, [status?.started_at, status?.completed_at, status?.status]);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(logSearch), 150);
+    return () => clearTimeout(t);
+  }, [logSearch]);
 
   // Fetch event history for completed/failed jobs (from ClickHouse)
   const isTerminal = status?.status === "completed" || status?.status === "failed";
@@ -531,10 +540,15 @@ export default function JobDetailPage() {
     : null;
 
   const filteredLogs = useMemo(() => {
-    if (logFilter === "all") return logs;
-    if (logFilter === "errors") return logs.filter((l) => l.category === "error");
-    return logs.filter((l) => l.category === logFilter);
-  }, [logs, logFilter]);
+    let result = logs;
+    if (logFilter === "errors") result = result.filter((l) => l.category === "error");
+    else if (logFilter !== "all") result = result.filter((l) => l.category === logFilter);
+    if (debouncedSearch.trim()) {
+      const q = debouncedSearch.toLowerCase();
+      result = result.filter((l) => l.message.toLowerCase().includes(q));
+    }
+    return result;
+  }, [logs, logFilter, debouncedSearch]);
 
   return (
     <div className="space-y-4">
@@ -733,16 +747,33 @@ export default function JobDetailPage() {
               </Badge>
             </div>
           </div>
-          {logs.length > 0 && (
-            <Tabs value={logFilter} onValueChange={(v) => setLogFilter(v as LogTab)} className="mt-2">
-              <TabsList className="h-8">
-                <TabsTrigger value="all" className="text-xs h-7 px-2.5">All</TabsTrigger>
-                <TabsTrigger value="crawled" className="text-xs h-7 px-2.5">Crawled</TabsTrigger>
-                <TabsTrigger value="indexed" className="text-xs h-7 px-2.5">Indexed</TabsTrigger>
-                <TabsTrigger value="errors" className="text-xs h-7 px-2.5">Errors</TabsTrigger>
-              </TabsList>
-            </Tabs>
-          )}
+
+          {/* Search bar */}
+          <div className="relative mt-2">
+            <Input
+              placeholder="Filter by URL…"
+              value={logSearch}
+              onChange={(e) => setLogSearch(e.target.value)}
+              className="h-8 text-xs pr-7"
+            />
+            {logSearch && (
+              <button
+                onClick={() => setLogSearch("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+
+          <Tabs value={logFilter} onValueChange={(v) => setLogFilter(v as LogTab)} className="mt-2">
+            <TabsList className="h-8">
+              <TabsTrigger value="all" className="text-xs h-7 px-2.5">All</TabsTrigger>
+              <TabsTrigger value="crawled" className="text-xs h-7 px-2.5">Crawled</TabsTrigger>
+              <TabsTrigger value="indexed" className="text-xs h-7 px-2.5">Indexed</TabsTrigger>
+              <TabsTrigger value="errors" className="text-xs h-7 px-2.5">Errors</TabsTrigger>
+            </TabsList>
+          </Tabs>
         </CardHeader>
         <CardContent>
           <ScrollArea className="h-[350px] rounded-lg bg-muted">
