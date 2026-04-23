@@ -448,7 +448,7 @@ export default function JobDetailPage() {
                 queryClient.setQueryData(
                   ["job", id],
                   (prev: JobStatus | undefined) =>
-                    prev ? { ...prev, status: "completed" } : prev,
+                    prev ? { ...prev, status: "completed", completed_at: new Date().toISOString() } : prev,
                 );
                 break;
               case "job_failed":
@@ -535,7 +535,8 @@ export default function JobDetailPage() {
 
   // Auto-scroll logs
   useEffect(() => {
-    logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
+    const viewport = logRef.current?.parentElement;
+    if (viewport) viewport.scrollTop = viewport.scrollHeight;
   }, [logs]);
 
   const handleDelete = async () => {
