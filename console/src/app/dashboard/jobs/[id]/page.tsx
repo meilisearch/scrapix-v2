@@ -182,14 +182,14 @@ function ConfigSummary({ config }: { config: Record<string, any> }) {
   );
 }
 
-function JobConfigPanel({ status }: { status: JobStatus }) {
-  const Row = ({
-    label,
-    children,
-  }: {
-    label: string;
-    children: React.ReactNode;
-  }) => (
+function ConfigRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
     <div className="grid grid-cols-[auto_1fr] gap-x-6 items-start">
       <span className="text-sm text-muted-foreground whitespace-nowrap">
         {label}
@@ -197,6 +197,9 @@ function JobConfigPanel({ status }: { status: JobStatus }) {
       <span className="text-sm font-mono break-all">{children}</span>
     </div>
   );
+}
+
+function JobConfigPanel({ status }: { status: JobStatus }) {
 
   return (
     <Card className="h-full">
@@ -208,7 +211,7 @@ function JobConfigPanel({ status }: { status: JobStatus }) {
         <CardDescription>Parameters used to start this job</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
-        <Row label="Index">{status.index_uid}</Row>
+        <ConfigRow label="Index">{status.index_uid}</ConfigRow>
 
         {status.start_urls && status.start_urls.length > 0 && (
           <div className="grid grid-cols-[auto_1fr] gap-x-6 items-start">
@@ -236,14 +239,14 @@ function JobConfigPanel({ status }: { status: JobStatus }) {
         {status.config && <ConfigSummary config={status.config} />}
 
         <div className="border-t pt-3 space-y-1">
-          <Row label="Speed">
+          <ConfigRow label="Speed">
             {status.crawl_rate > 0
               ? `${status.crawl_rate.toFixed(1)} pages/s`
               : "—"}
-          </Row>
-          <Row label="Pages indexed">
+          </ConfigRow>
+          <ConfigRow label="Pages indexed">
             {status.pages_indexed} / {status.documents_sent} sent
-          </Row>
+          </ConfigRow>
         </div>
       </CardContent>
     </Card>
@@ -565,11 +568,6 @@ export default function JobDetailPage() {
             </div>
             <div className="flex items-center gap-2 text-muted-foreground">
               <p className="font-mono text-xs">{id}</p>
-              {status?.start_urls && status.start_urls.length > 1 && (
-                <span className="text-xs">
-                  +{status.start_urls.length - 1} more URL{status.start_urls.length > 2 ? "s" : ""}
-                </span>
-              )}
             </div>
           </div>
         </div>
