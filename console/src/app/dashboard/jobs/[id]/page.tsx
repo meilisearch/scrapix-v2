@@ -212,7 +212,7 @@ function ConfigRow({
 
 function JobConfigPanel({ status }: { status: JobStatus }) {
   return (
-    <Card className="h-full">
+    <Card className="h-full flex flex-col overflow-hidden">
       <CardHeader className="pb-3">
         <div className="flex items-center gap-2">
           <Settings2 className="h-4 w-4 text-muted-foreground" />
@@ -220,7 +220,7 @@ function JobConfigPanel({ status }: { status: JobStatus }) {
         </div>
         <CardDescription>Parameters used to start this job</CardDescription>
       </CardHeader>
-      <CardContent className="space-y-3">
+      <CardContent className="space-y-3 flex-1 overflow-y-auto">
         <ConfigRow label="Index">{status.index_uid}</ConfigRow>
 
         {status.start_urls && status.start_urls.length > 0 && (
@@ -592,7 +592,7 @@ export default function JobDetailPage() {
   }, [logs, logFilter, debouncedSearch]);
 
   return (
-    <div className="space-y-4">
+    <div className="h-full flex flex-col gap-4">
       {/* Unified header */}
       <div className="flex items-start justify-between">
         <div className="flex items-start gap-3">
@@ -750,12 +750,12 @@ export default function JobDetailPage() {
             </Card>
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-[2fr_3fr] items-start">
+          <div className="grid gap-4 lg:grid-cols-[2fr_3fr] flex-1 min-h-0">
             <JobConfigPanel status={status} />
 
             {/* Live Event Log */}
-            <Card>
-              <CardHeader className="pb-3">
+            <Card className="h-full flex flex-col overflow-hidden">
+              <CardHeader className="pb-3 shrink-0">
                 <div className="flex items-center justify-between">
                   <div>
                     <CardTitle className="text-base">Live Events</CardTitle>
@@ -790,55 +790,55 @@ export default function JobDetailPage() {
                   </div>
                 </div>
 
-                {/* Search bar */}
-                <div className="relative mt-2">
-                  <Input
-                    placeholder="Search events…"
-                    value={logSearch}
-                    onChange={(e) => setLogSearch(e.target.value)}
-                    className="h-8 text-xs pr-7"
-                  />
-                  {logSearch && (
-                    <button
-                      type="button"
-                      aria-label="Clear search"
-                      onClick={() => setLogSearch("")}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  )}
+                {/* Search + filter row */}
+                <div className="flex items-center gap-2 mt-2">
+                  <div className="relative flex-1">
+                    <Input
+                      placeholder="Search events…"
+                      value={logSearch}
+                      onChange={(e) => setLogSearch(e.target.value)}
+                      className="h-8 text-xs pr-7"
+                    />
+                    {logSearch && (
+                      <button
+                        type="button"
+                        aria-label="Clear search"
+                        onClick={() => setLogSearch("")}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    )}
+                  </div>
+                  <Tabs
+                    value={logFilter}
+                    onValueChange={(v) => setLogFilter(v as LogTab)}
+                  >
+                    <TabsList className="h-8">
+                      <TabsTrigger value="all" className="text-xs h-7 px-2.5">
+                        All
+                      </TabsTrigger>
+                      <TabsTrigger value="crawled" className="text-xs h-7 px-2.5">
+                        Crawled
+                      </TabsTrigger>
+                      <TabsTrigger value="indexed" className="text-xs h-7 px-2.5">
+                        Indexed
+                      </TabsTrigger>
+                      <TabsTrigger value="errors" className="text-xs h-7 px-2.5">
+                        Errors
+                      </TabsTrigger>
+                    </TabsList>
+                  </Tabs>
                 </div>
-
-                <Tabs
-                  value={logFilter}
-                  onValueChange={(v) => setLogFilter(v as LogTab)}
-                  className="mt-2"
-                >
-                  <TabsList className="h-8">
-                    <TabsTrigger value="all" className="text-xs h-7 px-2.5">
-                      All
-                    </TabsTrigger>
-                    <TabsTrigger value="crawled" className="text-xs h-7 px-2.5">
-                      Crawled
-                    </TabsTrigger>
-                    <TabsTrigger value="indexed" className="text-xs h-7 px-2.5">
-                      Indexed
-                    </TabsTrigger>
-                    <TabsTrigger value="errors" className="text-xs h-7 px-2.5">
-                      Errors
-                    </TabsTrigger>
-                  </TabsList>
-                </Tabs>
               </CardHeader>
-              <CardContent>
-                <ScrollArea className="h-[350px] rounded-lg bg-muted">
+              <CardContent className="flex-1 min-h-0 px-4 pb-4 pt-0">
+                <ScrollArea className="h-full rounded-lg bg-muted">
                   <div
                     ref={logRef}
                     className="p-4 font-mono text-xs space-y-0.5"
                   >
                     {filteredLogs.length === 0 ? (
-                      <div className="flex items-center justify-center h-[318px] text-muted-foreground">
+                      <div className="flex items-center justify-center h-48 text-muted-foreground">
                         <p>
                           {isTerminal && historyLoading
                             ? "Loading event history..."

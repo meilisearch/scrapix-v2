@@ -69,8 +69,8 @@ const navGroups = [
     items: [
       { name: "Scrape", href: "/dashboard/scrape", icon: Globe },
       { name: "Map", href: "/dashboard/map", icon: Network },
-      { name: "Search", href: "/dashboard/search", icon: Search },
       { name: "Crawl", href: "/dashboard/crawl", icon: Layers },
+      { name: "Search", href: "/dashboard/search", icon: Search },
     ],
   },
   {
