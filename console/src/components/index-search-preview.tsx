@@ -181,6 +181,14 @@ export function IndexSearchPreview({
         </div>
       )}
 
+      {!hasSearched && !searching && selectedIndex && (
+        <div className="text-center py-12 text-muted-foreground">
+          <Search className="h-8 w-8 mx-auto mb-3 opacity-30" />
+          <p className="font-medium text-foreground/60">Search &ldquo;{selectedIndex}&rdquo;</p>
+          <p className="text-sm mt-1">Type a query above to search indexed content.</p>
+        </div>
+      )}
+
       {hasSearched && searchResult && searchResult.hits.length === 0 && !searching && (
         <div className="text-center py-12 text-muted-foreground">
           <Search className="h-8 w-8 mx-auto mb-3 opacity-50" />
