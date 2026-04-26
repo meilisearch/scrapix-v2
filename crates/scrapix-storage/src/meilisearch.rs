@@ -13,7 +13,7 @@ use meilisearch_sdk::{
     task_info::TaskInfo,
     tasks::TasksSearchQuery,
 };
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 use scrapix_core::config::FeaturesConfig;
 use scrapix_core::{Document, Result, ScrapixError};
@@ -704,6 +704,55 @@ impl MeilisearchStorage {
         Ok(())
     }
 
+    /// Query the actual document count for an index directly from Meilisearch.
+    /// Returns None if the index doesn't exist or the query fails.
+    pub async fn get_actual_document_count(
+        meilisearch_url: &str,
+        api_key: Option<&str>,
+        index_uid: &str,
+    ) -> Option<u64> {
+        let client = Client::new(meilisearch_url, api_key).ok()?;
+        let stats = client.index(index_uid).get_stats().await.ok()?;
+        Some(stats.number_of_documents as u64)
+    }
+
+    /// Check for recently failed Meilisearch tasks on a given index and log them.
+    /// Returns the number of failed tasks found.
+    pub async fn log_failed_tasks(
+        meilisearch_url: &str,
+        api_key: Option<&str>,
+        index_uid: &str,
+    ) -> u32 {
+        let client = match Client::new(meilisearch_url, api_key) {
+            Ok(c) => c,
+            Err(_) => return 0,
+        };
+
+        let mut query = TasksSearchQuery::new(&client);
+        query.with_index_uids([index_uid]).with_statuses(["failed"]);
+
+        let result = match client.get_tasks_with(&query).await {
+            Ok(r) => r,
+            Err(e) => {
+                warn!(index = %index_uid, error = %e, "Failed to query failed tasks");
+                return 0;
+            }
+        };
+
+        let count = result.results.len() as u32;
+        if count > 0 {
+            error!(
+                index = %index_uid,
+                failed_task_count = count,
+                "Meilisearch indexing tasks failed — documents may not have been indexed"
+            );
+            for task in &result.results {
+                error!(index = %index_uid, task = ?task, "Failed Meilisearch task detail");
+            }
+        }
+        count
+    }
+
     /// Wait until all tasks for a specific index are finished (no enqueued/processing tasks).
     async fn wait_for_index_idle_with_client(
         client: &Client,
@@ -726,12 +775,29 @@ impl MeilisearchStorage {
                 .with_index_uids([index_uid])
                 .with_statuses(["enqueued", "processing"]);
 
-            let result = client.get_tasks_with(&query).await.map_err(|e| {
-                ScrapixError::Storage(format!(
-                    "Failed to query tasks for index {}: {}",
-                    index_uid, e
-                ))
-            })?;
+            let result = match client.get_tasks_with(&query).await {
+                Ok(r) => r,
+                Err(e) => {
+                    let msg = e.to_string();
+                    // If the key lacks tasks.get permission, we can't poll — but Meilisearch
+                    // processes tasks sequentially per index, so the delete filter submitted
+                    // next will naturally queue after any pending indexing tasks.
+                    if msg.contains("invalid_api_key")
+                        || msg.contains("missing_authorization_header")
+                        || msg.contains("auth")
+                    {
+                        warn!(
+                            index = %index_uid,
+                            "API key lacks task-query permission; skipping idle wait and relying on Meilisearch task ordering"
+                        );
+                        return Ok(());
+                    }
+                    return Err(ScrapixError::Storage(format!(
+                        "Failed to query tasks for index {}: {}",
+                        index_uid, e
+                    )));
+                }
+            };
 
             let pending_count = result.results.len();
             if pending_count == 0 {

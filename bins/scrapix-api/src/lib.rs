@@ -4835,11 +4835,32 @@ pub async fn run_with_bus(
 
                         // For Replace strategy jobs, delete stale documents from previous crawls
                         if let Some(ref replace_url) = ms_url {
+                            let key_preview = ms_key.as_deref().map(|k| {
+                                if k.len() > 8 { format!("{}...", &k[..8]) } else { k.to_string() }
+                            }).unwrap_or_else(|| "(none)".to_string());
                             info!(
                                 job_id = %job_id,
                                 index = %index_uid,
+                                meilisearch_url = %replace_url,
+                                api_key_prefix = %key_preview,
                                 "Deleting stale documents before completing Replace job"
                             );
+
+                            // Check for failed indexing tasks before cleanup — these indicate
+                            // that fire-and-forget document submissions were rejected by Meilisearch.
+                            let failed_tasks = scrapix_storage::meilisearch::MeilisearchStorage::log_failed_tasks(
+                                replace_url,
+                                ms_key.as_deref(),
+                                &index_uid,
+                            ).await;
+                            if failed_tasks > 0 {
+                                warn!(
+                                    job_id = %job_id,
+                                    index = %index_uid,
+                                    failed_tasks,
+                                    "Meilisearch had failed indexing tasks — index may be incomplete"
+                                );
+                            }
 
                             match scrapix_storage::meilisearch::MeilisearchStorage::delete_stale_documents(
                                 replace_url,
@@ -4902,10 +4923,37 @@ pub async fn run_with_bus(
                             }
                         }
 
+                        // For Replace strategy, query the actual document count from Meilisearch
+                        // rather than trusting the in-memory counter (which reflects documents
+                        // submitted to the batch buffer, not confirmed Meilisearch task results).
+                        let verified_documents_indexed = if let Some(ref replace_url) = ms_url {
+                            match scrapix_storage::meilisearch::MeilisearchStorage::get_actual_document_count(
+                                replace_url,
+                                ms_key.as_deref(),
+                                &index_uid,
+                            ).await {
+                                Some(actual_count) => {
+                                    if actual_count != documents_indexed {
+                                        warn!(
+                                            job_id = %job_id,
+                                            index = %index_uid,
+                                            reported = documents_indexed,
+                                            actual = actual_count,
+                                            "Document count mismatch: reported count differs from actual Meilisearch count. Meilisearch indexing tasks may have failed silently."
+                                        );
+                                    }
+                                    actual_count
+                                }
+                                None => documents_indexed,
+                            }
+                        } else {
+                            documents_indexed
+                        };
+
                         info!(
                             job_id = %job_id,
                             pages_crawled,
-                            documents_indexed,
+                            documents_indexed = verified_documents_indexed,
                             "Auto-completing idle job (no activity for 30s)"
                         );
 
@@ -4913,7 +4961,7 @@ pub async fn run_with_bus(
                             job_id: job_id.clone(),
                             account_id: account_id.clone(),
                             pages_crawled,
-                            documents_indexed,
+                            documents_indexed: verified_documents_indexed,
                             errors,
                             bytes_downloaded: 0,
                             duration_secs,
@@ -4936,7 +4984,7 @@ pub async fn run_with_bus(
                                         &job_id,
                                         &index_uid,
                                         pages_crawled,
-                                        documents_indexed,
+                                        verified_documents_indexed,
                                         duration_secs,
                                     );
                                 }
