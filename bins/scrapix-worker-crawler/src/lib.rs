@@ -29,6 +29,8 @@ use scrapix_lifecycle::{
 use tokio::sync::Semaphore;
 use tracing::{debug, info, warn};
 
+#[cfg(feature = "browser")]
+use scrapix_core::ScrapixError;
 use scrapix_core::{CrawlUrl, FeaturesConfig, UrlPatterns};
 #[cfg(feature = "browser")]
 use scrapix_crawler::{CdpRenderer, CdpRendererBuilder};
