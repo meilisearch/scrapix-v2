@@ -54,18 +54,6 @@ pub struct Args {
     #[arg(short, long, env = "CONCURRENCY", default_value = "40")]
     pub concurrency: usize,
 
-    /// Meilisearch URL
-    #[arg(long, env = "MEILISEARCH_URL", default_value = "http://localhost:7700")]
-    pub meilisearch_url: String,
-
-    /// Meilisearch API key
-    #[arg(long, env = "MEILISEARCH_API_KEY")]
-    pub meilisearch_key: Option<String>,
-
-    /// Default index UID (can be overridden by message)
-    #[arg(long, env = "MEILISEARCH_INDEX", default_value = "documents")]
-    pub default_index: String,
-
     /// Enable content extraction (readability algorithm)
     #[arg(long, env = "EXTRACT_CONTENT", default_value = "true")]
     pub extract_content: bool,
@@ -93,10 +81,6 @@ pub struct Args {
     /// Publish crawl history to frontier service for recrawl scheduling
     #[arg(long, env = "PUBLISH_HISTORY", default_value = "false")]
     pub publish_history: bool,
-
-    /// Skip Meilisearch indexing (only publish to Kafka)
-    #[arg(long, env = "SKIP_MEILISEARCH")]
-    pub skip_meilisearch: bool,
 
     /// Batch size for Meilisearch indexing
     /// Larger batches reduce Meilisearch API call overhead
@@ -279,12 +263,9 @@ struct ContentWorker {
     consumer: Arc<AnyConsumer>,
     producer: Arc<AnyProducer>,
     parser: HtmlParser,
-    storage: Option<Arc<MeilisearchStorage>>,
-    /// Default Meilisearch URL (from env/args) for comparison
-    default_meilisearch_url: String,
-    /// Default Meilisearch API key (from env/args) for comparison
-    default_meilisearch_key: String,
-    /// Cache of per-job Meilisearch storage clients, keyed by (url, api_key)
+    /// Cache of per-job Meilisearch storage clients, keyed by (url, api_key).
+    /// All indexing goes through these — there is no fallback "default" storage.
+    /// Each crawl carries its own credentials in the message; the worker holds none.
     storage_cache: tokio::sync::Mutex<HashMap<(String, String), Arc<MeilisearchStorage>>>,
     ai_service: Option<Arc<AiService>>,
     ai_config: AiConfig,
@@ -298,9 +279,7 @@ struct ContentWorker {
     worker_id: String,
     publish_to_kafka: bool,
     publish_history: bool,
-    #[allow(dead_code)]
-    skip_meilisearch: bool,
-    /// Default batch size for creating new Meilisearch storage clients
+    /// Batch size for creating per-job Meilisearch storage clients
     default_batch_size: usize,
     /// Default feature config built from CLI args, used when message has no features
     default_features: FeaturesConfig,
@@ -338,35 +317,9 @@ impl ContentWorker {
         let consumer: Arc<AnyConsumer> = Arc::new(kafka_consumer.into());
         let producer: Arc<AnyProducer> = Arc::new(kafka_producer.into());
 
-        // Create Meilisearch storage (optional)
-        let storage = if !args.skip_meilisearch {
-            let mut builder =
-                MeilisearchStorageBuilder::new(&args.meilisearch_url, &args.default_index);
-
-            if let Some(ref key) = args.meilisearch_key {
-                builder = builder.api_key(key);
-            }
-
-            builder = builder.batch_size(args.batch_size);
-
-            match builder.build().await {
-                Ok(storage) => {
-                    info!(
-                        url = %args.meilisearch_url,
-                        index = %args.default_index,
-                        "Connected to Meilisearch"
-                    );
-                    Some(Arc::new(storage))
-                }
-                Err(e) => {
-                    warn!(error = %e, "Failed to connect to Meilisearch, indexing disabled");
-                    None
-                }
-            }
-        } else {
-            info!("Meilisearch indexing disabled");
-            None
-        };
+        // No default Meilisearch storage: every crawl carries its own credentials
+        // in the message and gets a per-job storage built lazily and cached.
+        info!("Meilisearch indexing uses per-job credentials from message");
 
         // Create HTML parser — always extract everything; per-job features
         // are applied as a post-parse filter so the parser can be reused.
@@ -498,9 +451,6 @@ impl ContentWorker {
             consumer,
             producer,
             parser,
-            storage,
-            default_meilisearch_url: args.meilisearch_url.clone(),
-            default_meilisearch_key: args.meilisearch_key.clone().unwrap_or_default(),
             storage_cache: tokio::sync::Mutex::new(HashMap::new()),
             ai_service,
             ai_config,
@@ -513,7 +463,6 @@ impl ContentWorker {
             worker_id,
             publish_to_kafka: args.publish_to_kafka,
             publish_history: args.publish_history,
-            skip_meilisearch: args.skip_meilisearch,
             default_batch_size: args.batch_size,
             default_features,
         })
@@ -537,35 +486,8 @@ impl ContentWorker {
 
         info!(worker_id = %worker_id, "Initializing content worker (pre-built bus)");
 
-        // Create Meilisearch storage (optional)
-        let storage = if !args.skip_meilisearch {
-            let mut builder =
-                MeilisearchStorageBuilder::new(&args.meilisearch_url, &args.default_index);
-
-            if let Some(ref key) = args.meilisearch_key {
-                builder = builder.api_key(key);
-            }
-
-            builder = builder.batch_size(args.batch_size);
-
-            match builder.build().await {
-                Ok(storage) => {
-                    info!(
-                        url = %args.meilisearch_url,
-                        index = %args.default_index,
-                        "Connected to Meilisearch"
-                    );
-                    Some(Arc::new(storage))
-                }
-                Err(e) => {
-                    warn!(error = %e, "Failed to connect to Meilisearch, indexing disabled");
-                    None
-                }
-            }
-        } else {
-            info!("Meilisearch indexing disabled");
-            None
-        };
+        // No default Meilisearch storage: every crawl carries its own credentials.
+        info!("Meilisearch indexing uses per-job credentials from message");
 
         // Create HTML parser — always extract everything; per-job features
         // are applied as a post-parse filter so the parser can be reused.
@@ -694,9 +616,6 @@ impl ContentWorker {
             consumer,
             producer,
             parser,
-            storage,
-            default_meilisearch_url: args.meilisearch_url.clone(),
-            default_meilisearch_key: args.meilisearch_key.clone().unwrap_or_default(),
             storage_cache: tokio::sync::Mutex::new(HashMap::new()),
             ai_service,
             ai_config,
@@ -709,28 +628,30 @@ impl ContentWorker {
             worker_id,
             publish_to_kafka: args.publish_to_kafka,
             publish_history: args.publish_history,
-            skip_meilisearch: args.skip_meilisearch,
             default_batch_size: args.batch_size,
             default_features,
         })
     }
 
-    /// Get the appropriate Meilisearch storage for a message.
-    /// Returns the default storage if the message has no per-job override or matches defaults.
-    /// Creates and caches a new storage client for non-default (url, key) pairs.
+    /// Get the Meilisearch storage for this message's credentials.
+    ///
+    /// The worker holds no global credentials; every message MUST carry its own
+    /// (url, api_key) — populated by the API from the account's engine settings.
+    /// Returns `None` if credentials are missing (caller will skip indexing) or
+    /// if building the client fails.
     async fn get_storage(&self, msg: &RawPageMessage) -> Option<Arc<MeilisearchStorage>> {
         let msg_url = msg.meilisearch_url.as_deref().unwrap_or("");
         let msg_key = msg.meilisearch_api_key.as_deref().unwrap_or("");
 
-        // Use default storage when no override or matches default
-        let is_default = msg_url.is_empty()
-            || (msg_url == self.default_meilisearch_url && msg_key == self.default_meilisearch_key);
-
-        if is_default {
-            return self.storage.clone();
+        if msg_url.is_empty() {
+            warn!(
+                job_id = %msg.job_id,
+                index = %msg.index_uid,
+                "Message has no Meilisearch URL — skipping indexing"
+            );
+            return None;
         }
 
-        // Look up or create a cached storage for this (url, key) pair
         let cache_key = (msg_url.to_string(), msg_key.to_string());
         let mut cache = self.storage_cache.lock().await;
 
@@ -738,7 +659,6 @@ impl ContentWorker {
             return Some(storage.clone());
         }
 
-        // Create a new Meilisearch storage client
         let mut builder = MeilisearchStorageBuilder::new(msg_url, &msg.index_uid);
         if !msg_key.is_empty() {
             builder = builder.api_key(msg_key);
@@ -760,28 +680,15 @@ impl ContentWorker {
                 warn!(
                     url = msg_url,
                     error = %e,
-                    "Failed to create per-job Meilisearch client, falling back to default"
+                    "Failed to create per-job Meilisearch client — documents will not be indexed"
                 );
-                self.storage.clone()
+                None
             }
         }
     }
 
-    /// Flush all Meilisearch storages (default + cached per-job ones)
+    /// Flush all per-job Meilisearch storages.
     async fn flush_all_storages(&self) {
-        // Flush default storage
-        if let Some(ref storage) = self.storage {
-            match storage.flush().await {
-                Ok(count) if count > 0 => {
-                    self.metrics.record_indexed(count as u64);
-                    debug!(count, "Flushed default Meilisearch storage");
-                }
-                Err(e) => warn!(error = %e, "Failed to flush default Meilisearch storage"),
-                _ => {}
-            }
-        }
-
-        // Flush all cached storages
         let cache = self.storage_cache.lock().await;
         for ((url, _), storage) in cache.iter() {
             match storage.flush().await {
@@ -824,19 +731,19 @@ impl ContentWorker {
             }
         });
 
-        // Start periodic flush task for all Meilisearch storages
-        // This ensures documents are indexed even when batch_size isn't reached
-        let flush_handle = if self.storage.is_some() {
+        // Start periodic flush task for all Meilisearch storages.
+        // Always run — even when the default storage failed to connect, per-job
+        // storages built from message credentials still need their pending_docs
+        // buffer drained, otherwise documents accumulate in RAM forever.
+        let flush_handle = {
             let worker = self.clone();
-            Some(tokio::spawn(async move {
+            tokio::spawn(async move {
                 let mut interval = tokio::time::interval(Duration::from_secs(5));
                 while !worker.shutdown.load(Ordering::Relaxed) {
                     interval.tick().await;
                     worker.flush_all_storages().await;
                 }
-            }))
-        } else {
-            None
+            })
         };
 
         // Process messages
@@ -845,10 +752,8 @@ impl ContentWorker {
         // Cleanup: signal shutdown and wait for background tasks to finish
         self.shutdown.store(true, Ordering::Relaxed);
         metrics_handle.abort();
-        if let Some(handle) = flush_handle {
-            // Wait for any in-flight flush to complete instead of aborting
-            let _ = handle.await;
-        }
+        // Wait for any in-flight flush to complete instead of aborting
+        let _ = flush_handle.await;
 
         // Final flush of any pending documents to all Meilisearch storages
         self.flush_all_storages().await;
@@ -1089,6 +994,7 @@ impl ContentWorker {
 
                         // Get per-job storage once for all blocks
                         let block_storage = self.get_storage(msg).await;
+                        let mut any_block_indexed = false;
 
                         // Create and index a document for each block
                         for block in &extracted_blocks.blocks {
@@ -1096,18 +1002,22 @@ impl ContentWorker {
 
                             // Index block document
                             if let Some(ref storage) = block_storage {
-                                if let Err(e) = storage
+                                match storage
                                     .add_document_to_index(block_doc.clone(), &msg.index_uid)
                                     .await
                                 {
-                                    warn!(
-                                        url = %msg.url,
-                                        block_index = block.index,
-                                        error = %e,
-                                        "Failed to add block document to Meilisearch"
-                                    );
-                                } else {
-                                    self.metrics.record_indexed(1);
+                                    Ok(()) => {
+                                        self.metrics.record_indexed(1);
+                                        any_block_indexed = true;
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            url = %msg.url,
+                                            block_index = block.index,
+                                            error = %e,
+                                            "Failed to add block document to Meilisearch"
+                                        );
+                                    }
                                 }
                             }
 
@@ -1125,15 +1035,17 @@ impl ContentWorker {
                             }
                         }
 
-                        // Send success event for the page
-                        let event = CrawlEvent::DocumentIndexed {
-                            job_id: msg.job_id.clone(),
-                            account_id: msg.account_id.clone(),
-                            url: msg.url.clone(),
-                            document_id: format!("{}-blocks", document.uid),
-                            timestamp: chrono::Utc::now().timestamp_millis(),
-                        };
-                        self.publish_event(&msg.job_id, &event).await?;
+                        // Send success event only if at least one block reached Meilisearch
+                        if any_block_indexed {
+                            let event = CrawlEvent::DocumentIndexed {
+                                job_id: msg.job_id.clone(),
+                                account_id: msg.account_id.clone(),
+                                url: msg.url.clone(),
+                                document_id: format!("{}-blocks", document.uid),
+                                timestamp: chrono::Utc::now().timestamp_millis(),
+                            };
+                            self.publish_event(&msg.job_id, &event).await?;
+                        }
                     }
                 }
                 Err(e) => {
@@ -1418,26 +1330,35 @@ impl ContentWorker {
         Ok(())
     }
 
-    /// Index a single document (non-block-split mode)
+    /// Index a single document (non-block-split mode).
+    ///
+    /// `DocumentIndexed` is published only if Meilisearch accepted the submission
+    /// — fire-and-forget batching means the doc is queued, not yet indexed, but
+    /// at least the credentials and HTTP submission worked.
     async fn index_single_document(
         &self,
         document: &Document,
         msg: &RawPageMessage,
     ) -> scrapix_core::Result<()> {
-        // Add document to Meilisearch (using per-job storage if configured)
+        let mut indexed_ok = false;
+
         if let Some(storage) = self.get_storage(msg).await {
-            if let Err(e) = storage
+            match storage
                 .add_document_to_index(document.clone(), &msg.index_uid)
                 .await
             {
-                warn!(
-                    url = %msg.url,
-                    index_uid = %msg.index_uid,
-                    error = %e,
-                    "Failed to add document to Meilisearch"
-                );
-            } else {
-                self.metrics.record_indexed(1);
+                Ok(()) => {
+                    self.metrics.record_indexed(1);
+                    indexed_ok = true;
+                }
+                Err(e) => {
+                    warn!(
+                        url = %msg.url,
+                        index_uid = %msg.index_uid,
+                        error = %e,
+                        "Failed to add document to Meilisearch"
+                    );
+                }
             }
         }
 
@@ -1455,15 +1376,16 @@ impl ContentWorker {
             );
         }
 
-        // Send success event
-        let event = CrawlEvent::DocumentIndexed {
-            job_id: msg.job_id.clone(),
-            account_id: msg.account_id.clone(),
-            url: msg.url.clone(),
-            document_id: document.uid.clone(),
-            timestamp: chrono::Utc::now().timestamp_millis(),
-        };
-        self.publish_event(&msg.job_id, &event).await?;
+        if indexed_ok {
+            let event = CrawlEvent::DocumentIndexed {
+                job_id: msg.job_id.clone(),
+                account_id: msg.account_id.clone(),
+                url: msg.url.clone(),
+                document_id: document.uid.clone(),
+                timestamp: chrono::Utc::now().timestamp_millis(),
+            };
+            self.publish_event(&msg.job_id, &event).await?;
+        }
 
         Ok(())
     }
@@ -1708,7 +1630,6 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         concurrency = args.concurrency,
         brokers = %args.brokers,
         group_id = %args.group_id,
-        meilisearch = %args.meilisearch_url,
         "Starting Scrapix content worker"
     );
 
