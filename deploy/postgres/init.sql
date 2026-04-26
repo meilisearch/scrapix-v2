@@ -515,3 +515,17 @@ CREATE TABLE IF NOT EXISTS hyperline_webhook_log (
 
 CREATE INDEX IF NOT EXISTS idx_hyperline_webhook_log_received
     ON hyperline_webhook_log (received_at DESC);
+
+-- ============================================================================
+-- Provider event idempotency backstop
+-- ============================================================================
+-- `add_credits_from_provider` (and the invoice.* webhook branches) gate on a
+-- SELECT EXISTS check against `metadata->>'provider' / 'provider_event_id'`,
+-- but the read+insert isn't atomic — two concurrent webhook deliveries with
+-- the same provider event id could both pass the check and both insert.
+-- This partial unique index makes that race fail fast at the DB layer rather
+-- than silently double-crediting; callers should treat unique-violation
+-- errors as "already processed" and short-circuit.
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_transactions_provider_event
+    ON transactions ((metadata ->> 'provider'), (metadata ->> 'provider_event_id'))
+    WHERE metadata ? 'provider_event_id';

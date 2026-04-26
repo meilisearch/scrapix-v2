@@ -96,18 +96,30 @@ async fn hyperline_webhook(
     // 3. Parse the envelope before we persist. We still write to the log
     //    even on parse failure so ops can inspect the body, but we return
     //    400 so Hyperline retries (in case this was transient malformed).
-    let envelope: WebhookEnvelope = match serde_json::from_slice(&body) {
+    //
+    //    Parse the body once as `Value` and reuse it for both the typed
+    //    envelope and the log row — saves a second `from_slice` pass on
+    //    the hot path and avoids the silent `unwrap_or_default()` masking
+    //    a parse divergence.
+    let body_json: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(e) => {
+            warn!(webhook_id = %id, error = %e, "hyperline webhook body is not valid JSON");
+            log_raw(&pool, id, &body, Some(&format!("parse error: {e}"))).await;
+            return Err((StatusCode::BAD_REQUEST, format!("invalid body: {e}")));
+        }
+    };
+    let envelope: WebhookEnvelope = match serde_json::from_value(body_json.clone()) {
         Ok(e) => e,
         Err(e) => {
             warn!(webhook_id = %id, error = %e, "hyperline webhook body is not a valid envelope");
-            log_raw(&pool, id, &body, Some(&format!("parse error: {e}"))).await;
-            return Err((StatusCode::BAD_REQUEST, format!("invalid body: {e}")));
+            log_raw(&pool, id, &body, Some(&format!("envelope error: {e}"))).await;
+            return Err((StatusCode::BAD_REQUEST, format!("invalid envelope: {e}")));
         }
     };
 
     // 4. Dedupe insert. `INSERT … ON CONFLICT DO NOTHING` returns 0 rows
     //    when we've already processed this `webhook_id`.
-    let body_json: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
     let inserted = sqlx::query(
         "INSERT INTO hyperline_webhook_log (webhook_id, event_type, body) \
          VALUES ($1, $2, $3) \
@@ -232,13 +244,25 @@ async fn dispatch_event(
                     );
                 }
                 _ => {
-                    warn!(
-                        event_type = %envelope.event_type,
-                        has_id = id.is_some(),
-                        has_customer = customer_id.is_some(),
-                        has_credits = credits.is_some(),
-                        "hyperline: wallet.credited missing fields — acking without credit"
+                    // Failure mode worth surfacing loudly: a real top-up
+                    // landed at Hyperline (so the customer paid), but our
+                    // event payload is missing the fields we need to
+                    // mirror it into the local ledger. Returning Err
+                    // stamps `process_error` on the webhook log row so
+                    // the runbook's stuck-deliveries query catches it
+                    // (vs. a warn-and-ack that disappears into log
+                    // volume). Hyperline still gets a 200 because the
+                    // outer handler always acks verified deliveries —
+                    // retries can't fix a schema mismatch.
+                    let problem = format!(
+                        "wallet.credited missing fields (has_id={}, has_customer={}, has_credits={}) — \
+                         local credit not applied; backfill via reconcile or manual ledger adjustment",
+                        id.is_some(),
+                        customer_id.is_some(),
+                        credits.is_some(),
                     );
+                    warn!(event_type = %envelope.event_type, %problem, "hyperline: wallet.credited unmappable");
+                    return Err(problem);
                 }
             }
         }
@@ -403,7 +427,13 @@ async fn dispatch_event(
                 "currency": currency,
             });
 
-            sqlx::query(
+            // Race-condition backstop: the EXISTS check above is not atomic
+            // with this INSERT; two concurrent webhook deliveries with the
+            // same provider event id could both pass it. The partial unique
+            // index `uniq_transactions_provider_event` raises 23505 in that
+            // case — we treat it as "already logged" and return Ok rather
+            // than 500ing.
+            let insert_result = sqlx::query(
                 "INSERT INTO transactions (account_id, type, amount, balance_after, description, metadata) \
                  VALUES ($1, $2, 0, $3, $4, $5)",
             )
@@ -413,8 +443,18 @@ async fn dispatch_event(
             .bind(&description)
             .bind(metadata)
             .execute(pool)
-            .await
-            .map_err(|e| format!("insert invoice transaction: {e}"))?;
+            .await;
+            if let Err(sqlx::Error::Database(db_err)) = &insert_result {
+                if db_err.code().as_deref() == Some("23505") {
+                    info!(
+                        event_type = %envelope.event_type,
+                        event_id = %event_id,
+                        "hyperline: invoice event raced — duplicate detected by unique index"
+                    );
+                    return Ok(());
+                }
+            }
+            insert_result.map_err(|e| format!("insert invoice transaction: {e}"))?;
 
             // Successful invoice clears any prior payment_method flag —
             // whatever went wrong, it's resolved now that money moved.

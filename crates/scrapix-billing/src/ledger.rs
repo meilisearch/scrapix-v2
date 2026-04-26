@@ -196,7 +196,7 @@ pub async fn add_credits_from_provider(
         "provider_event_id": provider_event_id,
     });
 
-    sqlx::query(
+    let insert_result = sqlx::query(
         "INSERT INTO transactions (account_id, type, amount, balance_after, description, metadata) \
          VALUES ($1, $2, $3, $4, $5, $6)",
     )
@@ -207,7 +207,27 @@ pub async fn add_credits_from_provider(
     .bind(description)
     .bind(metadata)
     .execute(&mut *tx)
-    .await?;
+    .await;
+
+    // Race-condition backstop: if a concurrent caller raced past our
+    // `SELECT EXISTS` check and inserted the same `(provider, event_id)`
+    // first, the partial unique index `uniq_transactions_provider_event`
+    // raises a 23505. Roll back the wallet bump (so we don't double-credit)
+    // and treat the situation as "already processed" — same outcome as
+    // hitting the EXISTS branch above.
+    if let Err(sqlx::Error::Database(db_err)) = &insert_result {
+        if db_err.code().as_deref() == Some("23505") {
+            tx.rollback().await?;
+            info!(
+                account_id = %account_id,
+                provider,
+                event_id = %provider_event_id,
+                "Provider event raced — duplicate detected by unique index, rolling back"
+            );
+            return Ok(());
+        }
+    }
+    insert_result?;
 
     tx.commit().await?;
 

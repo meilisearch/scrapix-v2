@@ -45,7 +45,11 @@ A `WARN` instead of the second `INFO` (`Hyperline boot self-check failed — API
 
 ## Outbox Drain
 
-**Shape:** `hyperline_events_outbox(id UUID PK, account_id, event_type, payload JSONB, created_at, sent_at, attempts)` — one row per billable debit, written in the same Postgres transaction as `credits_ledger`.
+**Shape:** `hyperline_events_outbox(id UUID PK, account_id, event_type, payload JSONB, created_at, sent_at, attempts)` — one row per billable debit, enqueued immediately after the local ledger debit returns.
+
+<Note>
+The enqueue is intentionally *not* atomic with the ledger debit yet — `bins/scrapix-api/src/billing.rs::emit_usage_event` runs after `auto_topup::check_credits_and_deduct`. If the enqueue fails after a successful debit, you'll see a `failed to enqueue Hyperline outbox row` warning in the API logs and the customer was debited but no usage event was emitted. The reconcile scan (below) is the backstop until the ledger is refactored to accept a shared transaction handle.
+</Note>
 
 **Drain worker:** `spawn_drain_worker(pool, client, interval=5s, batch=100)` — runs inside the API process. Each iteration claims rows with `sent_at IS NULL`, POSTs them to `{ingest_base}/v1/events`, and stamps `sent_at = now()` on 2xx. Failures bump `attempts`; exponential backoff is implicit via the next interval tick.
 
@@ -105,7 +109,7 @@ WHERE sent_at IS NULL AND created_at > now() - interval '1 hour';
 
 | Event type | Side effect |
 |------------|-------------|
-| `wallet.credited`, `credit.topup_transaction_created` | Credit the local ledger, write a `wallet_credit` transaction row. |
+| `wallet.credited`, `credit.topup_transaction_created` | Credit the local ledger, write a `wallet_credit` transaction row. **Requires a `credits` field on the event `data.object`** — until Hyperline's metered products surface this, the handler returns an error rather than silently acking, and `process_error` on the webhook log row will read `wallet.credited missing fields …`. See the [pricing field section](#wallet-credited-pricing-field) below. |
 | `wallet.debited` | Reconciliation + drift log (we already debited locally). |
 | `wallet.low_projected_balance` | Email the account owner via Resend (if configured). |
 | `invoice.settled` | Record transaction, clear `payment_method_status`. |
@@ -142,15 +146,36 @@ Deleting a row from `hyperline_webhook_log` bypasses dedupe. The ledger's own `(
 
 ## Reconcile Scan
 
-**Purpose:** drift backstop. Every 15 minutes a worker pages through accounts with a `hyperline_wallet_id` and pairs the local `credits_balance` with the live wallet `balance.amount`. Drift > $0.01 emits a WARN.
+**Purpose:** drift backstop. Every 15 minutes a worker pages through accounts with a `hyperline_wallet_id` and pairs the local `credits_balance` with the live wallet `balance.amount`.
 
 **Tune:** interval is hard-coded to 15 minutes; Hyperline is authoritative via webhooks on the millisecond scale, so this worker is only a backstop. Tighter intervals waste API quota for no gain.
 
-**Log shape:**
+### Drift alerting (opt-in)
+
+Local credits and Hyperline `balance.amount` live in different units (credits vs. cents), so the worker can't compare them without a ratio. Drift WARN logs are gated on two env vars:
+
+| Variable | Description |
+|----------|-------------|
+| `HYPERLINE_CENTS_PER_CREDIT` | How many cents one local credit is worth. Site-specific pricing. |
+| `HYPERLINE_DRIFT_TOLERANCE_CENTS` | Absolute tolerance (cents). Drift below this stays at INFO; drift above gets WARN. |
+
+When **both** are set, the comparator is `local_credits × cents_per_credit − hyperline_balance`. The `delta_cents` value appears on every paired observation log line (positive = local ledger ahead, negative = behind). Set the tolerance to ~1× a typical hot-path debit cost — that's enough to absorb in-flight outbox rows without crying wolf.
+
+When either var is unset (default) the worker stays in pure-observation mode: paired observations log at INFO, no WARNs.
+
+**Healthy log line:**
 
 ```text
-WARN reconcile: balance drift — local_credits=123.45 hyperline_balance_cents=12300 hyperline_balance_usd=123.00
-  account_id=… wallet_id=wal_…
+INFO reconcile: paired balance observation (within tolerance)
+  account_id=… local_credits=12345 hyperline_balance=12345 delta_cents=0 currency="USD"
+```
+
+**Drift breach:**
+
+```text
+WARN reconcile: balance drift exceeds tolerance
+  account_id=… local_credits=12345 hyperline_balance=12000
+  cents_per_credit=1 tolerance_cents=5 delta_cents=345 currency="USD"
 ```
 
 A drift warning means one of:
@@ -162,6 +187,21 @@ A drift warning means one of:
 ### Correcting drift
 
 If (3) — reconcile by issuing the matching move in Hyperline's dashboard (admin credit note / debit). If (1) — nudge the drain worker (see above). If (2) — contact Hyperline support with the `webhook-id`.
+
+## Wallet-credited pricing field
+
+`wallet.credited` and `credit.topup_transaction_created` events must carry a `credits` integer on `data.object` so the webhook handler can mirror the Hyperline-side credit into the local ledger. This is a custom property surfaced by the metered-product config in Hyperline's dashboard.
+
+**If the field is missing on a real top-up, the customer paid but the local ledger doesn't move.** The handler refuses to silently ack — it returns an error, which lands in `hyperline_webhook_log.process_error` as `wallet.credited missing fields …`. Find stuck rows with:
+
+```sql
+SELECT webhook_id, event_type, received_at, process_error
+FROM hyperline_webhook_log
+WHERE process_error LIKE 'wallet.credited missing fields%'
+ORDER BY received_at DESC;
+```
+
+To recover, either add the missing custom property in the Hyperline product config and replay the webhook, or apply the credit manually via the admin ledger and dismiss the row.
 
 ## Failure Matrix
 

@@ -4685,11 +4685,39 @@ pub async fn run_with_bus(
             // Hyperline is authoritative via webhooks on the millisecond
             // scale; this worker is a drift backstop, not the primary
             // sync path, so a tight loop would burn API quota for no gain.
-            info!("Hyperline reconcile scan worker starting (interval=15m)");
+            //
+            // Drift alerting is opt-in: set both HYPERLINE_CENTS_PER_CREDIT
+            // and HYPERLINE_DRIFT_TOLERANCE_CENTS to enable WARN-level alerts
+            // on accounts whose paired balances diverge beyond tolerance.
+            // Without these the worker runs in pure-observation mode (INFO
+            // observations only).
+            let threshold = match (
+                std::env::var("HYPERLINE_CENTS_PER_CREDIT")
+                    .ok()
+                    .and_then(|s| s.parse::<i64>().ok()),
+                std::env::var("HYPERLINE_DRIFT_TOLERANCE_CENTS")
+                    .ok()
+                    .and_then(|s| s.parse::<i64>().ok()),
+            ) {
+                (Some(cents_per_credit), Some(tolerance_cents))
+                    if cents_per_credit > 0 && tolerance_cents >= 0 =>
+                {
+                    Some(scrapix_billing_hyperline::reconcile::DriftThreshold {
+                        cents_per_credit,
+                        tolerance_cents,
+                    })
+                }
+                _ => None,
+            };
+            info!(
+                drift_alerts = threshold.is_some(),
+                "Hyperline reconcile scan worker starting (interval=15m)"
+            );
             let reconcile = scrapix_billing_hyperline::reconcile::spawn_scan_worker(
                 pool,
                 client,
                 std::time::Duration::from_secs(15 * 60),
+                threshold,
             );
             (Some(drain), Some(reconcile))
         }
