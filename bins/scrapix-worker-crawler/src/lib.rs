@@ -29,7 +29,7 @@ use scrapix_lifecycle::{
 use tokio::sync::Semaphore;
 use tracing::{debug, info, warn};
 
-use scrapix_core::{CrawlUrl, FeaturesConfig, UrlPatterns};
+use scrapix_core::{CrawlUrl, FeaturesConfig, ScrapixError, UrlPatterns};
 #[cfg(feature = "browser")]
 use scrapix_crawler::{CdpRenderer, CdpRendererBuilder};
 use scrapix_crawler::{
