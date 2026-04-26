@@ -4876,49 +4876,16 @@ pub async fn run_with_bus(
                                     );
                                 }
                                 Err(e) => {
-                                    error!(
+                                    // Stale cleanup is best-effort: a failure here means some
+                                    // documents from a previous crawl may remain until the next
+                                    // successful crawl. The current crawl's documents were indexed
+                                    // successfully, so we complete the job rather than fail it.
+                                    warn!(
                                         job_id = %job_id,
                                         error = %e,
                                         index = %index_uid,
-                                        "Stale document cleanup failed, marking job as failed"
+                                        "Stale document cleanup failed (job will still complete)"
                                     );
-
-                                    let event = CrawlEvent::JobFailed {
-                                        job_id: job_id.clone(),
-                                        account_id: account_id.clone(),
-                                        error: format!(
-                                            "Stale document cleanup failed: {}",
-                                            e,
-                                        ),
-                                        timestamp: chrono::Utc::now().timestamp_millis(),
-                                    };
-                                    let error_msg = format!(
-                                        "Stale document cleanup failed: {}",
-                                        e,
-                                    );
-                                    idle_state.process_event(&job_id, &event);
-                                    idle_state.broadcast_event(&job_id, event);
-
-                                    // Send job failure email
-                                    if let (Some(ref mailer), Some(ref pool), Some(ref acct_id)) =
-                                        (&idle_state.email_client, &idle_state.db_pool, &account_id)
-                                    {
-                                        if let Ok(uuid) = uuid::Uuid::parse_str(acct_id) {
-                                            if let Some(email_addr) =
-                                                email::get_account_email_for_job_notification(pool, uuid).await
-                                            {
-                                                mailer.send_job_failed(
-                                                    &email_addr,
-                                                    &job_id,
-                                                    &error_msg,
-                                                    pages_crawled,
-                                                );
-                                            }
-                                        }
-                                    }
-
-                                    idle_state.crawl.job_last_activity.write().remove(&job_id);
-                                    continue;
                                 }
                             }
                         }
