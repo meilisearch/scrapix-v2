@@ -134,26 +134,50 @@ pub async fn check_spend_limit(
     Ok(())
 }
 
-/// Add credits to an account after a successful payment.
-/// Idempotent: checks if a transaction with this `stripe_payment_intent_id` already exists.
-pub async fn add_credits_for_payment(
+/// Add credits to an account in response to a billing-provider event
+/// (typically a Hyperline `wallet.credited` webhook).
+///
+/// Idempotency is keyed on `(provider, provider_event_id)` stored in the
+/// transaction's metadata JSONB — re-delivery of the same webhook is a
+/// no-op. The pair is namespaced by `provider` so we can accept events
+/// from multiple sources without collisions on short numeric IDs.
+///
+/// `tx_type` is written to the `transactions.type` column (e.g.
+/// "wallet_credit" for wallet.credited, "manual_topup" for an admin-
+/// triggered adjustment).
+pub async fn add_credits_from_provider(
     pool: &sqlx::PgPool,
     account_id: uuid::Uuid,
     credits: i64,
-    payment_intent_id: &str,
+    provider: &str,
+    provider_event_id: &str,
+    tx_type: &str,
     description: &str,
 ) -> Result<(), BillingError> {
-    // Idempotency check
+    // Idempotency check — same provider+event_id means we've already
+    // credited these credits. Short-circuit without an update so
+    // concurrent redeliveries don't double-count.
     let exists: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM transactions WHERE account_id = $1 AND metadata->>'stripe_payment_intent_id' = $2)",
+        "SELECT EXISTS( \
+           SELECT 1 FROM transactions \
+           WHERE account_id = $1 \
+             AND metadata->>'provider' = $2 \
+             AND metadata->>'provider_event_id' = $3 \
+         )",
     )
     .bind(account_id)
-    .bind(payment_intent_id)
+    .bind(provider)
+    .bind(provider_event_id)
     .fetch_one(pool)
     .await?;
 
     if exists {
-        info!(account_id = %account_id, pi = %payment_intent_id, "Payment already processed, skipping");
+        info!(
+            account_id = %account_id,
+            provider,
+            event_id = %provider_event_id,
+            "Provider event already processed, skipping"
+        );
         return Ok(());
     }
 
@@ -168,20 +192,42 @@ pub async fn add_credits_for_payment(
     .await?;
 
     let metadata = serde_json::json!({
-        "stripe_payment_intent_id": payment_intent_id,
+        "provider": provider,
+        "provider_event_id": provider_event_id,
     });
 
-    sqlx::query(
+    let insert_result = sqlx::query(
         "INSERT INTO transactions (account_id, type, amount, balance_after, description, metadata) \
-         VALUES ($1, 'manual_topup', $2, $3, $4, $5)",
+         VALUES ($1, $2, $3, $4, $5, $6)",
     )
     .bind(account_id)
+    .bind(tx_type)
     .bind(credits)
     .bind(new_balance)
     .bind(description)
     .bind(metadata)
     .execute(&mut *tx)
-    .await?;
+    .await;
+
+    // Race-condition backstop: if a concurrent caller raced past our
+    // `SELECT EXISTS` check and inserted the same `(provider, event_id)`
+    // first, the partial unique index `uniq_transactions_provider_event`
+    // raises a 23505. Roll back the wallet bump (so we don't double-credit)
+    // and treat the situation as "already processed" — same outcome as
+    // hitting the EXISTS branch above.
+    if let Err(sqlx::Error::Database(db_err)) = &insert_result {
+        if db_err.code().as_deref() == Some("23505") {
+            tx.rollback().await?;
+            info!(
+                account_id = %account_id,
+                provider,
+                event_id = %provider_event_id,
+                "Provider event raced — duplicate detected by unique index, rolling back"
+            );
+            return Ok(());
+        }
+    }
+    insert_result?;
 
     tx.commit().await?;
 
@@ -189,8 +235,10 @@ pub async fn add_credits_for_payment(
         account_id = %account_id,
         credits,
         new_balance,
-        pi = %payment_intent_id,
-        "Credits added via payment"
+        provider,
+        event_id = %provider_event_id,
+        tx_type,
+        "Credits added from provider event"
     );
 
     Ok(())

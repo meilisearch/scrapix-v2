@@ -7,6 +7,8 @@ description: Understand billing tiers, usage limits, and how to monitor resource
 
 Scrapix uses a tier-based billing model that controls crawl limits, rate limits, and feature access per account. Billing enforcement is automatic when authentication is enabled.
 
+Billing of record is handled by [Hyperline](https://hyperline.co) — invoices, payment methods, auto-recharge, and the hosted customer portal are all managed there (Stripe sits behind Hyperline as the payment processor). The local credit ledger is still the runtime gate on every request; Hyperline mirrors it via webhook. Operators should also read the [Hyperline billing runbook](/operations/hyperline-billing).
+
 ## Billing Tiers
 
 | Limit | Free | Starter | Pro | Enterprise |
@@ -66,9 +68,19 @@ curl http://localhost:8080/account/billing -b cookies.txt
 ```json
 {
   "tier": "starter",
-  "stripe_customer_id": null
+  "credits_balance": 12345,
+  "monthly_spend_limit": null,
+  "payment_method_status": null,
+  "hyperline_customer_id": "cus_…",
+  "hyperline_wallet_id": "wal_…",
+  "hyperline_wallet_balance": 12345,
+  "hyperline_wallet_currency": "USD"
 }
 ```
+
+<Note>
+`credits_balance` is the local ledger balance (authoritative for rate-gating). `hyperline_wallet_balance` is the live Hyperline wallet amount in the smallest currency unit (cents for USD). The two should match within a few seconds — if they diverge, see the [drift backstop section of the runbook](/operations/hyperline-billing#reconcile-scan).
+</Note>
 
 ### Account Details
 

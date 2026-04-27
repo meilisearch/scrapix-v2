@@ -17,6 +17,7 @@ path = "src/main.rs"
 [dependencies]
 scrapix-core = { path = "../../crates/scrapix-core" }
 scrapix-billing = { path = "../../crates/scrapix-billing" }
+scrapix-billing-hyperline = { path = "../../crates/scrapix-billing-hyperline" }
 scrapix-auth = { path = "../../crates/scrapix-auth" }
 scrapix-queue = { path = "../../crates/scrapix-queue" }
 scrapix-storage = { path = "../../crates/scrapix-storage" }
@@ -86,10 +87,18 @@ rmcp-openapi = "0.25"
 # Cron scheduling
 croner = "3"
 
-# Stripe payments
-async-stripe = { version = "0.38", default-features = false, features = ["runtime-tokio-hyper", "checkout", "billing", "connect", "webhook-events"] }
+# Stripe integration was removed during the Hyperline migration — all
+# payment-processor calls now go through scrapix-billing-hyperline.
 hmac = "0.12"
 
 # OpenAPI
 utoipa = { workspace = true, features = ["axum_extras"] }
 utoipa-scalar = { version = "0.3", features = ["axum"] }
+
+[dev-dependencies]
+# Integration tests for the Hyperline webhook route drive the real axum
+# router in-process against a postgres pool. Tests are gated on
+# TEST_DATABASE_URL so they skip cleanly when the dev DB isn't
+# available; set it to the docker-compose dev DB or a scratch one.
+tower = { workspace = true }
+http-body-util = "0.1"

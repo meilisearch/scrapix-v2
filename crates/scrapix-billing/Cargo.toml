@@ -19,5 +19,6 @@ tokio = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
 
-# Stripe payments
-async-stripe = { version = "0.38", default-features = false, features = ["runtime-tokio-hyper", "checkout", "billing", "connect", "webhook-events"] }
+# NOTE: async-stripe dependency was removed during the Hyperline migration.
+# The ledger no longer knows or cares about Stripe specifically — it accepts
+# a provider-agnostic (provider, event_id) pair for idempotency.

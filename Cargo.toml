@@ -11,6 +11,7 @@ members = [
     "crates/scrapix-storage",
     "crates/scrapix-queue",
     "crates/scrapix-billing",
+    "crates/scrapix-billing-hyperline",
     "crates/scrapix-auth",
     "crates/scrapix-lifecycle",
 

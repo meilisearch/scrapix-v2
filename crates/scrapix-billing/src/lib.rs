@@ -13,5 +13,5 @@ pub mod pricing;
 pub use auto_topup::{BillingNotifier, PaymentProvider};
 pub use credits::{crawl_credits_per_page, scrape_credits, MAP_CREDITS, SEARCH_CREDITS};
 pub use error::BillingError;
-pub use ledger::{add_credits_for_payment, check_credits, check_spend_limit, deduct_credits};
+pub use ledger::{add_credits_from_provider, check_credits, check_spend_limit, deduct_credits};
 pub use pricing::calculate_price_cents;
