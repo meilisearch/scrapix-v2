@@ -10,6 +10,7 @@
 //! - [`outbox`]     — background drain worker that POSTs outbox rows to Hyperline.
 //! - [`webhooks`]   — signature verification and payload parsing.
 //! - [`reconcile`]  — wallet-balance drift checks between local ledger and Hyperline.
+//! - [`products`]   — idempotent product seeding (manual + boot-time auto-seed).
 //! - [`config`]     — env-driven configuration.
 //! - [`error`]      — crate-wide error type.
 
@@ -18,12 +19,14 @@ pub mod config;
 pub mod error;
 pub mod events;
 pub mod outbox;
+pub mod products;
 pub mod reconcile;
 pub mod webhooks;
 
 pub use client::{Customer, HyperlineClient, MoneyAmount, PortalLink, Wallet};
 pub use config::HyperlineConfig;
 pub use error::HyperlineError;
+pub use products::{auto_seed_enabled, seed_if_enabled, seed_products, SeedReport};
 
 /// Boot-time self-check: pings Hyperline to validate auth+network, and
 /// logs the `BillingEventType` manifest that the API will emit.
