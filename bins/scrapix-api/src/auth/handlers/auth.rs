@@ -7,8 +7,9 @@ use axum_extra::extract::CookieJar;
 use sha2::{Digest, Sha256};
 use sqlx::Row;
 use std::sync::Arc;
-use tracing::info;
+use tracing::{info, warn};
 
+use super::billing::link_account_to_hyperline;
 use super::{
     build_session_cookie, clear_session_cookie, err, AccountResponse, ApiError, ErrorBody,
     ForgotPasswordRequest, LoginRequest, MessageResponse, ResetPasswordRequest, SignupRequest,
@@ -155,6 +156,27 @@ pub(crate) async fn signup(
     })?;
 
     info!(user_id = %user_id, email = %req.email, "New user signed up");
+
+    // Best-effort: create the Hyperline customer in the background so the
+    // first GET /account/billing/portal call doesn't pay the latency. If
+    // this fails (Hyperline outage, etc.), the portal handler's
+    // lazy-create path will retry on next click.
+    if let Some(client) = state.hyperline_client.clone() {
+        let pool = state.pool.clone();
+        let name = account_name.clone();
+        let email = req.email.clone();
+        tokio::spawn(async move {
+            if let Err(e) =
+                link_account_to_hyperline(&pool, &client, account_id, &name, &email).await
+            {
+                warn!(
+                    account_id = %account_id,
+                    error = %e,
+                    "hyperline eager-link on signup failed — will retry lazily on first portal click"
+                );
+            }
+        });
+    }
 
     // Auto-accept pending invites for this email
     let pending_invites = sqlx::query(
