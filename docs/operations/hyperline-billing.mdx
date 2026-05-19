@@ -11,10 +11,11 @@ This page covers the pieces of the pipeline that ops are expected to operate:
 
 1. Configuration surface
 2. Boot self-check
-3. Outbox drain — emitting usage events to Hyperline
-4. Webhooks — receiving state updates from Hyperline
-5. Reconcile scan — drift detection between local ledger and Hyperline wallet
-6. Replay procedures for each path
+3. Product seeding — manual + boot-time auto-seed
+4. Outbox drain — emitting usage events to Hyperline
+5. Webhooks — receiving state updates from Hyperline
+6. Reconcile scan — drift detection between local ledger and Hyperline wallet
+7. Replay procedures for each path
 
 ## Configuration
 
@@ -26,6 +27,7 @@ Set these on the API and worker services (see [environment variables](/configura
 | `HYPERLINE_API_BASE` | no | Override control-plane host. |
 | `HYPERLINE_INGEST_BASE` | no | Override events ingest host. |
 | `HYPERLINE_WEBHOOK_SECRET` | yes, for webhooks | `whsec_…` — required to verify `POST /webhooks/hyperline`. |
+| `HYPERLINE_AUTO_SEED` | no | Set to `1` to run the product seed on every API boot (idempotent). See [Product Seeding](#product-seeding). |
 
 Any missing var degrades that surface to off (not error). A missing `HYPERLINE_API_KEY` means the outbox still enqueues — rows accumulate and drain once the env var is set and a pod restarts.
 
@@ -39,9 +41,41 @@ INFO hyperline: Hyperline event-type manifest — verify each has a metered prod
 INFO hyperline: Hyperline boot self-check passed sandbox=false
 ```
 
-If you add a new `BillingEventType` variant, this log reminds ops to create the matching metered product in Hyperline **before** the deploy lands — otherwise the event ingest will 4xx and the outbox will back up.
+If you add a new `BillingEventType` variant, this log reminds ops to create the matching metered product in Hyperline **before** the deploy lands — otherwise the event ingest will 4xx and the outbox will back up. The auto-seed below removes the "before" hard requirement when enabled.
 
 A `WARN` instead of the second `INFO` (`Hyperline boot self-check failed — API unreachable or auth invalid`) means the key is wrong or Hyperline is down. Boot continues either way.
+
+## Product Seeding
+
+Hyperline products correspond 1-to-1 with `BillingEventType` variants. Each is a `dynamic` metered product whose aggregator sums the `credits` property of its incoming events. Products are looked up by exact name match before any POST, so seeding is idempotent — re-running creates only what is missing.
+
+The seeded product carries placeholder **zero-amount** pricing (USD, monthly, volume tier 0 → ∞). The seed only registers the product so events stop 4xxing; real prices are still set by ops in the Hyperline UI afterward.
+
+### Manual one-shot
+
+Run before — or right after — the deploy that adds a new `BillingEventType`:
+
+```sh
+HYPERLINE_API_KEY=prod_… cargo run -p scrapix-billing-hyperline \
+    --example seed_hyperline_products
+```
+
+The example prints `[+]` for created products and `[=]` for ones it skipped. Safe to re-run on any schedule.
+
+### Boot-time auto-seed
+
+Set `HYPERLINE_AUTO_SEED=1` on the API service. On every boot — right after the boot self-check — the API runs the same seed routine. Logs read:
+
+```text
+INFO hyperline: HYPERLINE_AUTO_SEED is set — ensuring metered products exist in Hyperline sandbox=false
+INFO hyperline: Hyperline product already exists — skipping event_type=page_crawled product_id=prd_…
+INFO hyperline: Hyperline product created (placeholder zero-amount pricing — set real prices in the dashboard) event_type=new_event_type product_id=prd_…
+INFO hyperline: Hyperline auto-seed completed created=1 skipped=6 sandbox=false
+```
+
+A failure logs at `WARN` and is swallowed — the API still boots, the outbox still enqueues, and ops can re-run the manual seed. Events for any missing product will 4xx in the outbox until either the auto-seed retries on the next pod restart or the manual seed runs.
+
+**When to enable:** keep enabled in production once the workspace is initialised. The first boot does the heavy lift; subsequent boots are six `GET /v1/products?name__equals=…` calls (~ms). Leaving it on closes the deploy-order gap for future `BillingEventType` additions.
 
 ## Outbox Drain
 
@@ -76,7 +110,12 @@ WHERE sent_at IS NULL AND attempts > 3
 GROUP BY 1 ORDER BY 2 DESC;
 ```
 
-3. An unknown `event_type` hit the outbox — e.g. a newly added variant without a matching Hyperline product. Either create the product in Hyperline's dashboard or roll the deploy back; the rows will drain themselves on the next tick once the product exists.
+3. An unknown `event_type` hit the outbox — e.g. a newly added variant without a matching Hyperline product. Either:
+   - Run the manual seed once: `HYPERLINE_API_KEY=prod_… cargo run -p scrapix-billing-hyperline --example seed_hyperline_products` (idempotent).
+   - Set `HYPERLINE_AUTO_SEED=1` and restart the API — the boot will create any missing products. See [Product Seeding](#product-seeding).
+   - Or roll the deploy back.
+
+   Either way, the rows will drain themselves on the next tick once the product exists.
 
 ### Manual flush / replay
 

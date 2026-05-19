@@ -4512,9 +4512,18 @@ pub async fn run_with_bus(
                 // manifest for ops cross-check. A failed ping is non-fatal:
                 // the outbox drain worker retries on its own cadence, so a
                 // transient Hyperline outage shouldn't crashloop the API.
+                //
+                // When HYPERLINE_AUTO_SEED=1 is set the boot additionally
+                // ensures one metered product per BillingEventType exists in
+                // the Hyperline workspace (idempotent — skips existing names
+                // by exact match). This closes the gap where adding a new
+                // BillingEventType variant required a manual seed-script run
+                // before the deploy landed, otherwise events 4xx and the
+                // outbox backs up. Seed failures log at WARN and continue.
                 match scrapix_billing_hyperline::HyperlineClient::from_env() {
                     Ok(client) => {
                         let _ = scrapix_billing_hyperline::boot_self_check(&client).await;
+                        scrapix_billing_hyperline::seed_if_enabled(&client).await;
                         state.hyperline_client = Some(client);
                         info!("Hyperline REST client enabled");
                     }
