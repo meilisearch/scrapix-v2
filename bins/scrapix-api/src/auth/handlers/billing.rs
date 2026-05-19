@@ -3,8 +3,7 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use scrapix_billing_hyperline::HyperlineClient;
-use sqlx::{PgPool, Row};
+use sqlx::Row;
 use std::sync::Arc;
 use tracing::{error, info};
 
@@ -14,87 +13,6 @@ use super::{
     TopupResponse, TransactionResponse, TransactionsListResponse, UpdateBillingRequest,
 };
 use crate::auth::{AuthState, AuthenticatedUser};
-
-/// Lazily link an account to a Hyperline customer.
-///
-/// Looks up `(account_name, owner_email)`, queries Hyperline for an
-/// existing customer with `external_id = account_id` (recovers from
-/// crashes that orphaned a customer mid-link), creates one if absent,
-/// then `UPDATE accounts SET hyperline_customer_id = COALESCE(...)` so
-/// concurrent linkers converge on a single value.
-///
-/// Returns the linked customer id. Network/auth failures bubble up;
-/// the caller decides which HTTP status to map to.
-pub(crate) async fn link_account_to_hyperline(
-    pool: &PgPool,
-    client: &HyperlineClient,
-    account_id: uuid::Uuid,
-    account_name: &str,
-    owner_email: &str,
-) -> Result<String, scrapix_billing_hyperline::HyperlineError> {
-    let external_id = account_id.to_string();
-
-    let customer = match client.find_customer_by_external_id(&external_id).await? {
-        Some(existing) => {
-            info!(
-                account_id = %account_id,
-                customer_id = %existing.id,
-                "hyperline: recovered orphaned customer by external_id"
-            );
-            existing
-        }
-        None => {
-            let created = client
-                .create_customer(&external_id, account_name, owner_email)
-                .await?;
-            info!(
-                account_id = %account_id,
-                customer_id = %created.id,
-                "hyperline: created customer"
-            );
-            created
-        }
-    };
-
-    // COALESCE handles the race where another request linked first; we
-    // adopt whatever id won and discard our just-created one (it stays
-    // in Hyperline as an orphan, but `find_customer_by_external_id`
-    // will reuse it on any future link attempt for this account).
-    let linked_id: String = sqlx::query_scalar(
-        "UPDATE accounts \
-         SET hyperline_customer_id = COALESCE(hyperline_customer_id, $1) \
-         WHERE id = $2 RETURNING hyperline_customer_id",
-    )
-    .bind(&customer.id)
-    .bind(account_id)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| scrapix_billing_hyperline::HyperlineError::InvalidConfig(format!("db: {e}")))?;
-
-    Ok(linked_id)
-}
-
-/// Owner email for an account — used as the Hyperline `email` field
-/// on lazy customer creation. Picks the oldest 'owner' membership so
-/// the result is stable across reruns.
-pub(crate) async fn account_owner_email(
-    pool: &PgPool,
-    account_id: uuid::Uuid,
-) -> Result<Option<(String, String)>, sqlx::Error> {
-    let row = sqlx::query(
-        "SELECT a.name AS account_name, u.email AS owner_email \
-         FROM accounts a \
-         JOIN account_members m ON m.account_id = a.id \
-         JOIN users u ON u.id = m.user_id \
-         WHERE a.id = $1 AND m.role = 'owner' \
-         ORDER BY m.joined_at ASC \
-         LIMIT 1",
-    )
-    .bind(account_id)
-    .fetch_optional(pool)
-    .await?;
-    Ok(row.map(|r| (r.get("account_name"), r.get("owner_email"))))
-}
 
 #[utoipa::path(
     get,
@@ -224,46 +142,12 @@ pub(crate) async fn get_billing_portal(
             })?
             .flatten();
 
-    let customer_id = match customer_id {
-        Some(id) => id,
-        None => {
-            // First portal request for this account — lazy-link to Hyperline.
-            // Closes the gap left by SCR-68 (no automated customer creation):
-            // accounts created before the migration, or whose eager-create at
-            // signup failed, would otherwise be stuck with a 404 forever.
-            let Some((account_name, owner_email)) = account_owner_email(&state.pool, account_id)
-                .await
-                .map_err(|e| {
-                    error!(account_id = %account_id, error = %e, "owner lookup failed");
-                    err(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "Database error",
-                        "internal_error",
-                    )
-                })?
-            else {
-                return Err(err(
-                    StatusCode::NOT_FOUND,
-                    "Account has no owner — cannot link to Hyperline",
-                    "no_owner",
-                ));
-            };
-
-            link_account_to_hyperline(&state.pool, client, account_id, &account_name, &owner_email)
-                .await
-                .map_err(|e| {
-                    error!(
-                        account_id = %account_id,
-                        error = %e,
-                        "hyperline lazy-link failed"
-                    );
-                    err(
-                        StatusCode::BAD_GATEWAY,
-                        "Failed to link account to Hyperline",
-                        "hyperline_upstream",
-                    )
-                })?
-        }
+    let Some(customer_id) = customer_id else {
+        return Err(err(
+            StatusCode::NOT_FOUND,
+            "Account is not linked to Hyperline yet",
+            "not_linked",
+        ));
     };
 
     match client.get_portal_url(&customer_id).await {

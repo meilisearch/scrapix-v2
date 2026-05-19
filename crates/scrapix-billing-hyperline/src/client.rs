@@ -200,45 +200,6 @@ impl HyperlineClient {
         Ok(())
     }
 
-    /// Look up a customer by its `external_id`. Returns `None` if no row
-    /// matches. Used by the lazy-link path on `GET /account/billing/portal`
-    /// to recover from a prior partial link (Hyperline customer created but
-    /// the `UPDATE accounts` step never landed — race or crash). Without
-    /// this we'd orphan a customer in Hyperline and create a duplicate on
-    /// the next retry.
-    pub async fn find_customer_by_external_id(
-        &self,
-        external_id: &str,
-    ) -> Result<Option<Customer>, HyperlineError> {
-        let page: ListResponse<Customer> = self
-            .get_json(
-                "/v1/customers",
-                &[("external_id__equals", external_id), ("limit", "1")],
-            )
-            .await?;
-        Ok(page.data.into_iter().next())
-    }
-
-    /// Create a Hyperline customer. `external_id` is the local
-    /// `accounts.id` (UUID) so we can recover the mapping if our DB row
-    /// gets cleared but Hyperline's record survives. A 4xx (e.g.
-    /// duplicate `external_id`) is surfaced as `HyperlineError::Api` —
-    /// the lazy-create path checks `find_customer_by_external_id` first
-    /// so this should only fire on genuinely-new customers.
-    pub async fn create_customer(
-        &self,
-        external_id: &str,
-        name: &str,
-        email: &str,
-    ) -> Result<Customer, HyperlineError> {
-        let body = serde_json::json!({
-            "external_id": external_id,
-            "name": name,
-            "email": email,
-        });
-        self.post_json("/v1/customers", &body).await
-    }
-
     /// Fetches a wallet by its Hyperline id.
     ///
     /// Wallets are not auto-provisioned — if the customer has no wallet
