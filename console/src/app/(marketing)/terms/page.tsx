@@ -117,12 +117,10 @@ export default function TermsOfServicePage() {
 
         <h3>5.2 Payment</h3>
         <p>
-          Payments are processed by our billing provider Hyperline, which
-          uses Stripe, Inc. as its downstream payment processor. By
-          providing payment information, you authorize us to charge your
-          payment method for credits purchased or auto-top-up amounts
-          configured. All amounts are in US Dollars unless otherwise
-          specified.
+          Payments are processed by Stripe, Inc. By providing payment
+          information, you authorize us to charge your payment method for
+          credits purchased or auto-top-up amounts configured. All amounts are
+          in US Dollars unless otherwise specified.
         </p>
 
         <h3>5.3 Refunds</h3>

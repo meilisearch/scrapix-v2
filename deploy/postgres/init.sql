@@ -28,13 +28,12 @@ CREATE TABLE IF NOT EXISTS accounts (
     name TEXT NOT NULL,
     tier TEXT NOT NULL DEFAULT 'free' CHECK (tier IN ('free', 'starter', 'pro', 'enterprise')),
     active BOOLEAN NOT NULL DEFAULT true,
-    hyperline_customer_id TEXT UNIQUE,
-    hyperline_wallet_id TEXT,
-    -- Surfaced by the Hyperline payment_method.errored / .expired
-    -- webhooks. NULL means "no issue on file". The console reads this
-    -- to show a "Your card expired — update it on the portal" banner.
-    payment_method_status TEXT CHECK (payment_method_status IN ('errored', 'expired')),
+    stripe_customer_id TEXT,
+    stripe_default_payment_method_id TEXT,
     credits_balance BIGINT NOT NULL DEFAULT 100,
+    auto_topup_enabled BOOLEAN NOT NULL DEFAULT false,
+    auto_topup_amount BIGINT NOT NULL DEFAULT 5000,
+    auto_topup_threshold BIGINT NOT NULL DEFAULT 500,
     monthly_spend_limit BIGINT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -252,14 +251,9 @@ END $$;
 CREATE TABLE IF NOT EXISTS transactions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     account_id UUID NOT NULL REFERENCES accounts (id) ON DELETE CASCADE,
-    -- type is the ledger semantic tag. `wallet_credit`, `invoice_settled`
-    -- and `invoice_errored` are Hyperline webhook-driven rows (see
-    -- bins/scrapix-api/src/hyperline.rs). `auto_topup` is retained for
-    -- historical rows from the pre-Hyperline auto-topup cron.
     type TEXT NOT NULL CHECK (type IN (
         'initial_deposit', 'manual_topup', 'auto_topup',
-        'usage_deduction', 'refund', 'adjustment',
-        'wallet_credit', 'invoice_settled', 'invoice_errored'
+        'usage_deduction', 'refund', 'adjustment'
     )),
     amount BIGINT NOT NULL,
     balance_after BIGINT NOT NULL,
@@ -331,49 +325,20 @@ DO $$ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'accounts' AND column_name = 'credits_balance') THEN
         ALTER TABLE accounts ADD COLUMN credits_balance BIGINT NOT NULL DEFAULT 100;
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'accounts' AND column_name = 'auto_topup_enabled') THEN
+        ALTER TABLE accounts ADD COLUMN auto_topup_enabled BOOLEAN NOT NULL DEFAULT false;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'accounts' AND column_name = 'auto_topup_amount') THEN
+        ALTER TABLE accounts ADD COLUMN auto_topup_amount BIGINT NOT NULL DEFAULT 5000;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'accounts' AND column_name = 'auto_topup_threshold') THEN
+        ALTER TABLE accounts ADD COLUMN auto_topup_threshold BIGINT NOT NULL DEFAULT 500;
+    END IF;
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'accounts' AND column_name = 'monthly_spend_limit') THEN
         ALTER TABLE accounts ADD COLUMN monthly_spend_limit BIGINT;
     END IF;
-
-    -- Hyperline migration (SCR-68): replace Stripe + local auto-topup with Hyperline customer/wallet IDs.
-    -- Safe to drop Stripe columns directly — zero customers as of 2026-04-17.
-    ALTER TABLE accounts DROP COLUMN IF EXISTS stripe_customer_id;
-    ALTER TABLE accounts DROP COLUMN IF EXISTS stripe_default_payment_method_id;
-    ALTER TABLE accounts DROP COLUMN IF EXISTS auto_topup_enabled;
-    ALTER TABLE accounts DROP COLUMN IF EXISTS auto_topup_amount;
-    ALTER TABLE accounts DROP COLUMN IF EXISTS auto_topup_threshold;
-
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'accounts' AND column_name = 'hyperline_customer_id') THEN
-        ALTER TABLE accounts ADD COLUMN hyperline_customer_id TEXT UNIQUE;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'accounts' AND column_name = 'hyperline_wallet_id') THEN
-        ALTER TABLE accounts ADD COLUMN hyperline_wallet_id TEXT;
-    END IF;
-
-    -- Flag surfaced by the Hyperline payment_method webhooks. NULL
-    -- means "no issue"; 'errored' / 'expired' come from the webhook
-    -- handler in bins/scrapix-api/src/hyperline.rs.
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'accounts' AND column_name = 'payment_method_status') THEN
-        ALTER TABLE accounts ADD COLUMN payment_method_status TEXT
-            CHECK (payment_method_status IN ('errored', 'expired'));
-    END IF;
-
-    -- Widen transactions.type CHECK constraint for Hyperline webhook rows.
-    -- The webhook handler writes wallet_credit (from wallet.credited) and
-    -- invoice_settled / invoice_errored (from invoice.*). Drop + re-add
-    -- is safe here because we migrate the constraint definition, not row
-    -- data — existing rows all use the pre-existing values.
-    IF EXISTS (
-        SELECT 1 FROM information_schema.check_constraints
-        WHERE constraint_name = 'transactions_type_check'
-    ) THEN
-        ALTER TABLE transactions DROP CONSTRAINT IF EXISTS transactions_type_check;
-        ALTER TABLE transactions ADD CONSTRAINT transactions_type_check
-            CHECK (type IN (
-                'initial_deposit', 'manual_topup', 'auto_topup',
-                'usage_deduction', 'refund', 'adjustment',
-                'wallet_credit', 'invoice_settled', 'invoice_errored'
-            ));
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'accounts' AND column_name = 'stripe_default_payment_method_id') THEN
+        ALTER TABLE accounts ADD COLUMN stripe_default_payment_method_id TEXT;
     END IF;
 
     -- Add 'viewer' role to account_members if not already present
@@ -476,56 +441,3 @@ BEGIN
         ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL;
     END IF;
 END $$;
-
--- ============================================================================
--- Hyperline Events Outbox (reliable, idempotent usage-event delivery)
--- ============================================================================
--- Each row is written in the same Postgres transaction as the credit ledger
--- debit. A background worker drains unsent rows to POST /v1/events, using
--- `id` as the Hyperline `record_id` (natural dedupe key across retries).
-CREATE TABLE IF NOT EXISTS hyperline_events_outbox (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    account_id UUID NOT NULL REFERENCES accounts (id) ON DELETE CASCADE,
-    event_type TEXT NOT NULL,
-    payload JSONB NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    sent_at TIMESTAMPTZ,
-    attempts INT NOT NULL DEFAULT 0,
-    last_error TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_hyperline_outbox_unsent
-    ON hyperline_events_outbox (created_at) WHERE sent_at IS NULL;
-CREATE INDEX IF NOT EXISTS idx_hyperline_outbox_account
-    ON hyperline_events_outbox (account_id);
-
--- ============================================================================
--- Hyperline Webhook Log (replay protection + audit trail)
--- ============================================================================
--- `webhook_id` is the `webhook-id` header value; INSERT ... ON CONFLICT DO
--- NOTHING gives us dedupe. Rows are retained for ops replay.
-CREATE TABLE IF NOT EXISTS hyperline_webhook_log (
-    webhook_id TEXT PRIMARY KEY,
-    event_type TEXT NOT NULL,
-    body JSONB NOT NULL,
-    received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    processed_at TIMESTAMPTZ,
-    process_error TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_hyperline_webhook_log_received
-    ON hyperline_webhook_log (received_at DESC);
-
--- ============================================================================
--- Provider event idempotency backstop
--- ============================================================================
--- `add_credits_from_provider` (and the invoice.* webhook branches) gate on a
--- SELECT EXISTS check against `metadata->>'provider' / 'provider_event_id'`,
--- but the read+insert isn't atomic — two concurrent webhook deliveries with
--- the same provider event id could both pass the check and both insert.
--- This partial unique index makes that race fail fast at the DB layer rather
--- than silently double-crediting; callers should treat unique-violation
--- errors as "already processed" and short-circuit.
-CREATE UNIQUE INDEX IF NOT EXISTS uniq_transactions_provider_event
-    ON transactions ((metadata ->> 'provider'), (metadata ->> 'provider_event_id'))
-    WHERE metadata ? 'provider_event_id';

@@ -22,7 +22,6 @@ pub use social::{
     social_auth_routes, OAuthStateStore, ProviderConfig, SocialAuthState, SocialOAuthConfig,
 };
 
-use scrapix_billing_hyperline::HyperlineClient;
 use sqlx::{postgres::PgPoolOptions, PgPool};
 
 use crate::email::EmailClient;
@@ -33,12 +32,6 @@ pub struct AuthState {
     pub pool: PgPool,
     pub jwt_secret: String,
     pub email_client: Option<EmailClient>,
-    /// Hyperline REST client, set when HYPERLINE_API_KEY is configured.
-    /// Used by billing handlers to fetch the live wallet balance and
-    /// the hosted-portal URL. `None` in dev/self-hosted environments —
-    /// the handlers degrade gracefully (local balance only, portal
-    /// endpoint returns 503).
-    pub hyperline_client: Option<HyperlineClient>,
 }
 
 impl AuthState {
@@ -59,7 +52,6 @@ impl AuthState {
             pool,
             jwt_secret,
             email_client: None,
-            hyperline_client: None,
         })
     }
 }
