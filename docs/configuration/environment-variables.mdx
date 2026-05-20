@@ -186,24 +186,6 @@ Setting `CLICKHOUSE_URL` automatically enables the analytics API at `/analytics/
 | `DEDUP_MINHASH_THRESHOLD` | `0.85` | MinHash Jaccard similarity threshold |
 | `DEDUP_MAX_FINGERPRINTS` | `10000000` | Maximum stored fingerprints |
 
-## Billing (Hyperline)
-
-Scrapix uses Hyperline (with Stripe as the downstream payment processor) as the billing system of record. The local credit ledger is still the hot-path gate — these variables wire the API and workers to Hyperline's control plane, ingest host, and webhook signer. All are optional: if `HYPERLINE_API_KEY` is unset the API runs in local-only mode and `/account/billing/portal` returns 503.
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `HYPERLINE_API_KEY` | — | Hyperline API key. Prefixed `test_` for sandbox or `prod_` for production; the prefix auto-selects the default base URLs. |
-| `HYPERLINE_API_BASE` | auto | Control-plane base. Defaults to `https://sandbox.api.hyperline.co` for `test_` keys, `https://api.hyperline.co` for `prod_` keys. |
-| `HYPERLINE_INGEST_BASE` | auto | Events ingest host. Defaults to `https://sandbox.ingest.hyperline.co` / `https://ingest.hyperline.co` by the same rule. |
-| `HYPERLINE_WEBHOOK_SECRET` | — | `whsec_`-prefixed signing secret for `POST /webhooks/hyperline`. Required to enable webhook processing — absent means no signature verification is possible and the route returns 503. |
-| `HYPERLINE_AUTO_SEED` | — | Set to `1` (or `true`) to seed one `dynamic` metered product per `BillingEventType` on API boot. Idempotent (skips products that already exist by name). See [Product Seeding in the runbook](/operations/hyperline-billing#product-seeding). |
-| `HYPERLINE_CENTS_PER_CREDIT` | — | How many cents one local credit is worth. Together with `HYPERLINE_DRIFT_TOLERANCE_CENTS`, enables WARN-level drift alerts in the reconcile worker. Both must be set; otherwise the worker stays in pure-observation mode. |
-| `HYPERLINE_DRIFT_TOLERANCE_CENTS` | — | Absolute drift tolerance in cents. Drift below this stays at INFO; drift above gets WARN. Set to ~1× a typical hot-path debit cost — see the [reconcile section of the runbook](/operations/hyperline-billing#reconcile-scan). |
-
-<Note>
-On boot the API pings Hyperline once and logs the event-type manifest so ops can cross-check that every event we emit has a matching metered product in the Hyperline dashboard. A failed ping is non-fatal — the outbox drain worker retries on its own cadence — so a transient Hyperline outage does not crash the API.
-</Note>
-
 ## Object Storage (S3-compatible)
 
 | Variable | Default | Description |

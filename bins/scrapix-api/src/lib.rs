@@ -47,14 +47,11 @@ pub mod configs;
 pub mod email;
 pub mod email_scheduler;
 pub mod engines;
-pub mod hyperline;
 pub mod jobs_db;
 pub mod mcp;
 pub mod openapi;
-// NOTE: `mod stripe;` was removed during the Hyperline migration. All
-// payment-processor plumbing now lives in `scrapix_billing_hyperline` and
-// the thin webhook handler in `hyperline.rs`.
 pub mod rate_limit;
+pub mod stripe;
 
 use axum::{
     extract::{
@@ -133,6 +130,14 @@ pub struct Args {
     /// Redis URL for rate limiting (optional, disables rate limiting if not set)
     #[arg(long, env = "REDIS_URL")]
     pub redis_url: Option<String>,
+
+    /// Stripe secret key (enables payment processing)
+    #[arg(long, env = "STRIPE_SECRET_KEY")]
+    pub stripe_secret_key: Option<String>,
+
+    /// Stripe webhook signing secret (for verifying webhook events)
+    #[arg(long, env = "STRIPE_WEBHOOK_SECRET")]
+    pub stripe_webhook_secret: Option<String>,
 
     /// Resend API key for transactional emails (optional, disables emails if not set)
     #[arg(long, env = "RESEND_API_KEY")]
@@ -224,6 +229,8 @@ struct AppState {
     db_pool: Option<sqlx::PgPool>,
     /// Optional email client for transactional emails
     email_client: Option<email::EmailClient>,
+    /// Optional Stripe client for payment-backed auto-topup
+    stripe_client: Option<::stripe::Client>,
     /// Optional ClickHouse analytics store (used for event history queries)
     analytics_store: Option<Arc<analytics::AnalyticsState>>,
 }
@@ -247,6 +254,7 @@ impl AppState {
         ai_service: Option<Arc<AiService>>,
         db_pool: Option<sqlx::PgPool>,
         email_client: Option<email::EmailClient>,
+        stripe_client: Option<::stripe::Client>,
         analytics_store: Option<Arc<analytics::AnalyticsState>>,
     ) -> Self {
         let (event_tx, _) = broadcast::channel(10_000);
@@ -275,6 +283,7 @@ impl AppState {
             ai_service,
             db_pool,
             email_client,
+            stripe_client,
             analytics_store,
         }
     }
@@ -636,6 +645,7 @@ impl AppState {
                         let pool = pool.clone();
                         let acct_id = acct_id.clone();
                         let job_id = job_id.to_string();
+                        let stripe_cl = self.stripe_client.clone();
                         tokio::spawn(async move {
                             match billing::check_credits_and_deduct(
                                 &pool,
@@ -647,6 +657,7 @@ impl AppState {
                                     job_id, total_pages, cost_per_page
                                 ),
                                 None,
+                                stripe_cl.as_ref(),
                             )
                             .await
                             {
@@ -2070,6 +2081,7 @@ async fn scrape_url(
             "scrape",
             &format!("{} ({} credits)", final_url, scrape_cost),
             None,
+            state.stripe_client.as_ref(),
         )
         .await
         {
@@ -3214,6 +3226,7 @@ async fn map_url(
             "map",
             &request.url,
             None,
+            state.stripe_client.as_ref(),
         )
         .await
         {
@@ -3443,6 +3456,7 @@ async fn search_url(
             "search",
             &format!("{} q={}", request.url, request.q),
             None,
+            state.stripe_client.as_ref(),
         )
         .await
         {
@@ -4503,35 +4517,6 @@ pub async fn run_with_bus(
                     info!("Transactional emails disabled (RESEND_API_KEY not set)");
                 }
 
-                // Initialize Hyperline client if HYPERLINE_API_KEY is set.
-                // The billing handlers use this to fetch live wallet balance
-                // and generate hosted-portal URLs; absence degrades gracefully
-                // (handlers fall back to local ledger state only).
-                //
-                // Boot self-check pings Hyperline and logs the event-type
-                // manifest for ops cross-check. A failed ping is non-fatal:
-                // the outbox drain worker retries on its own cadence, so a
-                // transient Hyperline outage shouldn't crashloop the API.
-                //
-                // When HYPERLINE_AUTO_SEED=1 is set the boot additionally
-                // ensures one metered product per BillingEventType exists in
-                // the Hyperline workspace (idempotent — skips existing names
-                // by exact match). This closes the gap where adding a new
-                // BillingEventType variant required a manual seed-script run
-                // before the deploy landed, otherwise events 4xx and the
-                // outbox backs up. Seed failures log at WARN and continue.
-                match scrapix_billing_hyperline::HyperlineClient::from_env() {
-                    Ok(client) => {
-                        let _ = scrapix_billing_hyperline::boot_self_check(&client).await;
-                        scrapix_billing_hyperline::seed_if_enabled(&client).await;
-                        state.hyperline_client = Some(client);
-                        info!("Hyperline REST client enabled");
-                    }
-                    Err(e) => {
-                        info!(error = %e, "Hyperline REST client disabled (HYPERLINE_API_KEY not set or invalid)");
-                    }
-                }
-
                 info!("Authentication enabled via PostgreSQL");
                 Some(Arc::new(state))
             }
@@ -4632,6 +4617,7 @@ pub async fn run_with_bus(
     };
     let db_pool = auth_state.as_ref().map(|a| a.pool.clone());
     let email_client = auth_state.as_ref().and_then(|a| a.email_client.clone());
+    let stripe_client = args.stripe_secret_key.as_ref().map(::stripe::Client::new);
     let state = Arc::new(AppState::new(
         producer,
         config,
@@ -4644,6 +4630,7 @@ pub async fn run_with_bus(
         ai_service,
         db_pool,
         email_client,
+        stripe_client,
         analytics_state.clone(),
     ));
 
@@ -4667,78 +4654,6 @@ pub async fn run_with_bus(
             );
         }
     }
-
-    // Spawn the Hyperline outbox drain worker when configured. Silent no-op
-    // otherwise — the enqueue side still writes outbox rows, so turning
-    // HYPERLINE_API_KEY on later replays any backlog on the next boot.
-    //
-    // The reconcile scan worker shares the same (pool, client) and spins
-    // up alongside — it periodically pairs local credits with live
-    // Hyperline balance for shadow-mode observability (SCR-68 Phase 1).
-    let (hyperline_drain_handle, hyperline_reconcile_handle) = match (
-        state.db_pool.clone(),
-        scrapix_billing_hyperline::HyperlineClient::from_env(),
-    ) {
-        (Some(pool), Ok(client)) => {
-            info!(
-                sandbox = client.config().is_sandbox(),
-                "Hyperline outbox drain worker starting (interval=5s, batch=100)"
-            );
-            let drain = scrapix_billing_hyperline::outbox::spawn_drain_worker(
-                pool.clone(),
-                client.clone(),
-                std::time::Duration::from_secs(5),
-                100,
-            );
-            // Reconcile interval is intentionally long: scan every 15 min.
-            // Hyperline is authoritative via webhooks on the millisecond
-            // scale; this worker is a drift backstop, not the primary
-            // sync path, so a tight loop would burn API quota for no gain.
-            //
-            // Drift alerting is opt-in: set both HYPERLINE_CENTS_PER_CREDIT
-            // and HYPERLINE_DRIFT_TOLERANCE_CENTS to enable WARN-level alerts
-            // on accounts whose paired balances diverge beyond tolerance.
-            // Without these the worker runs in pure-observation mode (INFO
-            // observations only).
-            let threshold = match (
-                std::env::var("HYPERLINE_CENTS_PER_CREDIT")
-                    .ok()
-                    .and_then(|s| s.parse::<i64>().ok()),
-                std::env::var("HYPERLINE_DRIFT_TOLERANCE_CENTS")
-                    .ok()
-                    .and_then(|s| s.parse::<i64>().ok()),
-            ) {
-                (Some(cents_per_credit), Some(tolerance_cents))
-                    if cents_per_credit > 0 && tolerance_cents >= 0 =>
-                {
-                    Some(scrapix_billing_hyperline::reconcile::DriftThreshold {
-                        cents_per_credit,
-                        tolerance_cents,
-                    })
-                }
-                _ => None,
-            };
-            info!(
-                drift_alerts = threshold.is_some(),
-                "Hyperline reconcile scan worker starting (interval=15m)"
-            );
-            let reconcile = scrapix_billing_hyperline::reconcile::spawn_scan_worker(
-                pool,
-                client,
-                std::time::Duration::from_secs(15 * 60),
-                threshold,
-            );
-            (Some(drain), Some(reconcile))
-        }
-        (None, _) => {
-            info!("Hyperline workers disabled: no DB pool");
-            (None, None)
-        }
-        (_, Err(e)) => {
-            info!(reason = %e, "Hyperline workers disabled: client not configured");
-            (None, None)
-        }
-    };
 
     // Shutdown coordination
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
@@ -5237,17 +5152,21 @@ pub async fn run_with_bus(
         }
         info!("Auth routes enabled (/auth/signup, /auth/login, /auth/me, /account/*, /oauth/*)");
 
-        // Hyperline webhook receiver.
-        // Enabled whenever HYPERLINE_WEBHOOK_SECRET is set — independent of
-        // the ingest-side `HYPERLINE_API_KEY`, since you can verify incoming
-        // deliveries in one env without egressing events from it.
-        if let Ok(secret) = std::env::var("HYPERLINE_WEBHOOK_SECRET") {
-            app = app.merge(hyperline::webhook_route(
-                auth.pool.clone(),
-                secret,
-                auth.email_client.clone(),
-            ));
-            info!("Hyperline webhook route enabled (/webhooks/hyperline)");
+        // Stripe payment routes
+        if let Some(ref stripe_key) = args.stripe_secret_key {
+            let stripe_state =
+                stripe::StripeState::new(stripe_key, args.stripe_webhook_secret.clone());
+            app = app
+                .merge(stripe::stripe_session_routes(
+                    auth.clone(),
+                    stripe_state.clone(),
+                ))
+                .merge(stripe::stripe_webhook_route(
+                    auth.pool.clone(),
+                    stripe_state,
+                    auth.email_client.clone(),
+                ));
+            info!("Stripe routes enabled (/account/billing/setup-intent, /account/billing/payment-methods, /account/billing/purchase, /webhooks/stripe)");
         }
 
         // MCP HTTP endpoint with Bearer token auth
@@ -5436,12 +5355,6 @@ pub async fn run_with_bus(
         }
     }
     if let Some(handle) = ai_receiver_handle {
-        handle.abort();
-    }
-    if let Some(handle) = hyperline_drain_handle {
-        handle.abort();
-    }
-    if let Some(handle) = hyperline_reconcile_handle {
         handle.abort();
     }
     info!("Shutdown complete");

@@ -106,8 +106,7 @@
       "pages": [
         "operations/monitoring",
         "operations/scaling",
-        "operations/troubleshooting",
-        "operations/hyperline-billing"
+        "operations/troubleshooting"
       ]
     }
   ],
