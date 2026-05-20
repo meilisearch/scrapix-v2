@@ -2476,6 +2476,241 @@ pub(crate) async fn do_create_crawl(
     let job_meilisearch_url = Some(config.meilisearch.url.clone());
     let job_meilisearch_key = Some(config.meilisearch.api_key.clone());
 
+    // ────────────────────────────────────────────────────────────────────────
+    // Sitemap-first discovery
+    // ────────────────────────────────────────────────────────────────────────
+    // When sitemap discovery is enabled, fetch and parse sitemaps at job-start
+    // (before the seed URLs are published) so the frontier is primed with the
+    // canonical URL list straight away. This was previously done lazily inside
+    // the crawler worker on the *first* URL it picked from a domain, which
+    // meant a slow seed fetch could starve the queue and let the 10s idle
+    // detector at line ~4790 mark the job "Completed" before the sitemap URLs
+    // ever reached the frontier.
+    //
+    // A heartbeat task refreshes `job_last_activity` while discovery runs to
+    // explicitly shield this phase from the idle detector even though
+    // pages_crawled is still 0 at this point.
+    let mut sitemap_urls_published: usize = 0;
+    if config.sitemap.enabled {
+        info!(
+            job_id = %job_id,
+            "Sitemap discovery starting before seed URLs are published"
+        );
+
+        // Heartbeat: refresh activity every 2s so the idle-completion detector
+        // (10s threshold) can never fire during sitemap discovery.
+        let heartbeat_handle = {
+            let state = state.clone();
+            let job_id = job_id.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(2));
+                loop {
+                    interval.tick().await;
+                    state
+                        .crawl
+                        .job_last_activity
+                        .write()
+                        .insert(job_id.clone(), std::time::Instant::now());
+                }
+            })
+        };
+
+        // Collect unique domains from start_urls. Each one's sitemap (and any
+        // nested sitemap-indexes via SitemapParser::discover_all_urls) will be
+        // crawled in turn.
+        let mut domains: Vec<String> = config
+            .start_urls
+            .iter()
+            .filter_map(|u| url::Url::parse(u).ok())
+            .filter_map(|u| u.host_str().map(|h| h.to_lowercase()))
+            .collect();
+        domains.sort();
+        domains.dedup();
+
+        // Discover with an overall timeout so a misbehaving sitemap can't hang
+        // job creation indefinitely.
+        let sitemap_parser = SitemapParser::with_defaults();
+        let discovery_timeout = Duration::from_secs(60);
+        let entries_result = tokio::time::timeout(discovery_timeout, async {
+            let mut all_entries: Vec<scrapix_crawler::SitemapUrl> = Vec::new();
+            for domain in &domains {
+                let base_url = format!("https://{}", domain);
+                match sitemap_parser.discover_all_urls(&base_url).await {
+                    Ok(entries) => {
+                        info!(
+                            job_id = %job_id,
+                            domain,
+                            count = entries.len(),
+                            "Discovered URLs from sitemap"
+                        );
+                        all_entries.extend(entries);
+                    }
+                    Err(e) => {
+                        warn!(
+                            job_id = %job_id,
+                            domain,
+                            error = %e,
+                            "Sitemap discovery failed for domain"
+                        );
+                    }
+                }
+            }
+            all_entries
+        })
+        .await;
+
+        let sitemap_entries = match entries_result {
+            Ok(entries) => entries,
+            Err(_) => {
+                warn!(
+                    job_id = %job_id,
+                    timeout_secs = discovery_timeout.as_secs(),
+                    "Sitemap discovery timed out, continuing with seed URLs only"
+                );
+                Vec::new()
+            }
+        };
+
+        // Publish each discovered URL to the frontier, applying the same
+        // filters the worker would apply (non-page, allowed_domains,
+        // include/exclude globs). Keep the logic in sync with the worker's
+        // maybe_discover_sitemaps in bins/scrapix-worker-crawler/src/lib.rs.
+        for entry in sitemap_entries {
+            if is_non_page_url(&entry.loc) {
+                continue;
+            }
+
+            // allowed_domains whitelist
+            if !url_patterns.allowed_domains.is_empty() {
+                let in_allowed = url::Url::parse(&entry.loc)
+                    .ok()
+                    .and_then(|u| u.host_str().map(|h| h.to_lowercase()))
+                    .map(|host| {
+                        url_patterns
+                            .allowed_domains
+                            .iter()
+                            .any(|d| d.eq_ignore_ascii_case(&host))
+                    })
+                    .unwrap_or(false);
+                if !in_allowed {
+                    continue;
+                }
+            }
+
+            // include / exclude glob patterns
+            let matches_include = url_patterns.include.is_empty()
+                || url_patterns.include.iter().any(|p| {
+                    if p.contains("**") {
+                        let parts: Vec<&str> = p.split("**").collect();
+                        parts.len() == 2
+                            && entry.loc.starts_with(parts[0])
+                            && (parts[1].is_empty() || entry.loc.ends_with(parts[1]))
+                    } else {
+                        entry.loc == *p
+                    }
+                });
+            let matches_exclude = url_patterns.exclude.iter().any(|p| {
+                if p.contains("**") {
+                    let parts: Vec<&str> = p.split("**").collect();
+                    parts.len() == 2
+                        && entry.loc.starts_with(parts[0])
+                        && (parts[1].is_empty() || entry.loc.ends_with(parts[1]))
+                } else {
+                    entry.loc == *p
+                }
+            });
+            if !matches_include || matches_exclude {
+                continue;
+            }
+
+            // Build the CrawlUrl. Mark parent_url so downstream logs/metrics
+            // can attribute the URL to sitemap discovery, and propagate any
+            // priority hint from the <priority> tag in the sitemap.
+            let mut crawl_url = CrawlUrl::seed(&entry.loc);
+            if let Ok(parsed) = url::Url::parse(&entry.loc) {
+                if let Some(host) = parsed.host_str() {
+                    crawl_url.parent_url = Some(format!("sitemap:{}", host));
+                }
+            }
+            if let Some(priority) = entry.priority {
+                crawl_url.priority = (priority * 100.0) as i32;
+            }
+
+            let msg = if has_patterns {
+                UrlMessage::with_patterns(
+                    crawl_url,
+                    &job_id,
+                    &pipeline_index_uid,
+                    url_patterns.clone(),
+                )
+            } else {
+                UrlMessage::new(crawl_url, &job_id, &pipeline_index_uid)
+            }
+            .with_source(config.source.clone())
+            .with_meilisearch(job_meilisearch_url.clone(), job_meilisearch_key.clone())
+            .with_features(Some(config.features.clone()))
+            .with_limits(config.max_depth, config.max_pages)
+            .with_incremental(!replace_index);
+
+            let msg = if let Some(ctx) = account_ctx {
+                msg.account(&ctx.account_id)
+            } else {
+                msg
+            };
+
+            match state
+                .producer
+                .send(topic_names::URL_FRONTIER, Some(&job_id), &msg)
+                .await
+            {
+                Ok(_) => {
+                    sitemap_urls_published += 1;
+                }
+                Err(e) => {
+                    warn!(
+                        url = %entry.loc,
+                        job_id = %job_id,
+                        error = %e,
+                        "Failed to publish sitemap URL"
+                    );
+                }
+            }
+        }
+
+        // Emit a UrlsDiscovered event so the live-events log shows the
+        // sitemap-driven seeding clearly.
+        if sitemap_urls_published > 0 {
+            let aggregated_source = domains
+                .first()
+                .map(|d| format!("https://{}/sitemap.xml", d))
+                .unwrap_or_else(|| "sitemap".to_string());
+            let event = CrawlEvent::UrlsDiscovered {
+                job_id: job_id.clone(),
+                source_url: aggregated_source,
+                count: sitemap_urls_published,
+                timestamp: chrono::Utc::now().timestamp_millis(),
+            };
+            if let Err(e) = state
+                .producer
+                .send(topic_names::EVENTS, Some(&job_id), &event)
+                .await
+            {
+                debug!(job_id = %job_id, error = %e, "Failed to publish sitemap discovery event");
+            }
+            state.broadcast_event(&job_id, event);
+        }
+
+        // Stop the heartbeat task — discovery is finished, normal activity
+        // tracking takes over from here.
+        heartbeat_handle.abort();
+
+        info!(
+            job_id = %job_id,
+            count = sitemap_urls_published,
+            "Sitemap discovery complete; URLs published to frontier ahead of seed URLs"
+        );
+    }
+
     for url in &config.start_urls {
         let crawl_url = CrawlUrl::seed(url);
         // Use pipeline_index_uid (temp index if replace_index, otherwise target)
@@ -2517,7 +2752,7 @@ pub(crate) async fn do_create_crawl(
         }
     }
 
-    if urls_published == 0 {
+    if urls_published == 0 && sitemap_urls_published == 0 {
         // Update job as failed
         state.update_job(&job_id, |j| j.fail("Failed to publish any seed URLs"));
         return Err(ApiError::new(
@@ -2590,15 +2825,25 @@ pub(crate) async fn do_create_crawl(
     info!(
         job_id = %job_id,
         urls_published = urls_published,
+        sitemap_urls_published = sitemap_urls_published,
         "Crawl job created successfully"
     );
+
+    let message = if sitemap_urls_published > 0 {
+        format!(
+            "Crawl job started with {} seed URLs and {} sitemap URLs",
+            urls_published, sitemap_urls_published
+        )
+    } else {
+        format!("Crawl job started with {} seed URLs", urls_published)
+    };
 
     Ok(CreateCrawlResponse {
         job_id: job_id.clone(),
         status: "running".to_string(),
         index_uid: target_index_uid,
         start_urls_count: urls_published,
-        message: format!("Crawl job started with {} seed URLs", urls_published),
+        message,
     })
 }
 
