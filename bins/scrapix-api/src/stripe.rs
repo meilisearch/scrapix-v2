@@ -12,15 +12,16 @@ use axum::{
     routing::{delete, get, post},
     Json, Router,
 };
+use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use sqlx::Row;
 use std::sync::Arc;
 use stripe::{
     Client as StripeClient, CreateCustomer, CreateInvoice, CreateInvoiceItem, CreateSetupIntent,
-    Currency, Customer, CustomerId, EventObject, EventType, Invoice,
-    InvoicePendingInvoiceItemsBehavior, InvoiceStatus, ListInvoices, ListPaymentMethods,
-    PaymentIntent, PaymentIntentStatus, PaymentMethod, PaymentMethodId, PaymentMethodTypeFilter,
-    SetupIntent, Webhook,
+    Currency, Customer, CustomerId, Invoice, InvoicePendingInvoiceItemsBehavior, InvoiceStatus,
+    ListInvoices, ListPaymentMethods, PaymentIntentStatus, PaymentMethod, PaymentMethodId,
+    PaymentMethodTypeFilter, SetupIntent,
 };
 use tracing::{error, info, warn};
 
@@ -566,7 +567,36 @@ async fn purchase_credits(
     )
     .await?;
 
-    // Check the payment intent status on the paid invoice
+    // The invoice may be paid without a PaymentIntent — e.g. when a customer
+    // balance, credit note, or applied coupon covers the entire amount due,
+    // Stripe marks the invoice as paid and skips PaymentIntent creation.
+    // Check invoice.status first; only fall back to PaymentIntent status when
+    // the invoice still requires an explicit charge (SCA flow, decline, etc).
+    if invoice.status == Some(InvoiceStatus::Paid) {
+        let pi_id = invoice
+            .payment_intent
+            .as_ref()
+            .map(|pi| pi.id().to_string())
+            .unwrap_or_else(|| invoice.id.to_string());
+
+        add_credits_for_payment(
+            &state.pool,
+            account_id,
+            req.credits,
+            &pi_id,
+            "Credit purchase",
+        )
+        .await?;
+
+        return Ok(Json(PurchaseResponse {
+            status: "succeeded".to_string(),
+            client_secret: None,
+            credits: req.credits,
+            amount_cents,
+            message: format!("{} credits added to your account", req.credits),
+        }));
+    }
+
     let pi_status = invoice
         .payment_intent
         .as_ref()
@@ -574,30 +604,6 @@ async fn purchase_credits(
         .map(|pi| pi.status);
 
     match pi_status {
-        Some(PaymentIntentStatus::Succeeded) => {
-            let pi_id = invoice
-                .payment_intent
-                .as_ref()
-                .map(|pi| pi.id().to_string())
-                .unwrap_or_default();
-
-            add_credits_for_payment(
-                &state.pool,
-                account_id,
-                req.credits,
-                &pi_id,
-                "Credit purchase",
-            )
-            .await?;
-
-            Ok(Json(PurchaseResponse {
-                status: "succeeded".to_string(),
-                client_secret: None,
-                credits: req.credits,
-                amount_cents,
-                message: format!("{} credits added to your account", req.credits),
-            }))
-        }
         Some(PaymentIntentStatus::RequiresAction) => {
             let client_secret = invoice
                 .payment_intent
@@ -614,7 +620,12 @@ async fn purchase_credits(
             }))
         }
         other => {
-            warn!(status = ?other, invoice_id = %invoice.id, "Unexpected payment status on invoice");
+            warn!(
+                pi_status = ?other,
+                invoice_status = ?invoice.status,
+                invoice_id = %invoice.id,
+                "Unexpected payment status on invoice"
+            );
             Err(err(
                 StatusCode::BAD_REQUEST,
                 "Payment could not be processed",
@@ -783,6 +794,51 @@ async fn add_credits_for_payment(
 // Webhook handler
 // ============================================================================
 
+/// Verify a Stripe webhook signature against the raw payload.
+///
+/// We can't use `stripe::Webhook::construct_event` because it deserializes the
+/// payload into the library's typed `Event`/`EventObject`. Stripe regularly
+/// adds new enum variants and fields, and async-stripe 0.38 fails to parse
+/// payloads it doesn't recognize (returning `BadParse`), even when the
+/// signature is valid. Doing HMAC verification ourselves and keeping the body
+/// as JSON makes the handler resilient to Stripe API schema changes.
+fn verify_stripe_signature(
+    payload: &str,
+    signature_header: &str,
+    secret: &str,
+) -> Result<(), String> {
+    let mut timestamp: Option<i64> = None;
+    let mut v1_sig: Option<&str> = None;
+    for kv in signature_header.split(',') {
+        if let Some((key, value)) = kv.split_once('=') {
+            match key {
+                "t" => timestamp = value.parse().ok(),
+                "v1" => v1_sig = Some(value),
+                _ => {}
+            }
+        }
+    }
+    let timestamp = timestamp.ok_or_else(|| "missing timestamp".to_string())?;
+    let v1_sig = v1_sig.ok_or_else(|| "missing v1 signature".to_string())?;
+
+    // Reject signatures older than 5 minutes to defend against replay.
+    let now = chrono::Utc::now().timestamp();
+    if (now - timestamp).abs() > 300 {
+        return Err(format!(
+            "timestamp out of tolerance (delta {}s)",
+            (now - timestamp).abs()
+        ));
+    }
+
+    let signed_payload = format!("{}.{}", timestamp, payload);
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes())
+        .map_err(|e| format!("HMAC key error: {}", e))?;
+    mac.update(signed_payload.as_bytes());
+    let expected = hex::decode(v1_sig).map_err(|e| format!("invalid v1 hex: {}", e))?;
+    mac.verify_slice(&expected)
+        .map_err(|_| "signature mismatch".to_string())
+}
+
 /// POST /webhooks/stripe
 ///
 /// Receives Stripe webhook events. No auth required (verified by signature).
@@ -813,37 +869,41 @@ async fn stripe_webhook(
         )
     })?;
 
-    let event = Webhook::construct_event(payload, signature, webhook_secret).map_err(|e| {
+    if let Err(e) = verify_stripe_signature(payload, signature, webhook_secret) {
         warn!(error = %e, "Webhook signature verification failed");
-        (
+        return Err((
             StatusCode::BAD_REQUEST,
             "Webhook signature verification failed".to_string(),
-        )
+        ));
+    }
+
+    let event: serde_json::Value = serde_json::from_str(payload).map_err(|e| {
+        warn!(error = %e, "Failed to parse webhook payload as JSON");
+        (StatusCode::BAD_REQUEST, "Invalid JSON payload".to_string())
     })?;
 
-    match event.type_ {
-        EventType::InvoicePaid => {
-            if let EventObject::Invoice(inv) = event.data.object {
-                handle_invoice_paid(&pool, &inv, email_client.as_ref()).await;
-            }
+    let event_type = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    let object = match event.pointer("/data/object") {
+        Some(o) => o,
+        None => {
+            warn!(event_type, "Webhook event missing data.object");
+            return Ok(StatusCode::OK);
         }
-        EventType::PaymentIntentSucceeded => {
-            if let EventObject::PaymentIntent(pi) = event.data.object {
-                handle_payment_intent_succeeded(&pool, &pi, email_client.as_ref()).await;
-            }
+    };
+
+    match event_type {
+        "invoice.paid" => {
+            handle_invoice_paid(&pool, object, email_client.as_ref()).await;
         }
-        EventType::PaymentIntentPaymentFailed => {
-            if let EventObject::PaymentIntent(pi) = event.data.object {
-                warn!(
-                    pi_id = %pi.id,
-                    "Payment failed for PaymentIntent"
-                );
-            }
+        "payment_intent.succeeded" => {
+            handle_payment_intent_succeeded(&pool, object, email_client.as_ref()).await;
         }
-        EventType::SetupIntentSucceeded => {
-            if let EventObject::SetupIntent(si) = event.data.object {
-                handle_setup_intent_succeeded(&pool, &si).await;
-            }
+        "payment_intent.payment_failed" => {
+            let pi_id = object.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+            warn!(pi_id, "Payment failed for PaymentIntent");
+        }
+        "setup_intent.succeeded" => {
+            handle_setup_intent_succeeded(&pool, object).await;
         }
         _ => {
             // Ignore events we don't handle
@@ -853,31 +913,40 @@ async fn stripe_webhook(
     Ok(StatusCode::OK)
 }
 
+/// Extract `data.object.metadata.<key>` as a string from a webhook payload.
+fn metadata_str<'a>(obj: &'a serde_json::Value, key: &str) -> Option<&'a str> {
+    obj.get("metadata")
+        .and_then(|m| m.get(key))
+        .and_then(|v| v.as_str())
+}
+
+/// Read `data.object.payment_intent` — Stripe sends it as either an ID string
+/// or an expanded object. Returns the PaymentIntent ID either way.
+fn extract_payment_intent_id(obj: &serde_json::Value) -> Option<String> {
+    let pi = obj.get("payment_intent")?;
+    if let Some(s) = pi.as_str() {
+        return Some(s.to_string());
+    }
+    pi.get("id").and_then(|v| v.as_str()).map(String::from)
+}
+
 async fn handle_invoice_paid(
     pool: &sqlx::PgPool,
-    inv: &Invoice,
+    inv: &serde_json::Value,
     email_client: Option<&EmailClient>,
 ) {
-    let metadata = match &inv.metadata {
-        Some(m) => m,
-        None => {
-            warn!(invoice_id = %inv.id, "Invoice missing metadata");
-            return;
-        }
+    let invoice_id = inv.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+
+    let account_id_str = match metadata_str(inv, "scrapix_account_id") {
+        Some(s) => s,
+        // Not a Scrapix invoice — ignore.
+        None => return,
     };
 
-    let account_id_str = match metadata.get("scrapix_account_id") {
-        Some(id) => id.clone(),
+    let credits_str = match metadata_str(inv, "credits") {
+        Some(s) => s,
         None => {
-            // Not a Scrapix invoice — ignore
-            return;
-        }
-    };
-
-    let credits_str = match metadata.get("credits") {
-        Some(c) => c.clone(),
-        None => {
-            warn!(invoice_id = %inv.id, "Invoice missing credits metadata");
+            warn!(invoice_id, "Invoice missing credits metadata");
             return;
         }
     };
@@ -885,7 +954,7 @@ async fn handle_invoice_paid(
     let account_id: uuid::Uuid = match account_id_str.parse() {
         Ok(id) => id,
         Err(_) => {
-            warn!(invoice_id = %inv.id, "Invalid account_id in invoice metadata");
+            warn!(invoice_id, "Invalid account_id in invoice metadata");
             return;
         }
     };
@@ -893,17 +962,14 @@ async fn handle_invoice_paid(
     let credits: i64 = match credits_str.parse() {
         Ok(c) => c,
         Err(_) => {
-            warn!(invoice_id = %inv.id, "Invalid credits in invoice metadata");
+            warn!(invoice_id, "Invalid credits in invoice metadata");
             return;
         }
     };
 
-    // Use the invoice's payment_intent ID for idempotency
-    let pi_id = inv
-        .payment_intent
-        .as_ref()
-        .map(|pi| pi.id().to_string())
-        .unwrap_or_else(|| inv.id.to_string());
+    // Idempotency key: prefer the PaymentIntent ID, fall back to invoice ID
+    // (matches `purchase_credits` so sync + webhook can't double-credit).
+    let pi_id = extract_payment_intent_id(inv).unwrap_or_else(|| invoice_id.to_string());
 
     if let Err(e) = add_credits_for_payment(
         pool,
@@ -914,13 +980,13 @@ async fn handle_invoice_paid(
     )
     .await
     {
-        error!(error = ?e, invoice_id = %inv.id, "Failed to add credits from invoice webhook");
+        error!(error = ?e, invoice_id, "Failed to add credits from invoice webhook");
         return;
     }
 
     // Send payment receipt via the reliable queue
     if let Some(mailer) = email_client {
-        let amount_cents = inv.amount_paid.unwrap_or(0);
+        let amount_cents = inv.get("amount_paid").and_then(|v| v.as_i64()).unwrap_or(0);
         if let Some(email) = crate::email::get_account_email(pool, account_id).await {
             mailer
                 .queue_payment_receipt(pool, &email, credits, amount_cents)
@@ -931,23 +997,23 @@ async fn handle_invoice_paid(
 
 async fn handle_payment_intent_succeeded(
     pool: &sqlx::PgPool,
-    pi: &PaymentIntent,
+    pi: &serde_json::Value,
     email_client: Option<&EmailClient>,
 ) {
-    let metadata = &pi.metadata;
+    let pi_id = pi.get("id").and_then(|v| v.as_str()).unwrap_or("?");
 
-    let account_id_str = match metadata.get("scrapix_account_id") {
-        Some(id) => id.clone(),
+    let account_id_str = match metadata_str(pi, "scrapix_account_id") {
+        Some(s) => s,
         None => {
-            warn!(pi_id = %pi.id, "PaymentIntent missing scrapix_account_id metadata");
+            warn!(pi_id, "PaymentIntent missing scrapix_account_id metadata");
             return;
         }
     };
 
-    let credits_str = match metadata.get("credits") {
-        Some(c) => c.clone(),
+    let credits_str = match metadata_str(pi, "credits") {
+        Some(s) => s,
         None => {
-            warn!(pi_id = %pi.id, "PaymentIntent missing credits metadata");
+            warn!(pi_id, "PaymentIntent missing credits metadata");
             return;
         }
     };
@@ -955,7 +1021,7 @@ async fn handle_payment_intent_succeeded(
     let account_id: uuid::Uuid = match account_id_str.parse() {
         Ok(id) => id,
         Err(_) => {
-            warn!(pi_id = %pi.id, "Invalid account_id in metadata");
+            warn!(pi_id, "Invalid account_id in metadata");
             return;
         }
     };
@@ -963,27 +1029,21 @@ async fn handle_payment_intent_succeeded(
     let credits: i64 = match credits_str.parse() {
         Ok(c) => c,
         Err(_) => {
-            warn!(pi_id = %pi.id, "Invalid credits in metadata");
+            warn!(pi_id, "Invalid credits in metadata");
             return;
         }
     };
 
-    if let Err(e) = add_credits_for_payment(
-        pool,
-        account_id,
-        credits,
-        pi.id.as_ref(),
-        "Credit purchase (Stripe)",
-    )
-    .await
+    if let Err(e) =
+        add_credits_for_payment(pool, account_id, credits, pi_id, "Credit purchase (Stripe)").await
     {
-        error!(error = ?e, pi_id = %pi.id, "Failed to add credits from webhook");
+        error!(error = ?e, pi_id, "Failed to add credits from webhook");
         return;
     }
 
     // Send payment receipt via the reliable queue
     if let Some(mailer) = email_client {
-        let amount_cents = pi.amount;
+        let amount_cents = pi.get("amount").and_then(|v| v.as_i64()).unwrap_or(0);
         if let Some(email) = crate::email::get_account_email(pool, account_id).await {
             mailer
                 .queue_payment_receipt(pool, &email, credits, amount_cents)
@@ -992,16 +1052,11 @@ async fn handle_payment_intent_succeeded(
     }
 }
 
-async fn handle_setup_intent_succeeded(pool: &sqlx::PgPool, si: &SetupIntent) {
-    // When a setup intent succeeds, set the payment method as default if the account
-    // doesn't have one yet
-    let metadata = match &si.metadata {
-        Some(m) => m,
-        None => return,
-    };
-
-    let account_id_str = match metadata.get("scrapix_account_id") {
-        Some(id) => id.clone(),
+async fn handle_setup_intent_succeeded(pool: &sqlx::PgPool, si: &serde_json::Value) {
+    // When a setup intent succeeds, set the payment method as default if the
+    // account doesn't have one yet.
+    let account_id_str = match metadata_str(si, "scrapix_account_id") {
+        Some(s) => s,
         None => return,
     };
 
@@ -1010,9 +1065,17 @@ async fn handle_setup_intent_succeeded(pool: &sqlx::PgPool, si: &SetupIntent) {
         Err(_) => return,
     };
 
-    let pm_id = match &si.payment_method {
-        Some(pm) => pm.id().to_string(),
+    // `payment_method` is either an ID string or an expanded object.
+    let pm = match si.get("payment_method") {
+        Some(v) => v,
         None => return,
+    };
+    let pm_id = if let Some(s) = pm.as_str() {
+        s.to_string()
+    } else if let Some(id) = pm.get("id").and_then(|v| v.as_str()) {
+        id.to_string()
+    } else {
+        return;
     };
 
     // Set as default only if no default exists yet
@@ -1080,27 +1143,32 @@ pub async fn charge_auto_topup(
     .await
     .map_err(|e| format!("Invoice error: {}", e.1.error))?;
 
+    // Accept either a paid invoice (covered by customer balance / credit notes)
+    // or a succeeded PaymentIntent. See `purchase_credits` for the same logic.
+    if invoice.status == Some(InvoiceStatus::Paid) {
+        let pi_id = invoice
+            .payment_intent
+            .as_ref()
+            .map(|pi| pi.id().to_string())
+            .unwrap_or_else(|| invoice.id.to_string());
+
+        add_credits_for_payment(pool, account_id, credits, &pi_id, "Auto top-up (Stripe)")
+            .await
+            .map_err(|e| format!("Failed to add credits: {}", e.0))?;
+
+        return Ok(pi_id);
+    }
+
     let pi_status = invoice
         .payment_intent
         .as_ref()
         .and_then(|pi| pi.as_object())
         .map(|pi| pi.status);
 
-    if pi_status == Some(PaymentIntentStatus::Succeeded) {
-        let pi_id = invoice
-            .payment_intent
-            .as_ref()
-            .map(|pi| pi.id().to_string())
-            .unwrap_or_default();
-
-        add_credits_for_payment(pool, account_id, credits, &pi_id, "Auto top-up (Stripe)")
-            .await
-            .map_err(|e| format!("Failed to add credits: {}", e.0))?;
-
-        Ok(pi_id)
-    } else {
-        Err(format!("Auto-topup payment status: {:?}", pi_status))
-    }
+    Err(format!(
+        "Auto-topup payment status: pi={:?} invoice={:?}",
+        pi_status, invoice.status
+    ))
 }
 
 // ============================================================================
