@@ -700,20 +700,50 @@ async fn create_and_pay_invoice(
             )
         })?;
 
-    // 4. Pay the invoice — expands the payment_intent so we can check its status
+    // 4. Pay the invoice — expands the payment_intent so we can check its status.
+    //
+    // Stripe gotcha: when collection_method = charge_automatically (default) and
+    // a default_payment_method is set on the invoice, /finalize triggers an
+    // immediate charge attempt. By the time our explicit /pay call lands, Stripe
+    // responds 400 "Invoice is already paid". That's the expected path — treat
+    // it as success and re-fetch the invoice (with expanded payment_intent) to
+    // continue the ledger-crediting flow.
     let pay_params: std::collections::HashMap<&str, &str> =
         [("expand[]", "payment_intent")].into_iter().collect();
-    let invoice: Invoice = stripe
+    let invoice: Invoice = match stripe
         .post_form(&format!("/invoices/{}/pay", invoice.id), pay_params)
         .await
-        .map_err(|e| {
+    {
+        Ok(inv) => inv,
+        Err(e) if e.to_string().contains("Invoice is already paid") => {
+            warn!(
+                invoice_id = %invoice.id,
+                "Invoice already paid by finalize; re-fetching to continue"
+            );
+            Invoice::retrieve(stripe, &invoice.id, &["payment_intent"])
+                .await
+                .map_err(|fetch_err| {
+                    error!(
+                        error = %fetch_err,
+                        invoice_id = %invoice.id,
+                        "Failed to re-fetch already-paid invoice"
+                    );
+                    err(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "Failed to confirm invoice payment",
+                        "stripe_error",
+                    )
+                })?
+        }
+        Err(e) => {
             error!(error = %e, invoice_id = %invoice.id, "Failed to pay invoice");
-            err(
+            return Err(err(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Payment failed. Please try again or use a different card.",
                 "stripe_error",
-            )
-        })?;
+            ));
+        }
+    };
 
     info!(
         account_id = %account_id,
