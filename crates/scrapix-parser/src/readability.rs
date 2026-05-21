@@ -34,6 +34,63 @@ fn body_selector() -> &'static Selector {
     BODY_SELECTOR.get_or_init(|| Selector::parse("body").unwrap())
 }
 
+/// Check whether any of `needles` appears as a discrete *word* inside the
+/// element's `class` / `id` attribute. Used by the readability extractor to
+/// decide if a node looks like navigation, sidebar, footer, etc.
+///
+/// **Why this is its own helper, and why it is NOT a substring match.**
+/// Tailwind and other utility CSS frameworks use class names whose internal
+/// segments happen to contain English words that are unrelated to the
+/// semantics we care about. For example:
+///   - `prose-headings:scroll-mt-24`  contains "ad" inside "headings"
+///   - `pt-[var(--header-height)]`    contains "header" inside a CSS variable
+///   - `leading-relaxed`              contains "ad" inside "leading"
+///
+/// A naïve `class.contains("ad")` flags ALL of those as advertisements, and
+/// the result is that fully legitimate article bodies get discarded by the
+/// extractor. (Observed on meilisearch.com's blog: 217 of 315 posts produced
+/// zero indexable content because of this.)
+///
+/// We solve it by splitting class names on any character that is NOT
+/// alphanumeric AND not inside parentheses / square brackets (which is how
+/// Tailwind encodes arbitrary values that should be treated as opaque), then
+/// requiring **equality** with one of the needles. So:
+///   - `sidebar`           tokens: ["sidebar"]                    → matches "sidebar"
+///   - `main-nav`          tokens: ["main", "nav"]                → matches "nav"
+///   - `nav-bar`           tokens: ["nav", "bar"]                 → matches "nav"
+///   - `site-header`       tokens: ["site", "header"]             → matches "header"
+///   - `prose-headings`    tokens: ["prose", "headings"]          → no match for "ad"
+///   - `pt-[var(--h-h)]`   skipped (contains `[`)                 → no false positive
+///   - `prose-p:text-...`  tokens: ["prose","p","text",...]       → no match for "ad"
+///
+/// The id is checked the same way; ids tend to be simple identifiers without
+/// utility-class noise, so this just generalizes nicely.
+///
+/// All comparisons are case-insensitive; needles are assumed to be lowercase
+/// (which matches how `ReadabilityConfig::default()` populates them).
+fn class_id_matches_any(class: &str, id: &str, needles: &[String]) -> bool {
+    for value in [class, id] {
+        for token in value.split_whitespace() {
+            // Tailwind arbitrary values: `pt-[var(--header-height)]`,
+            // `bg-[#fff]`, `grid-cols-[1fr_2fr]`, etc. These are opaque to us;
+            // never treat their interior as semantic class tokens.
+            if token.contains('[') || token.contains('(') {
+                continue;
+            }
+            let lower = token.to_ascii_lowercase();
+            for segment in lower.split(|c: char| !c.is_ascii_alphanumeric()) {
+                if segment.is_empty() {
+                    continue;
+                }
+                if needles.iter().any(|n| n == segment) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Configuration for content extraction
 #[derive(Debug, Clone)]
 pub struct ReadabilityConfig {
@@ -185,20 +242,15 @@ fn score_element(element: &ElementRef, config: &ReadabilityConfig) -> f64 {
     // Get class and id attributes
     let class = element.value().attr("class").unwrap_or("");
     let id = element.value().attr("id").unwrap_or("");
-    let combined = format!("{} {}", class, id).to_lowercase();
 
-    // Negative indicators
-    for neg in &config.negative_classes {
-        if combined.contains(neg) {
-            score -= 25.0;
-        }
+    // Negative indicators (word-boundary match — see class_id_matches_any).
+    if class_id_matches_any(class, id, &config.negative_classes) {
+        score -= 25.0;
     }
 
-    // Positive indicators
-    for pos in &config.positive_classes {
-        if combined.contains(pos) {
-            score += 25.0;
-        }
+    // Positive indicators (same matching rules so the score is symmetrical).
+    if class_id_matches_any(class, id, &config.positive_classes) {
+        score += 25.0;
     }
 
     // Count paragraphs
@@ -280,14 +332,11 @@ fn extract_text_recursive(
         return;
     }
 
-    // Check for negative classes
-    if let Some(class) = element.value().attr("class") {
-        let class_lower = class.to_lowercase();
-        for neg in &config.negative_classes {
-            if class_lower.contains(neg) {
-                return;
-            }
-        }
+    // Check for negative classes (word-boundary match — see class_id_matches_any).
+    let class = element.value().attr("class").unwrap_or("");
+    let id = element.value().attr("id").unwrap_or("");
+    if class_id_matches_any(class, id, &config.negative_classes) {
+        return;
     }
 
     // Handle block-level elements
@@ -349,13 +398,11 @@ fn collect_filtered_text(
         return;
     }
 
-    if let Some(class) = element.value().attr("class") {
-        let class_lower = class.to_lowercase();
-        for neg in &config.negative_classes {
-            if class_lower.contains(neg) {
-                return;
-            }
-        }
+    // Word-boundary class/id match (see class_id_matches_any).
+    let class = element.value().attr("class").unwrap_or("");
+    let id = element.value().attr("id").unwrap_or("");
+    if class_id_matches_any(class, id, &config.negative_classes) {
+        return;
     }
 
     for child in element.children() {
@@ -572,7 +619,8 @@ mod tests {
 
     #[test]
     fn test_address_not_penalized_as_ad() {
-        // "ad" in negative_classes matches "address" via contains() — documenting known false positive
+        // Regression test for the substring-match bug: `address` used to match
+        // negative class `ad` and silently drop legitimate content.
         let html = r#"
             <html>
             <body>
@@ -584,11 +632,83 @@ mod tests {
             </html>
         "#;
         let content = extract_content(html);
-        // Known issue: "address" gets penalized because "ad" substring matches.
-        // This test documents the behavior. If the content is empty, it means
-        // the false positive is affecting extraction.
-        // For now, we just document this — a fix would use word-boundary matching.
-        let _ = content; // Document that this is a known design issue
+        assert!(
+            content.contains("company address section"),
+            "`address` class must not be treated as `ad`: got {:?}",
+            content
+        );
+    }
+
+    #[test]
+    fn test_tailwind_prose_classes_not_penalized() {
+        // Regression: meilisearch.com (and many Tailwind-based sites) put the
+        // article body inside a `<article class="prose prose-headings:scroll-mt-24 …">`.
+        // The old substring-match incorrectly flagged this as a `header`/`ad`
+        // class and silently produced zero content — see investigation in
+        // crates/scrapix-parser/src/readability.rs::class_id_matches_any.
+        let html = r#"
+            <html>
+            <body>
+                <main class="flex-1 pt-[var(--header-height)]">
+                    <article class="prose prose-lg prose-invert max-w-none prose-headings:scroll-mt-24 prose-headings:text-white prose-p:text-translucent-white-700 prose-a:text-brand-pink">
+                        <h1 class="my-4 leading-relaxed">Real article title</h1>
+                        <p class="my-4 leading-relaxed">This is a paragraph of real article body content that absolutely should reach the search index. It must be long enough to clear the min_paragraph_length filter and survive the readability scoring.</p>
+                        <p class="my-4 leading-relaxed">Another paragraph that further demonstrates the body is real, with enough words to bias scoring positively in any case. Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt.</p>
+                    </article>
+                </main>
+            </body>
+            </html>
+        "#;
+        let content = extract_content(html);
+        assert!(
+            content.contains("Real article title"),
+            "Tailwind `prose-headings:*` must not be treated as a `header` element: got {:?}",
+            content
+        );
+        assert!(
+            content.contains("real article body content"),
+            "Tailwind `prose-p` paragraphs must not be treated as `ad`: got {:?}",
+            content
+        );
+        assert!(
+            content.contains("Another paragraph"),
+            "Tailwind `leading-relaxed` paragraphs must not be treated as `ad`: got {:?}",
+            content
+        );
+    }
+
+    #[test]
+    fn test_class_id_matches_any_word_boundary() {
+        let negs = vec![
+            "ad".to_string(),
+            "header".to_string(),
+            "nav".to_string(),
+            "sidebar".to_string(),
+        ];
+        // True positives — actual semantic uses of negative class names.
+        assert!(class_id_matches_any("ad-banner", "", &negs));
+        assert!(class_id_matches_any("page-header", "", &negs));
+        assert!(class_id_matches_any("main-nav", "", &negs));
+        assert!(class_id_matches_any("nav-bar", "", &negs));
+        assert!(class_id_matches_any("sidebar", "", &negs));
+        assert!(class_id_matches_any("foo bar sidebar baz", "", &negs));
+        assert!(class_id_matches_any("", "main-header", &negs));
+        // False positives that the old contains()-based matcher produced.
+        assert!(!class_id_matches_any("address", "", &negs));
+        assert!(!class_id_matches_any("prose-headings", "", &negs));
+        assert!(!class_id_matches_any("leading-relaxed", "", &negs));
+        assert!(!class_id_matches_any("add-product", "", &negs));
+        assert!(!class_id_matches_any("navigate-back", "", &negs)); // "navigate" != "nav"
+                                                                    // Tailwind arbitrary values: contents of `[…]` and `(…)` are opaque.
+        assert!(!class_id_matches_any(
+            "pt-[var(--header-height)]",
+            "",
+            &negs
+        ));
+        assert!(!class_id_matches_any("bg-[#ad0000]", "", &negs));
+        assert!(!class_id_matches_any("grid-cols-[1fr_2fr]", "", &negs));
+        // Empty input never matches.
+        assert!(!class_id_matches_any("", "", &negs));
     }
 
     #[test]
