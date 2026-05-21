@@ -509,7 +509,15 @@ function CreateConfigDialog({
 
             {/* Crawl Options */}
             <div className="rounded-lg border p-4">
-              <CrawlOptions state={crawlState} onChange={setCrawlState} />
+              <CrawlOptions
+                state={crawlState}
+                onChange={setCrawlState}
+                startUrls={startUrls
+                  .split("\n")
+                  .map((u) => u.trim())
+                  .filter((u) => u)}
+                onStartUrlsChange={(urls) => setStartUrls(urls.join("\n"))}
+              />
             </div>
           </div>
         </ScrollArea>
