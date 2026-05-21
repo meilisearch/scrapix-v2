@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,8 +23,24 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
-import { Globe, Monitor, Plus, X, ChevronsUpDown, Check } from "lucide-react";
+import {
+  Globe,
+  Monitor,
+  Plus,
+  X,
+  ChevronsUpDown,
+  Check,
+  Copy,
+  Pencil,
+} from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { HighlightedJson } from "@/components/highlighted-json";
+import {
+  crawlStateToConfig,
+  configToCrawlState,
+  getStartUrls,
+} from "@/lib/crawl-config-utils";
 
 const SCHEMA_ORG_TYPES = [
   // Creative Works
@@ -156,6 +172,8 @@ export const defaultCrawlState: CrawlState = {
 interface CrawlOptionsProps {
   state: CrawlState;
   onChange: (state: CrawlState) => void;
+  startUrls?: string[];
+  onStartUrlsChange?: (urls: string[]) => void;
 }
 
 function NumericInput({
@@ -526,14 +544,77 @@ function SchemaTypePicker({
   );
 }
 
-export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
+export function CrawlOptions({
+  state,
+  onChange,
+  startUrls,
+  onStartUrlsChange,
+}: CrawlOptionsProps) {
   const set = <K extends keyof CrawlState>(key: K, value: CrawlState[K]) =>
     onChange({ ...state, [key]: value });
+
+  const urlsForConfig = startUrls ?? [];
+
+  const jsonCode = useMemo(
+    () => JSON.stringify(crawlStateToConfig(state, urlsForConfig), null, 2),
+    // urlsForConfig is derived from startUrls; depending on startUrls is enough
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [state, startUrls],
+  );
+
+  const [jsonEditing, setJsonEditing] = useState(false);
+  const [jsonDraft, setJsonDraft] = useState(jsonCode);
+  const [jsonError, setJsonError] = useState<string | null>(null);
+
+  const startEditingJson = () => {
+    setJsonDraft(jsonCode);
+    setJsonError(null);
+    setJsonEditing(true);
+  };
+
+  const cancelEditingJson = () => {
+    setJsonEditing(false);
+    setJsonError(null);
+  };
+
+  const saveJson = () => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(jsonDraft);
+    } catch (err) {
+      setJsonError(
+        err instanceof Error ? err.message : "Invalid JSON",
+      );
+      return;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      setJsonError("JSON must be an object");
+      return;
+    }
+    const configObj = parsed as Record<string, unknown>;
+    onChange(configToCrawlState(configObj));
+    if (onStartUrlsChange) {
+      onStartUrlsChange(getStartUrls(configObj));
+    }
+    setJsonError(null);
+    setJsonEditing(false);
+    toast.success("Config updated from JSON");
+  };
+
+  const copyJson = async () => {
+    const value = jsonEditing ? jsonDraft : jsonCode;
+    try {
+      await navigator.clipboard.writeText(value);
+      toast.success("Copied to clipboard");
+    } catch {
+      toast.error("Failed to copy");
+    }
+  };
 
   return (
     <Tabs defaultValue="general" className="h-full flex flex-col">
       <TabsList className="w-full">
-        {["General", "Advanced"].map((tab) => (
+        {["General", "Advanced", "JSON"].map((tab) => (
           <TabsTrigger key={tab} value={tab.toLowerCase()} className="text-xs">
             {tab}
           </TabsTrigger>
@@ -1056,6 +1137,82 @@ export function CrawlOptions({ state, onChange }: CrawlOptionsProps) {
             />
           </div>
         </ScrollArea>
+      </TabsContent>
+
+      {/* ── JSON ── */}
+      <TabsContent value="json" className="flex-1 pt-3">
+        <div className="h-full flex flex-col gap-2 pr-3">
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-muted-foreground">
+              Full CrawlConfig JSON. Edit directly to override any field.
+            </p>
+            <div className="flex gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1.5 text-xs"
+                onClick={copyJson}
+              >
+                <Copy className="h-3.5 w-3.5" />
+                Copy
+              </Button>
+              {jsonEditing ? (
+                <>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={cancelEditingJson}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="h-7 gap-1.5 text-xs"
+                    onClick={saveJson}
+                  >
+                    <Check className="h-3.5 w-3.5" />
+                    Apply
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 gap-1.5 text-xs"
+                  onClick={startEditingJson}
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                  Edit
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {jsonError && (
+            <p className="text-xs text-destructive font-mono">{jsonError}</p>
+          )}
+
+          {jsonEditing ? (
+            <Textarea
+              value={jsonDraft}
+              onChange={(e) => {
+                setJsonDraft(e.target.value);
+                if (jsonError) setJsonError(null);
+              }}
+              spellCheck={false}
+              className="flex-1 font-mono text-xs resize-none min-h-[400px]"
+            />
+          ) : (
+            <ScrollArea className="flex-1 rounded-md border bg-muted">
+              <HighlightedJson code={jsonCode} />
+            </ScrollArea>
+          )}
+        </div>
       </TabsContent>
     </Tabs>
   );
