@@ -199,14 +199,13 @@ impl JobFrontier {
             }
         }
 
-        // Enforce max_pages: stop accepting URLs once the limit is reached
-        if let Some(max_pages) = self.max_pages {
-            let total = self.urls_dispatched.load(Ordering::Relaxed) + self.queue.len() as u64;
-            if total >= max_pages {
-                self.urls_deduplicated.fetch_add(1, Ordering::Relaxed);
-                return false;
-            }
-        }
+        // NOTE: max_pages is NOT enforced here. Doing so dropped Kafka-consumed
+        // URLs whenever the producer published a burst larger than max_pages
+        // (typical example: an XML sitemap with 1000 entries against
+        // max_pages=300). The offsets had already been committed, so the
+        // rejected URLs were lost forever. Instead, max_pages is enforced at
+        // dispatch time in `pop_ready()` — every URL is kept in the queue and
+        // the dispatcher simply stops handing them out once the cap is reached.
 
         if self.dedup.check_and_mark(&url.url) {
             self.urls_deduplicated.fetch_add(1, Ordering::Relaxed);
@@ -217,11 +216,29 @@ impl JobFrontier {
         }
     }
 
+    /// Pop up to `count` URLs from the queue, capped by `max_pages`.
+    ///
+    /// `urls_dispatched` reflects URLs that have actually been sent to the
+    /// URL_PROCESSING topic (see `mark_dispatched()`), so the cap is exact —
+    /// URLs that get popped, fail politeness, and are pushed back DO NOT count.
     fn pop_ready(&self, count: usize) -> Vec<CrawlUrl> {
-        let urls = self.queue.pop_many(count);
-        self.urls_dispatched
-            .fetch_add(urls.len() as u64, Ordering::Relaxed);
-        urls
+        let budget = if let Some(max) = self.max_pages {
+            let dispatched = self.urls_dispatched.load(Ordering::Relaxed);
+            if dispatched >= max {
+                return Vec::new();
+            }
+            ((max - dispatched) as usize).min(count)
+        } else {
+            count
+        };
+        self.queue.pop_many(budget)
+    }
+
+    /// Record that one URL has been successfully sent to URL_PROCESSING. This
+    /// is the counter that `max_pages` is evaluated against, so it must only
+    /// be called once per real dispatch — not on every pop or politeness retry.
+    fn mark_dispatched(&self) {
+        self.urls_dispatched.fetch_add(1, Ordering::Relaxed);
     }
 
     #[allow(dead_code)]
@@ -314,6 +331,11 @@ struct ReadyUrl {
     features: Option<FeaturesConfig>,
     max_depth: Option<u32>,
     max_pages: Option<u64>,
+    /// Per-job state so the dispatcher can call `mark_dispatched()` once the
+    /// URL is actually on URL_PROCESSING. Without this, `urls_dispatched`
+    /// either over-counts (incremented on pop, includes politeness push-backs)
+    /// or never moves — both break the `max_pages` cap.
+    job: Arc<JobFrontier>,
 }
 
 struct FrontierService {
@@ -840,6 +862,7 @@ impl FrontierService {
                                 features: job.features.clone(),
                                 max_depth: job.max_depth,
                                 max_pages: job.max_pages,
+                                job: Arc::clone(&job),
                             };
 
                             if dispatch_tx.send(ready).await.is_err() {
@@ -897,6 +920,8 @@ impl FrontierService {
                         {
                             Ok(_) => {
                                 metrics.urls_dispatched.fetch_add(1, Ordering::Relaxed);
+                                // Per-job dispatched counter — drives max_pages enforcement.
+                                ready.job.mark_dispatched();
                                 debug!(
                                     url = %msg.url.url,
                                     job_id = %msg.job_id,
@@ -1124,4 +1149,118 @@ pub async fn run_with_bus(
     service.print_stats();
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use scrapix_core::CrawlUrl;
+    use scrapix_frontier::DedupConfig;
+
+    fn jf(max_pages: Option<u64>) -> JobFrontier {
+        JobFrontier::new(
+            "test-job",
+            "test-index",
+            &DedupConfig::default(),
+            &Default::default(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            max_pages,
+        )
+    }
+
+    fn url(s: &str) -> CrawlUrl {
+        CrawlUrl::seed(s)
+    }
+
+    #[test]
+    fn try_add_does_not_reject_for_max_pages() {
+        // Regression: a burst from a sitemap larger than max_pages used to be
+        // silently dropped because try_add rejected with `urls_dispatched +
+        // queue.len() >= max_pages`. The Kafka offset was already committed
+        // so those URLs were lost forever. After the fix, every unique URL
+        // accepted into the bloom filter must also land in the queue.
+        let f = jf(Some(5));
+        for i in 0..20 {
+            assert!(
+                f.try_add(url(&format!("https://example.com/page-{i}"))),
+                "URL {i} should be accepted regardless of max_pages",
+            );
+        }
+        // Queue holds them all — none was dropped.
+        assert_eq!(f.queue.len(), 20);
+        assert_eq!(f.urls_received.load(Ordering::Relaxed), 20);
+        assert_eq!(f.urls_deduplicated.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn pop_ready_enforces_max_pages_against_mark_dispatched() {
+        // max_pages is enforced at dispatch, not ingestion. The cap is exact
+        // because it reads urls_dispatched, which is bumped *only* by
+        // mark_dispatched() (i.e., only on real send-to-URL_PROCESSING).
+        let f = jf(Some(3));
+        for i in 0..10 {
+            f.try_add(url(&format!("https://example.com/p{i}")));
+        }
+        let first_batch = f.pop_ready(2);
+        assert_eq!(first_batch.len(), 2);
+        // Simulate the dispatcher confirming both sends.
+        f.mark_dispatched();
+        f.mark_dispatched();
+
+        let second_batch = f.pop_ready(10);
+        // Only 1 slot left before reaching max_pages=3.
+        assert_eq!(second_batch.len(), 1);
+        f.mark_dispatched();
+
+        // Cap reached — further pops return empty even though queue is full.
+        assert_eq!(f.pop_ready(10).len(), 0);
+        assert!(
+            !f.queue.is_empty(),
+            "Queue must keep undispatched URLs alive"
+        );
+    }
+
+    #[test]
+    fn pop_ready_unbounded_when_max_pages_is_none() {
+        let f = jf(None);
+        for i in 0..50 {
+            f.try_add(url(&format!("https://example.com/x{i}")));
+        }
+        let batch = f.pop_ready(1000);
+        assert_eq!(batch.len(), 50);
+    }
+
+    #[test]
+    fn try_add_still_dedups_via_bloom() {
+        let f = jf(None);
+        assert!(f.try_add(url("https://example.com/same")));
+        assert!(!f.try_add(url("https://example.com/same")));
+        assert_eq!(f.queue.len(), 1);
+        assert_eq!(f.urls_deduplicated.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn try_add_enforces_max_depth_independently_of_max_pages() {
+        let mut u = url("https://example.com/deep");
+        u.depth = 5;
+        let f = JobFrontier::new(
+            "j",
+            "i",
+            &DedupConfig::default(),
+            &Default::default(),
+            None,
+            None,
+            None,
+            None,
+            Some(3), // max_depth=3
+            Some(100),
+        );
+        assert!(!f.try_add(u));
+        assert_eq!(f.queue.len(), 0);
+        assert_eq!(f.urls_deduplicated.load(Ordering::Relaxed), 1);
+    }
 }
