@@ -337,6 +337,12 @@ DO $$ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'accounts' AND column_name = 'monthly_spend_limit') THEN
         ALTER TABLE accounts ADD COLUMN monthly_spend_limit BIGINT;
     END IF;
+    -- Re-add Stripe columns dropped by the SCR-68 Hyperline migration that this
+    -- revert is rolling back. Safe to re-add empty: zero customers as of revert,
+    -- and stripe.rs lazily mints customers on first /account/billing request.
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'accounts' AND column_name = 'stripe_customer_id') THEN
+        ALTER TABLE accounts ADD COLUMN stripe_customer_id TEXT;
+    END IF;
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'accounts' AND column_name = 'stripe_default_payment_method_id') THEN
         ALTER TABLE accounts ADD COLUMN stripe_default_payment_method_id TEXT;
     END IF;

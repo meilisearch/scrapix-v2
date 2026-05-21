@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use meilisearch_sdk::{
     client::{Client, SwapIndexes},
     documents::DocumentDeletionQuery,
+    errors::{Error as SdkError, ErrorType},
     indexes::Index,
     settings::{PaginationSetting, Settings},
     task_info::TaskInfo,
@@ -778,16 +779,22 @@ impl MeilisearchStorage {
             let result = match client.get_tasks_with(&query).await {
                 Ok(r) => r,
                 Err(e) => {
-                    let msg = e.to_string();
                     // If the key lacks tasks.get permission, we can't poll — but Meilisearch
                     // processes tasks sequentially per index, so the delete filter submitted
                     // next will naturally queue after any pending indexing tasks.
-                    if msg.contains("invalid_api_key")
-                        || msg.contains("missing_authorization_header")
-                        || msg.contains("auth")
-                    {
+                    let is_auth_error = match &e {
+                        SdkError::Meilisearch(me) => me.error_type == ErrorType::Auth,
+                        _ => {
+                            let msg = e.to_string();
+                            msg.contains("invalid_api_key")
+                                || msg.contains("missing_authorization_header")
+                                || msg.contains("auth")
+                        }
+                    };
+                    if is_auth_error {
                         warn!(
                             index = %index_uid,
+                            error = %e,
                             "API key lacks task-query permission; skipping idle wait and relying on Meilisearch task ordering"
                         );
                         return Ok(());
