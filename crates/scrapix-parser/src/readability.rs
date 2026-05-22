@@ -318,6 +318,58 @@ fn filtered_text_recursive(element: &ElementRef, skip_tags: &[&str], buf: &mut S
     }
 }
 
+/// HTML block-level elements per CSS default `display: block`.
+///
+/// Used to decide where paragraph boundaries belong during text extraction.
+/// On minified HTML (most modern SPAs), there is no whitespace between
+/// adjacent block tags, so we must inject the boundary ourselves — otherwise
+/// the words on either side run together (`<h1>Blog</h1><p>Tutorials</p>`
+/// → `BlogTutorials`).
+fn is_block_element(tag: &str) -> bool {
+    matches!(
+        tag,
+        "address"
+            | "article"
+            | "aside"
+            | "blockquote"
+            | "dd"
+            | "details"
+            | "dialog"
+            | "div"
+            | "dl"
+            | "dt"
+            | "fieldset"
+            | "figcaption"
+            | "figure"
+            | "footer"
+            | "form"
+            | "h1"
+            | "h2"
+            | "h3"
+            | "h4"
+            | "h5"
+            | "h6"
+            | "header"
+            | "hgroup"
+            | "hr"
+            | "li"
+            | "main"
+            | "nav"
+            | "ol"
+            | "p"
+            | "pre"
+            | "section"
+            | "table"
+            | "tbody"
+            | "td"
+            | "tfoot"
+            | "th"
+            | "thead"
+            | "tr"
+            | "ul"
+    )
+}
+
 /// Recursively extract text from element
 fn extract_text_recursive(
     element: &ElementRef,
@@ -341,7 +393,10 @@ fn extract_text_recursive(
 
     // Handle block-level elements
     match tag_name {
-        "p" | "div" | "section" | "article" | "blockquote" | "li" => {
+        // Paragraph blocks: their children are inline content by HTML spec,
+        // so the whole subtree is one paragraph. Apply min_paragraph_length
+        // to filter boilerplate.
+        "p" | "blockquote" => {
             let text = filtered_text(element, skip_tags);
             let text = text.trim();
             if text.len() >= config.min_paragraph_length {
@@ -372,15 +427,80 @@ fn extract_text_recursive(
                 parts.push(format!("```\n{}\n```", text.trim()));
             }
         }
+        // Container blocks and everything else (body, main, table, span at
+        // the top of a recursion, etc.): walk the children. Block children
+        // recurse so each becomes its own paragraph; runs of inline content
+        // between blocks accumulate into a single paragraph and are flushed
+        // at each block boundary.
         _ => {
-            // Recurse into children
-            for child in element.children() {
-                if let Some(child_element) = ElementRef::wrap(child) {
-                    extract_text_recursive(&child_element, skip_tags, config, parts);
-                }
-            }
+            process_mixed_children(element, skip_tags, config, parts);
         }
     }
+}
+
+/// Walk an element's children, splitting on block-element boundaries.
+///
+/// Block descendants recurse into `extract_text_recursive`. Consecutive
+/// inline content (and raw text nodes) accumulate into a buffer that is
+/// flushed as a single paragraph whenever a block boundary is crossed (or
+/// at the end of the parent). The walk descends through inline wrappers
+/// without flushing, because HTML5 allows inline elements like `<a>` to
+/// contain block-level children — a flat sweep is required to find them.
+fn process_mixed_children(
+    element: &ElementRef,
+    skip_tags: &[&str],
+    config: &ReadabilityConfig,
+    parts: &mut Vec<String>,
+) {
+    let mut inline_buf = String::new();
+    walk_mixed_tree(element, skip_tags, config, parts, &mut inline_buf);
+    flush_inline_paragraph(&mut inline_buf, parts);
+}
+
+fn walk_mixed_tree(
+    element: &ElementRef,
+    skip_tags: &[&str],
+    config: &ReadabilityConfig,
+    parts: &mut Vec<String>,
+    inline_buf: &mut String,
+) {
+    for child in element.children() {
+        if let Some(child_element) = ElementRef::wrap(child) {
+            let tag = child_element.value().name();
+            if skip_tags.contains(&tag) {
+                continue;
+            }
+            // Honor negative-class filtering on inline elements too — keeps
+            // share/social/comment widgets out of the accumulated paragraph.
+            // Word-boundary match (see class_id_matches_any) so Tailwind
+            // utility classes like `prose-headings` don't get flagged as "ad".
+            let class = child_element.value().attr("class").unwrap_or("");
+            let id = child_element.value().attr("id").unwrap_or("");
+            if class_id_matches_any(class, id, &config.negative_classes) {
+                continue;
+            }
+
+            if is_block_element(tag) {
+                flush_inline_paragraph(inline_buf, parts);
+                extract_text_recursive(&child_element, skip_tags, config, parts);
+            } else {
+                // Inline wrapper — its subtree may still contain blocks, so
+                // keep walking with the same buffer. Inline text flows into
+                // `inline_buf`; any deeper block triggers a flush.
+                walk_mixed_tree(&child_element, skip_tags, config, parts, inline_buf);
+            }
+        } else if let Some(text) = child.value().as_text() {
+            inline_buf.push_str(text);
+        }
+    }
+}
+
+fn flush_inline_paragraph(buf: &mut String, parts: &mut Vec<String>) {
+    let trimmed = buf.trim();
+    if !trimmed.is_empty() {
+        parts.push(trimmed.to_string());
+    }
+    buf.clear();
 }
 
 /// Recursively collect raw text from an element, skipping unwanted tags and negative classes.
@@ -753,6 +873,89 @@ mod tests {
         assert!(
             content.contains(&"A".repeat(50)),
             "Should extract some content"
+        );
+    }
+
+    #[test]
+    fn test_minified_block_boundaries_do_not_join_words() {
+        // Regression: on minified HTML (no whitespace text nodes between
+        // adjacent tags — the norm for React/Next.js apps) adjacent block
+        // elements used to produce text like "BlogTutorials" because the
+        // extractor collapsed the whole div subtree without a separator.
+        let html = r#"<html><body><article><div><h1>Blog</h1><p>Tutorials, product updates, and insights from the Meilisearch team about modern search.</p></div></article></body></html>"#;
+        let content = extract_content(html);
+        assert!(
+            !content.contains("BlogTutorials"),
+            "h1 and following p must not join into one word. Got: {}",
+            content
+        );
+        assert!(content.contains("Blog"));
+        assert!(content.contains("Tutorials"));
+    }
+
+    #[test]
+    fn test_sibling_blocks_become_separate_paragraphs() {
+        // Each block-level sibling (heading + body) should be its own
+        // paragraph rather than one collapsed string.
+        let html = r#"<html><body><main><div><h2>RAG for structured data</h2><p>Discover how RAG for structured data improves AI accuracy across applications.</p></div><div><h2>RAG reranking explained</h2><p>Learn what reranking is and why it matters for retrieval quality at scale.</p></div></main></body></html>"#;
+        let content = extract_content(html);
+        assert!(
+            !content.contains("dataDiscover"),
+            "First card's heading should not join with its body. Got: {}",
+            content
+        );
+        assert!(
+            !content.contains("applicationsRAG"),
+            "First card body should not join with second card heading. Got: {}",
+            content
+        );
+        assert!(
+            !content.contains("explainedLearn"),
+            "Second card's heading should not join with its body. Got: {}",
+            content
+        );
+    }
+
+    #[test]
+    fn test_meilisearch_blog_shape_no_joined_words() {
+        // Shape modelled on www.meilisearch.com/blog, where the user reported
+        // output like `BlogTutorials...moreDiscover how...Maya ShinMay 14`.
+        // The card uses inline siblings for author/date, so those will still
+        // concatenate without whitespace (browser does the same when CSS gap
+        // creates the visual separation), but every block boundary must be
+        // preserved.
+        let html = r##"<html><body><main><div><h1>Blog</h1><p>Tutorials, product updates, and insights from the Meilisearch team</p></div><article><a href="#"><h2>RAG for structured data: benefits, challenges, examples, &amp; more</h2><p>Discover how RAG for structured data improves AI accuracy and how to implement it effectively.</p></a></article></main></body></html>"##;
+        let content = extract_content(html);
+
+        for joined in ["BlogTutorials", "moreDiscover"] {
+            assert!(
+                !content.contains(joined),
+                "block boundary should split words but found {:?} in: {}",
+                joined,
+                content
+            );
+        }
+        assert!(content.contains("Blog"));
+        assert!(content.contains("Tutorials"));
+        assert!(content.contains("Discover how RAG"));
+    }
+
+    #[test]
+    fn test_div_with_only_inline_text_kept_as_paragraph() {
+        // A `<div>` that contains only inline content (text + anchor) should
+        // still produce a paragraph — option 2 must not lose plain inline
+        // divs in the process of separating block boundaries.
+        let html = r##"<html><body><article><div>This is body copy with an <a href="#">inline link</a> embedded inside a div that contains only inline content.</div></article></body></html>"##;
+        let content = extract_content(html);
+        assert!(
+            content.contains("inline link"),
+            "Inline anchor text should be preserved. Got: {}",
+            content
+        );
+        assert!(
+            content.contains("only inline content"),
+            "Inline div text should be preserved. Got: {}",
+            content
         );
     }
 
